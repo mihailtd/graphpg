@@ -17,6 +17,9 @@ use crate::plan::{
     SortCompare, SortExpr, SortKey, Step, StepId, StiBranch, TimeBins, TreeSource, TypedFieldSet,
     ValueOutput, VersionGuard, WhereCondition, WindowSelection, WriteNode, WriteNodeKind,
 };
+use crate::planner::request::{
+    flatten_selections_for, GraphQLAdapter, OperationKind, RequestField, RequestOperation,
+};
 use crate::schema::SchemaBuilder;
 use apollo_compiler::ast::{Value, VariableDefinition};
 use apollo_compiler::executable::{Field, Selection};
@@ -264,13 +267,18 @@ impl<'a> QueryPlanner<'a> {
         &self,
         operation: &apollo_compiler::executable::Operation,
     ) -> Result<OperationPlan, PlannerError> {
+        let request = GraphQLAdapter::adapt_operation(operation, self.document, self.variables);
+        self.plan_request(&request)
+    }
+
+    /// Compile a protocol-neutral RequestOperation into an OperationPlan DAG.
+    pub fn plan_request(&self, request: &RequestOperation) -> Result<OperationPlan, PlannerError> {
         let ctx = PlanningContext {
             planner: self,
-            op_variables: &operation.variables,
             step_memo: RefCell::new(HashMap::new()),
             join_aliases: RefCell::new(HashMap::new()),
         };
-        ctx.plan(operation)
+        ctx.plan(request)
     }
 
     pub fn to_snake_case(s: &str) -> String {
@@ -287,7 +295,6 @@ impl<'a> QueryPlanner<'a> {
     ) -> Result<Vec<ColumnValue>, PlannerError> {
         let ctx = PlanningContext {
             planner: self,
-            op_variables: &[],
             step_memo: RefCell::new(HashMap::new()),
             join_aliases: RefCell::new(HashMap::new()),
         };
@@ -632,8 +639,7 @@ fn version_order(table: &TableMetadata, alias: &str, single: bool) -> Option<Str
 
 struct PlanningContext<'a> {
     planner: &'a QueryPlanner<'a>,
-    op_variables: &'a [Node<VariableDefinition>],
-    /// Relation steps already planned, by (parent alias, GraphQL field node). The same field
+    /// Relation steps already planned, by (parent alias, field pointer address). The same field
     /// reached again for the same parent row (e.g. an interface field under every concrete
     /// type) reuses the step, and the compiler emits its subquery once.
     step_memo: RefCell<HashMap<(String, usize), StepId>>,
@@ -643,27 +649,6 @@ struct PlanningContext<'a> {
 }
 
 impl<'a> PlanningContext<'a> {
-    fn resolve_value(&self, val: &Value) -> serde_json::Value {
-        self.planner.resolve_value(val, self.op_variables)
-    }
-
-    fn flatten_selections<'b>(
-        &'b self,
-        selection_set: &'b apollo_compiler::executable::SelectionSet,
-        target_type: Option<&str>,
-    ) -> Vec<&'b Field> {
-        self.planner.flatten_selections(selection_set, target_type)
-    }
-
-    fn flatten_selections_for<'b>(
-        &'b self,
-        selection_set: &'b apollo_compiler::executable::SelectionSet,
-        target_types: &[&str],
-    ) -> Vec<&'b Field> {
-        self.planner
-            .flatten_selections_for(selection_set, target_types)
-    }
-
     fn catalog(&self) -> &'a DatabaseCatalog {
         self.planner.catalog
     }
@@ -674,24 +659,20 @@ impl<'a> PlanningContext<'a> {
             .ok_or_else(|| PlannerError::TableNotFound(table.to_string()))
     }
 
-    fn plan(
-        &self,
-        operation: &apollo_compiler::executable::Operation,
-    ) -> Result<OperationPlan, PlannerError> {
+    fn plan(&self, operation: &RequestOperation) -> Result<OperationPlan, PlannerError> {
         let mut plan = OperationPlan::new();
         let mut alias_counter = 0;
         let schema = self.planner.default_schema.clone();
         scalars::start();
 
-        match operation.operation_type {
-            apollo_compiler::ast::OperationType::Query => {
-                let root_fields = self.flatten_selections(&operation.selection_set, Some("Query"));
-                for field in root_fields {
+        match operation.kind {
+            OperationKind::Query => {
+                for field in &operation.root_fields {
                     let field_name = field.name.as_str();
                     if field_name.starts_with("__") {
                         continue;
                     }
-                    let root_alias = field.response_key().as_str().to_string();
+                    let root_alias = field.response_key().to_string();
 
                     if let Some((_, func)) = self
                         .catalog()
@@ -784,14 +765,12 @@ impl<'a> PlanningContext<'a> {
                     plan.add_root_field(root_alias, step_id);
                 }
             }
-            apollo_compiler::ast::OperationType::Mutation => {
-                let root_fields =
-                    self.flatten_selections(&operation.selection_set, Some("Mutation"));
-                for field in root_fields {
+            OperationKind::Mutation => {
+                for field in &operation.root_fields {
                     if field.name.starts_with("__") {
                         continue;
                     }
-                    let root_alias = field.response_key().as_str().to_string();
+                    let root_alias = field.response_key().to_string();
                     let step_id = match self
                         .catalog()
                         .resolve_function_mutation(&schema, field.name.as_str())
@@ -812,7 +791,6 @@ impl<'a> PlanningContext<'a> {
                     plan.add_root_field(root_alias, step_id);
                 }
             }
-            apollo_compiler::ast::OperationType::Subscription => {}
         }
 
         let invalid = scalars::finish();
@@ -827,7 +805,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_node(
         &self,
         plan: &mut OperationPlan,
-        field: &Field,
+        field: &RequestField,
         alias_counter: &mut usize,
     ) -> Result<StepId, PlannerError> {
         let null = |plan: &mut OperationPlan| {
@@ -835,11 +813,7 @@ impl<'a> PlanningContext<'a> {
                 value: serde_json::Value::Null,
             }))
         };
-        let id_val = field
-            .arguments
-            .iter()
-            .find(|a| a.name.as_str() == "id")
-            .map(|a| self.resolve_value(&a.value));
+        let id_val = field.argument("id").cloned();
         let Some(serde_json::Value::String(global_id)) = id_val else {
             return null(plan);
         };
@@ -868,7 +842,7 @@ impl<'a> PlanningContext<'a> {
         *alias_counter += 1;
         let (node_fields, node_polymorphism) = self.plan_row_shape(
             plan,
-            &field.selection_set,
+            &field.children,
             schema,
             table_name,
             &table_alias,
@@ -1018,15 +992,11 @@ impl<'a> PlanningContext<'a> {
     fn plan_entities(
         &self,
         plan: &mut OperationPlan,
-        field: &Field,
+        field: &RequestField,
         alias_counter: &mut usize,
     ) -> Result<StepId, PlannerError> {
-        let rep_arg = field
-            .arguments
-            .iter()
-            .find(|a| a.name.as_str() == "representations");
-        let reps = match rep_arg.map(|a| self.resolve_value(&a.value)) {
-            Some(serde_json::Value::Array(arr)) => arr,
+        let reps = match field.argument("representations") {
+            Some(serde_json::Value::Array(arr)) => arr.clone(),
             _ => Vec::new(),
         };
         let schema = &self.planner.default_schema;
@@ -1150,7 +1120,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_entity_lookup(
         &self,
         plan: &mut OperationPlan,
-        field: &Field,
+        field: &RequestField,
         type_name: &str,
         entity_schema: &str,
         table_name: &str,
@@ -1162,7 +1132,7 @@ impl<'a> PlanningContext<'a> {
         *alias_counter += 1;
         let Ok((mut node_fields, node_polymorphism)) = self.plan_row_shape(
             plan,
-            &field.selection_set,
+            &field.children,
             entity_schema,
             table_name,
             &table_alias,
@@ -1206,7 +1176,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_mutation(
         &self,
         plan: &mut OperationPlan,
-        field: &apollo_compiler::executable::Field,
+        field: &RequestField,
         alias_counter: &mut usize,
     ) -> Result<StepId, PlannerError> {
         let field_name = field.name.as_str();
@@ -1234,8 +1204,8 @@ impl<'a> PlanningContext<'a> {
                 .previous_field_name(table_meta, action, table_meta.has_upsert());
         let mut payload = Vec::new();
         let mut seen = HashSet::new();
-        for sub_field in self.flatten_selections(&field.selection_set, None) {
-            let field_alias = sub_field.response_key().as_str().to_string();
+        for sub_field in &field.children {
+            let field_alias = sub_field.response_key().to_string();
             if !seen.insert(field_alias.clone()) {
                 continue;
             }
@@ -1248,7 +1218,7 @@ impl<'a> PlanningContext<'a> {
                 name if name == rows_field => {
                     let (fields, polymorphism) = self.plan_row_shape(
                         plan,
-                        &sub_field.selection_set,
+                        &sub_field.children,
                         &schema,
                         table_name,
                         &table_alias,
@@ -1266,7 +1236,7 @@ impl<'a> PlanningContext<'a> {
                     *alias_counter += 1;
                     let (fields, polymorphism) = self.plan_row_shape(
                         plan,
-                        &sub_field.selection_set,
+                        &sub_field.children,
                         &schema,
                         table_name,
                         &previous_alias,
@@ -1289,13 +1259,7 @@ impl<'a> PlanningContext<'a> {
             }
         }
 
-        let arg = |name: &str| {
-            field
-                .arguments
-                .iter()
-                .find(|a| a.name.as_str() == name)
-                .map(|a| self.resolve_value(&a.value))
-        };
+        let arg = |name: &str| field.argument(name).cloned();
         let column_values = |input: Option<serde_json::Value>, path: &str| -> Vec<ColumnValue> {
             let Some(serde_json::Value::Object(input)) = input else {
                 return Vec::new();
@@ -2443,7 +2407,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_field(
         &self,
         plan: &mut OperationPlan,
-        field: &apollo_compiler::executable::Field,
+        field: &RequestField,
         schema: &str,
         table_name: &str,
         is_single: bool,
@@ -2466,9 +2430,9 @@ impl<'a> PlanningContext<'a> {
         let mut offset = None;
 
         // 1. Arguments: key columns of single-row lookups (e.g. `id: ...`), list arguments
-        for arg in &field.arguments {
-            let arg_name = arg.name.as_str();
-            let value = self.resolve_value(&arg.value);
+        for (arg_name, value) in &field.arguments {
+            let arg_name = arg_name.as_str();
+            let value = value.clone();
             if arg_name == "asOf" {
                 // The versions valid then, rather than those overlapping the parent's period
                 if let Some(cond) = as_of_condition(table_meta, value) {
@@ -2517,7 +2481,7 @@ impl<'a> PlanningContext<'a> {
         // 2. Process Field Selections (scalar columns, nested relations, and nested connections)
         let (fields, row_polymorphism) = self.plan_row_shape(
             plan,
-            &field.selection_set,
+            &field.children,
             schema,
             table_name,
             &table_alias,
@@ -2558,7 +2522,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_connection(
         &self,
         plan: &mut OperationPlan,
-        field: &apollo_compiler::executable::Field,
+        field: &RequestField,
         schema: &str,
         table_name: &str,
         join_condition: Option<JoinCondition>,
@@ -2585,12 +2549,12 @@ impl<'a> PlanningContext<'a> {
         let mut filter_expr = None;
 
         // 1. Process Connection Arguments (a function's own come first: they are its call's)
-        for arg in &field.arguments {
-            let arg_name = arg.name.as_str();
+        for (arg_name, value) in &field.arguments {
+            let arg_name = arg_name.as_str();
             if func.is_some_and(|f| f.arguments.iter().any(|a| a.graphql_name() == arg_name)) {
                 continue;
             }
-            let value = self.resolve_value(&arg.value);
+            let value = value.clone();
             match arg_name {
                 "first" => first = Self::as_usize(&value),
                 "last" => last = Self::as_usize(&value),
@@ -2636,16 +2600,14 @@ impl<'a> PlanningContext<'a> {
         // 2. Process Selection Set
         let mut selections = ConnectionSelections::default();
 
-        for conn_sel in self.flatten_selections(&field.selection_set, None) {
+        for conn_sel in &field.children {
             match conn_sel.name.as_str() {
                 "totalCount" => {
                     selections.include_total_count = true;
                     let estimate = conn_sel
-                        .arguments
-                        .iter()
-                        .find(|a| a.name == "estimate")
-                        .map(|a| self.resolve_value(&a.value));
-                    let estimate = estimate.and_then(|v| v.as_bool()).unwrap_or(false);
+                        .argument("estimate")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     selections.estimate_total |= estimate;
                     let key = conn_sel.response_key().to_string();
                     if !selections.total_counts.iter().any(|(k, _)| *k == key) {
@@ -2658,17 +2620,12 @@ impl<'a> PlanningContext<'a> {
                     if selections.aggregates.iter().any(|a| a.field_alias == key) {
                         continue;
                     }
-                    let mut aggs = self.plan_aggregates(&conn_sel.selection_set, table_meta)?;
+                    let mut aggs = self.plan_aggregates(&conn_sel.children, table_meta)?;
                     aggs.field_alias = key;
                     // `aggregates(filter:)`: only matching rows are aggregated
-                    if let Some(filter) = conn_sel
-                        .arguments
-                        .iter()
-                        .find(|a| a.name == "filter")
-                        .map(|a| self.resolve_value(&a.value))
-                    {
+                    if let Some(filter) = conn_sel.argument("filter") {
                         aggs.filter = self.plan_filter_object(
-                            &filter,
+                            filter,
                             schema,
                             table_name,
                             &table_alias,
@@ -2682,7 +2639,7 @@ impl<'a> PlanningContext<'a> {
                     .push(self.plan_grouped_aggregates(conn_sel, table_meta)?),
                 "edges" => {
                     selections.include_edges = true;
-                    let edge_fields = self.flatten_selections(&conn_sel.selection_set, None);
+                    let edge_fields: Vec<&RequestField> = conn_sel.children.iter().collect();
                     for window in self.plan_windows(&edge_fields, table_meta)? {
                         if !selections
                             .windows
@@ -2692,12 +2649,12 @@ impl<'a> PlanningContext<'a> {
                             selections.windows.push(window);
                         }
                     }
-                    for edge_f in self.flatten_selections(&conn_sel.selection_set, None) {
+                    for edge_f in &conn_sel.children {
                         if edge_f.name == "node" {
                             (selections.node_fields, selections.node_polymorphism) = self
                                 .plan_row_shape(
                                     plan,
-                                    &edge_f.selection_set,
+                                    &edge_f.children,
                                     schema,
                                     table_name,
                                     &table_alias,
@@ -2713,7 +2670,7 @@ impl<'a> PlanningContext<'a> {
                         (selections.node_fields, selections.node_polymorphism) = self
                             .plan_row_shape(
                                 plan,
-                                &conn_sel.selection_set,
+                                &conn_sel.children,
                                 schema,
                                 table_name,
                                 &table_alias,
@@ -2815,7 +2772,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_search(
         &self,
         plan: &mut OperationPlan,
-        field: &Field,
+        field: &RequestField,
         schema: &str,
         table_name: &str,
         method: SearchMethod,
@@ -2830,9 +2787,9 @@ impl<'a> PlanningContext<'a> {
         let mut where_conditions = Vec::new();
         let mut filter_expr = None;
         let mut method_args = serde_json::Map::new();
-        for arg in &field.arguments {
-            let value = self.resolve_value(&arg.value);
-            match arg.name.as_str() {
+        for (arg_name, value) in &field.arguments {
+            let value = value.clone();
+            match arg_name.as_str() {
                 "first" if value.is_null() => {}
                 "first" => {
                     limit = Self::as_usize(&value)
@@ -2877,25 +2834,19 @@ impl<'a> PlanningContext<'a> {
         })?;
 
         let mut selections = SearchSelections::default();
-        for sel in self.flatten_selections(&field.selection_set, None) {
+        for sel in &field.children {
             match sel.name.as_str() {
                 "hasMore" => selections.include_has_more = true,
                 "hits" => {
                     selections.include_hits = true;
-                    for hit_field in self.flatten_selections(&sel.selection_set, None) {
+                    for hit_field in &sel.children {
                         match hit_field.name.as_str() {
                             "score" => selections.include_score = true,
                             "distance" => {
                                 selections.distance = Some(hit_field.response_key().to_string())
                             }
                             "highlight" => {
-                                let arg = |name: &str| {
-                                    hit_field
-                                        .arguments
-                                        .iter()
-                                        .find(|a| a.name == name)
-                                        .map(|a| self.resolve_value(&a.value))
-                                };
+                                let arg = |name: &str| hit_field.argument(name).cloned();
                                 let text = |name: &str, default: &str| {
                                     arg(name)
                                         .and_then(|v| v.as_str().map(str::to_string))
@@ -2925,7 +2876,7 @@ impl<'a> PlanningContext<'a> {
                                 (selections.node_fields, selections.node_polymorphism) = self
                                     .plan_row_shape(
                                         plan,
-                                        &hit_field.selection_set,
+                                        &hit_field.children,
                                         schema,
                                         table_name,
                                         &table_alias,
@@ -2958,17 +2909,11 @@ impl<'a> PlanningContext<'a> {
     fn plan_global_search(
         &self,
         plan: &mut OperationPlan,
-        field: &Field,
+        field: &RequestField,
         alias_counter: &mut usize,
     ) -> Result<StepId, PlannerError> {
         let limits = self.catalog().search_limits;
-        let arg = |name: &str| {
-            field
-                .arguments
-                .iter()
-                .find(|a| a.name == name)
-                .map(|a| self.resolve_value(&a.value))
-        };
+        let arg = |name: &str| field.argument(name).cloned();
         let query = arg("query")
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();
@@ -2984,16 +2929,16 @@ impl<'a> PlanningContext<'a> {
                 })?,
         };
         let (mut include_hits, mut include_score, mut include_has_more) = (false, false, false);
-        let mut node_selections = Vec::new();
-        for sel in self.flatten_selections(&field.selection_set, None) {
+        let mut node_selections: Vec<&[RequestField]> = Vec::new();
+        for sel in &field.children {
             match sel.name.as_str() {
                 "hasMore" => include_has_more = true,
                 "hits" => {
                     include_hits = true;
-                    for hit in self.flatten_selections(&sel.selection_set, None) {
+                    for hit in &sel.children {
                         match hit.name.as_str() {
                             "score" => include_score = true,
-                            "node" => node_selections.push(&hit.selection_set),
+                            "node" => node_selections.push(&hit.children),
                             _ => {}
                         }
                     }
@@ -3305,7 +3250,7 @@ impl<'a> PlanningContext<'a> {
         &self,
         pg_type: &PgType,
         enum_key: Option<&str>,
-        selection: Option<&apollo_compiler::executable::SelectionSet>,
+        selection: Option<&[RequestField]>,
     ) -> ValueOutput {
         let catalog = self.catalog();
         let (elem, list) = match pg_type {
@@ -3332,7 +3277,7 @@ impl<'a> PlanningContext<'a> {
         if let (PgType::Composite(key), Some(selection)) = (elem, selection) {
             if let Some(composite) = catalog.find_composite(key) {
                 let mut fields: Vec<CompositeField> = Vec::new();
-                for f in self.flatten_selections(selection, Some(&composite.type_name)) {
+                for f in flatten_selections_for(selection, &[&composite.type_name]) {
                     let field_alias = f.response_key().to_string();
                     if fields
                         .iter()
@@ -3346,7 +3291,7 @@ impl<'a> PlanningContext<'a> {
                         let output = self.plan_output(
                             &attr.pg_type,
                             attr.enum_key.as_deref(),
-                            Some(&f.selection_set),
+                            Some(&f.children),
                         );
                         CompositeSource::Attribute {
                             name: attr.name.clone(),
@@ -3368,7 +3313,7 @@ impl<'a> PlanningContext<'a> {
             let bound_type = format!("{scalar}RangeBound");
             let mut fields: Vec<RangeField> = Vec::new();
             for f in selection
-                .map(|sel| self.flatten_selections(sel, Some(&range_type)))
+                .map(|sel| flatten_selections_for(sel, &[&range_type]))
                 .unwrap_or_default()
             {
                 let field_alias = f.response_key().to_string();
@@ -3383,7 +3328,7 @@ impl<'a> PlanningContext<'a> {
                     "isEmpty" => RangePart::IsEmpty,
                     name @ ("start" | "end") => {
                         let mut parts: Vec<(String, BoundPart)> = Vec::new();
-                        for b in self.flatten_selections(&f.selection_set, Some(&bound_type)) {
+                        for b in flatten_selections_for(&f.children, &[&bound_type]) {
                             let alias = b.response_key().to_string();
                             let part = match b.name.as_str() {
                                 "value" => BoundPart::Value,
@@ -3427,17 +3372,16 @@ impl<'a> PlanningContext<'a> {
     fn bind_function_args(
         &self,
         func: &FunctionMetadata,
-        field: &Field,
+        field: &RequestField,
         mounted: bool,
         row: Option<&ArgValue>,
     ) -> Vec<BoundArg> {
         let parent_column = |name: &str| mounted.then(|| func.parent_column_for(name)).flatten();
         let provided = |name: &str, graphql_name: &str| {
             field
-                .arguments
-                .iter()
-                .find(|a| a.name.as_str() == graphql_name || a.name.as_str() == name)
-                .map(|a| self.resolve_value(&a.value))
+                .argument(graphql_name)
+                .or_else(|| field.argument(name))
+                .cloned()
         };
         let row = row.filter(|_| func.row_argument);
         let last = func.arguments.iter().enumerate().rposition(|(i, a)| {
@@ -3477,7 +3421,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_selection_fields(
         &self,
         plan: &mut OperationPlan,
-        selection_set: &apollo_compiler::executable::SelectionSet,
+        selection_set: &[RequestField],
         schema: &str,
         table_name: &str,
         parent_alias: &str,
@@ -3508,7 +3452,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_selection_fields_as(
         &self,
         plan: &mut OperationPlan,
-        selection_set: &apollo_compiler::executable::SelectionSet,
+        selection_set: &[RequestField],
         schema: &str,
         table_name: &str,
         parent_alias: &str,
@@ -3521,12 +3465,12 @@ impl<'a> PlanningContext<'a> {
         let catalog = self.catalog();
         let accepted = self.planner.type_conditions(entity_type_name);
         let accepted: Vec<&str> = accepted.iter().map(String::as_str).collect();
-        for sub_field in self.flatten_selections_for(selection_set, &accepted) {
+        for sub_field in flatten_selections_for(selection_set, &accepted) {
             let sub_name = sub_field.name.as_str();
             if only.is_some_and(|keep| !keep(sub_name)) {
                 continue;
             }
-            let sub_alias = sub_field.response_key().as_str().to_string();
+            let sub_alias = sub_field.response_key().to_string();
 
             // Deduplicate if already selected
             if fields.iter().any(|f| f.field_alias() == sub_alias) {
@@ -3549,7 +3493,10 @@ impl<'a> PlanningContext<'a> {
                 });
             };
 
-            let memo_key = (parent_alias.to_string(), sub_field as *const Field as usize);
+            let memo_key = (
+                parent_alias.to_string(),
+                sub_field as *const RequestField as usize,
+            );
             if let Some(step_id) = self.step_memo.borrow().get(&memo_key).copied() {
                 fields.push(SelectedField::relation(sub_alias, step_id));
                 continue;
@@ -3569,10 +3516,8 @@ impl<'a> PlanningContext<'a> {
                         _ => &table_meta.primary_key[0],
                     };
                     let json_path = sub_field
-                        .arguments
-                        .iter()
-                        .find(|a| a.name == "path")
-                        .and_then(|a| self.resolve_value(&a.value).as_str().map(str::to_string));
+                        .argument("path")
+                        .and_then(|v| v.as_str().map(str::to_string));
                     let output = match (table_meta.get_column(column), json_path) {
                         // The first item a JSON path selects
                         (Some(col), Some(path))
@@ -3589,7 +3534,7 @@ impl<'a> PlanningContext<'a> {
                         (Some(col), _) => self.plan_output(
                             &col.pg_type,
                             col.enum_key.as_deref(),
-                            Some(&sub_field.selection_set),
+                            Some(&sub_field.children),
                         ),
                         (None, _) => ValueOutput::Plain,
                     };
@@ -3610,12 +3555,8 @@ impl<'a> PlanningContext<'a> {
                         None,
                         alias_counter,
                     )?;
-                    let max_depth = sub_field
-                        .arguments
-                        .iter()
-                        .find(|a| a.name == "maxDepth")
-                        .and_then(|a| Self::as_usize(&self.resolve_value(&a.value)));
-                    let ordered = sub_field.arguments.iter().any(|a| a.name == "orderBy");
+                    let max_depth = sub_field.argument("maxDepth").and_then(Self::as_usize);
+                    let ordered = sub_field.arguments.contains_key("orderBy");
                     if let Some(Step::PgSelect {
                         tree,
                         order_by,
@@ -3735,7 +3676,7 @@ impl<'a> PlanningContext<'a> {
                         *alias_counter += 1;
                         let (target_fields, target_poly) = self.plan_row_shape(
                             plan,
-                            &sub_field.selection_set,
+                            &sub_field.children,
                             target_schema,
                             target_table,
                             &target_alias,
@@ -3779,7 +3720,7 @@ impl<'a> PlanningContext<'a> {
                         field_alias: sub_alias,
                         func: func.clone(),
                         arguments: self.bind_function_args(func, sub_field, true, None),
-                        fields: self.plan_function_row_fields(&sub_field.selection_set, func),
+                        fields: self.plan_function_row_fields(&sub_field.children, func),
                     });
                 }
             }
@@ -3793,11 +3734,11 @@ impl<'a> PlanningContext<'a> {
     /// `variancePopulation`, `median` and `percentile(fraction:)`, each over some columns.
     fn plan_aggregates(
         &self,
-        selection_set: &apollo_compiler::executable::SelectionSet,
+        selection_set: &[RequestField],
         table_meta: &TableMetadata,
     ) -> Result<AggregatesSelections, PlannerError> {
         let mut aggs = AggregatesSelections::default();
-        for agg_sel in self.flatten_selections(selection_set, None) {
+        for agg_sel in selection_set {
             let (function, fraction) = match agg_sel.name.as_str() {
                 "min" => ("min", None),
                 "max" => ("max", None),
@@ -3811,10 +3752,8 @@ impl<'a> PlanningContext<'a> {
                 "median" => ("percentile_cont", Some(0.5)),
                 "percentile" => {
                     let fraction = agg_sel
-                        .arguments
-                        .iter()
-                        .find(|a| a.name == "fraction")
-                        .and_then(|a| self.resolve_value(&a.value).as_f64())
+                        .argument("fraction")
+                        .and_then(|v| v.as_f64())
                         .filter(|f| (0.0..=1.0).contains(f))
                         .ok_or_else(|| {
                             PlannerError::InvalidInput(
@@ -3825,16 +3764,16 @@ impl<'a> PlanningContext<'a> {
                 }
                 _ => continue,
             };
-            let alias = agg_sel.response_key().as_str().to_string();
+            let alias = agg_sel.response_key().to_string();
             if aggs.parts.iter().any(|p| p.field_alias == alias) {
                 continue;
             }
             let mut fields = Vec::new();
-            for col_sel in self.flatten_selections(&agg_sel.selection_set, None) {
+            for col_sel in &agg_sel.children {
                 let Some(col) = table_meta.column_by_field(col_sel.name.as_str()) else {
                     continue;
                 };
-                let key = col_sel.response_key().as_str().to_string();
+                let key = col_sel.response_key().to_string();
                 if fields.iter().any(|f: &AggregateField| f.field_alias == key) {
                     continue;
                 }
@@ -3860,7 +3799,7 @@ impl<'a> PlanningContext<'a> {
     /// connection's order, within `partitionBy` groups.
     fn plan_windows(
         &self,
-        edge_fields: &[&Field],
+        edge_fields: &[&RequestField],
         table_meta: &TableMetadata,
     ) -> Result<Vec<WindowSelection>, PlannerError> {
         let mut windows = Vec::new();
@@ -3873,11 +3812,7 @@ impl<'a> PlanningContext<'a> {
                 "runningSum" => "running_sum",
                 _ => continue,
             };
-            let partition_arg = f
-                .arguments
-                .iter()
-                .find(|a| a.name == "partitionBy")
-                .map(|a| self.resolve_value(&a.value));
+            let partition_arg = f.argument("partitionBy").cloned();
             let partition = self.plan_group_keys(partition_arg, table_meta, "partitionBy")?;
             if partition
                 .iter()
@@ -3888,7 +3823,7 @@ impl<'a> PlanningContext<'a> {
                 ));
             }
             let fields = if function == "running_sum" {
-                self.flatten_selections(&f.selection_set, None)
+                f.children
                     .iter()
                     .filter_map(|c| {
                         let col = table_meta
@@ -3955,16 +3890,10 @@ impl<'a> PlanningContext<'a> {
     /// A `groupedAggregates(groupBy:, having:)` selection of a connection.
     fn plan_grouped_aggregates(
         &self,
-        field: &Field,
+        field: &RequestField,
         table_meta: &TableMetadata,
     ) -> Result<GroupedAggregates, PlannerError> {
-        let arg = |name: &str| {
-            field
-                .arguments
-                .iter()
-                .find(|a| a.name.as_str() == name)
-                .map(|a| self.resolve_value(&a.value))
-        };
+        let arg = |name: &str| field.argument(name).cloned();
         let keys = self.plan_group_keys(arg("groupBy"), table_meta, "groupBy")?;
         if keys.is_empty() {
             return Err(PlannerError::InvalidInput(
@@ -4044,7 +3973,7 @@ impl<'a> PlanningContext<'a> {
             ));
         }
         let mut grouped = GroupedAggregates {
-            field_alias: field.response_key().as_str().to_string(),
+            field_alias: field.response_key().to_string(),
             keys,
             having,
             include_keys: false,
@@ -4054,14 +3983,14 @@ impl<'a> PlanningContext<'a> {
             bins,
             fill_gaps,
         };
-        for sel in self.flatten_selections(&field.selection_set, None) {
+        for sel in &field.children {
             match sel.name.as_str() {
                 "keys" => grouped.include_keys = true,
                 "count" => grouped.include_count = true,
                 _ => {}
             }
         }
-        grouped.aggregates = self.plan_aggregates(&field.selection_set, table_meta)?;
+        grouped.aggregates = self.plan_aggregates(&field.children, table_meta)?;
         Ok(grouped)
     }
 
@@ -4071,7 +4000,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_function(
         &self,
         plan: &mut OperationPlan,
-        field: &Field,
+        field: &RequestField,
         func: &FunctionMetadata,
         mutation: bool,
         row: Option<ArgValue>,
@@ -4094,11 +4023,11 @@ impl<'a> PlanningContext<'a> {
             FunctionReturn::Value(pg_type) => FunctionResult::Value(self.plan_output(
                 pg_type,
                 pg_type_enum_key(pg_type).as_deref(),
-                Some(&field.selection_set),
+                Some(&field.children),
             )),
             FunctionReturn::Void => FunctionResult::Void,
             FunctionReturn::Record => {
-                FunctionResult::Record(self.plan_function_row_fields(&field.selection_set, func))
+                FunctionResult::Record(self.plan_function_row_fields(&field.children, func))
             }
             FunctionReturn::Table { schema, table } => {
                 let table_meta = self.find_table(schema, table)?;
@@ -4106,7 +4035,7 @@ impl<'a> PlanningContext<'a> {
                 *alias_counter += 1;
                 let (fields, polymorphism) = self.plan_row_shape(
                     plan,
-                    &field.selection_set,
+                    &field.children,
                     schema,
                     table,
                     &table_alias,
@@ -4141,13 +4070,13 @@ impl<'a> PlanningContext<'a> {
     /// Selections on a table-valued function's `<Func>Row` type: columns and `__typename`.
     fn plan_function_row_fields(
         &self,
-        selection_set: &apollo_compiler::executable::SelectionSet,
+        selection_set: &[RequestField],
         func: &FunctionMetadata,
     ) -> Vec<SelectedField> {
         let row_type = func.row_type_name();
         let mut fields: Vec<SelectedField> = Vec::new();
-        for f in self.flatten_selections(selection_set, Some(&row_type)) {
-            let alias = f.response_key().as_str();
+        for f in flatten_selections_for(selection_set, &[&row_type]) {
+            let alias = f.response_key();
             if fields
                 .iter()
                 .any(|existing| existing.field_alias() == alias)
@@ -4171,7 +4100,7 @@ impl<'a> PlanningContext<'a> {
                     output: self.plan_output(
                         &column.pg_type,
                         enum_key.as_deref(),
-                        Some(&f.selection_set),
+                        Some(&f.children),
                     ),
                 });
             }
@@ -4185,7 +4114,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_row_shape(
         &self,
         plan: &mut OperationPlan,
-        selection_set: &apollo_compiler::executable::SelectionSet,
+        selection_set: &[RequestField],
         schema: &str,
         table_name: &str,
         alias: &str,
@@ -4227,7 +4156,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_object_fields(
         &self,
         plan: &mut OperationPlan,
-        selection_set: &apollo_compiler::executable::SelectionSet,
+        selection_set: &[RequestField],
         schema: &str,
         table_name: &str,
         alias: &str,
@@ -4331,8 +4260,7 @@ impl<'a> PlanningContext<'a> {
         // Restore selection order across the partitions
         let conditions = self.planner.type_conditions(type_name);
         let conditions: Vec<&str> = conditions.iter().map(String::as_str).collect();
-        let order: Vec<String> = self
-            .flatten_selections_for(selection_set, &conditions)
+        let order: Vec<String> = flatten_selections_for(selection_set, &conditions)
             .iter()
             .map(|f| f.response_key().to_string())
             .collect();
@@ -4359,7 +4287,7 @@ impl<'a> PlanningContext<'a> {
     fn plan_row_polymorphism(
         &self,
         plan: &mut OperationPlan,
-        selection_set: &apollo_compiler::executable::SelectionSet,
+        selection_set: &[RequestField],
         schema: &str,
         table_name: &str,
         table_alias: &str,
