@@ -48,6 +48,8 @@ export const comments = blog.table(
   (t) => [
     check("comments_body_check", sql`length(${t.body}) BETWEEN 1 AND 2000`),
     index("comments_post_idx").on(t.postId, t.createdAt, t.id),
+    // the foreign key to authors: relation fields and filters from an author to their comments use it
+    index("comments_author_idx").on(t.authorId),
   ],
 );
 
