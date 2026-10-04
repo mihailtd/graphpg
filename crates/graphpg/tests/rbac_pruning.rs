@@ -2,7 +2,7 @@
 
 mod common;
 use graphpg::catalog::CatalogInspector;
-use graphpg::config::{EngineConfig, FederationConfig, RbacConfig};
+use graphpg::config::{Config, FederationConfig, RbacConfig};
 use graphpg::schema::SchemaBuilder;
 use tokio_postgres::NoTls;
 
@@ -69,7 +69,7 @@ async fn test_rbac_read_only_table_has_no_mutations_and_prunes_other_tables() {
     ensure_test_roles(&client).await;
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
+    let mut config = Config::default();
     config.rbac = RbacConfig {
         enabled: true,
         role: Some("rbac_reader_role".to_string()),
@@ -142,7 +142,7 @@ async fn test_rbac_writer_role_has_full_mutations_for_permitted_table() {
     ensure_test_roles(&client).await;
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
+    let mut config = Config::default();
     config.rbac = RbacConfig {
         enabled: true,
         role: Some("rbac_writer_role".to_string()),
@@ -207,7 +207,7 @@ async fn test_rbac_column_level_pruning() {
     ensure_test_roles(&client).await;
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
+    let mut config = Config::default();
     config.rbac = RbacConfig {
         enabled: true,
         role: Some("rbac_col_role".to_string()),
@@ -259,12 +259,12 @@ async fn test_rbac_and_federation_combined() {
     ensure_test_roles(&client).await;
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
+    let mut config = Config::default();
     config.rbac = RbacConfig {
         enabled: true,
         role: Some("rbac_reader_role".to_string()),
     };
-    config.federation = FederationConfig {
+    config.graphql.federation = FederationConfig {
         enabled: true,
         version: Some("v2.3".to_string()),
     };

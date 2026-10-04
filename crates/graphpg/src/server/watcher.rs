@@ -1,5 +1,5 @@
 use crate::catalog::{finalize, CatalogError, CatalogInspector};
-use crate::config::{ConfigOverrides, ConfigSchemaGenerator, EngineConfig};
+use crate::config::{Config, ConfigOverrides, ConfigSchemaGenerator};
 use crate::schema::SchemaBuilder;
 use crate::server::ServerState;
 use std::sync::Arc;
@@ -106,7 +106,9 @@ async fn run_watcher_loop(
         )
     };
     // The schemas the last load inspected (the config file may change them)
-    let mut schemas = load_config(&options).map(|c| c.schemas).unwrap_or_default();
+    let mut schemas = load_config(&options)
+        .map(|c| c.database.schemas)
+        .unwrap_or_default();
     let current = |schemas: &Vec<String>| {
         fingerprint(state.clone(), schemas.clone(), options.config_path.clone())
     };
@@ -171,10 +173,10 @@ async fn query_catalog_fingerprint(state: &ServerState, schemas: &[String]) -> S
 /// The config file (if any) with the environment and flag overrides applied, as at startup.
 fn load_config(
     options: &WatcherOptions,
-) -> Result<EngineConfig, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Config, Box<dyn std::error::Error + Send + Sync>> {
     let mut config = match &options.config_path {
-        Some(path) => EngineConfig::load_from_file(path)?,
-        None => EngineConfig::default(),
+        Some(path) => Config::load_from_file(path, crate::config::Mode::Dev)?,
+        None => Config::defaults(crate::config::Mode::Dev),
     };
     options.overrides.apply(&mut config);
     Ok(config)
@@ -190,15 +192,15 @@ async fn reload_and_regenerate(
 
     // 1. Re-read the config and re-inspect the catalog
     let config = load_config(options)?;
-    if config.schemas.first() != Some(&state.default_schema) {
+    if config.database.schemas.first() != Some(&state.default_schema) {
         tracing::warn!(
             default_schema = %state.default_schema,
-            schemas = %config.schemas.join(","),
+            schemas = %config.database.schemas.join(","),
             "the config's first schema changed: the default schema changes on restart"
         );
     }
     let inspector = CatalogInspector::new(&client);
-    let schemas: Vec<&str> = config.schemas.iter().map(String::as_str).collect();
+    let schemas: Vec<&str> = config.database.schemas.iter().map(String::as_str).collect();
     let (base, config_json) = match inspector.inspect_base(&schemas, &config).await {
         Ok(base) => {
             let json = ConfigSchemaGenerator::generate(&base);
@@ -206,9 +208,7 @@ async fn reload_and_regenerate(
         }
         // Keep the config's JSON Schema current so the config can be fixed in the editor
         Err(err @ CatalogError::Config(_)) => {
-            let plain = inspector
-                .inspect_base(&schemas, &EngineConfig::default())
-                .await?;
+            let plain = inspector.inspect_base(&schemas, &Config::default()).await?;
             (Err(err), ConfigSchemaGenerator::generate(&plain))
         }
         Err(err) => return Err(err.into()),
@@ -239,7 +239,7 @@ async fn reload_and_regenerate(
         "Hot-reloaded GraphQL schema and re-exported schema artifacts"
     );
 
-    Ok(config.schemas)
+    Ok(config.database.schemas)
 }
 
 fn write_file(path: &str, content: &str) -> std::io::Result<()> {

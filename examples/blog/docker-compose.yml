@@ -23,6 +23,6 @@ services:
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/blog
     volumes:
-      - ./engine.config.yaml:/app/engine.config.yaml:ro
+      - ./graphpg.yaml:/app/graphpg.yaml:ro
     ports:
       - "4000:4000"

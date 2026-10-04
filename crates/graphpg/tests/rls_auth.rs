@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use graphpg::catalog::CatalogInspector;
 use graphpg::config::models::{AuthConfig, RolesConfig, SessionVariablesConfig};
-use graphpg::config::EngineConfig;
+use graphpg::config::Config;
 use graphpg::schema::SchemaBuilder;
 use graphpg::server::{create_pool, create_router, Authenticator, ServerState};
 use http_body_util::BodyExt;
@@ -178,9 +178,12 @@ async fn setup_app(auth_cfg: AuthConfig) -> axum::Router {
     });
     ensure_rls_db(&client).await;
 
-    let config = EngineConfig {
-        schemas: vec!["rls_test".to_string()],
-        ..EngineConfig::default()
+    let config = Config {
+        database: graphpg::config::DatabaseConfig {
+            schemas: vec!["rls_test".to_string()],
+            ..Default::default()
+        },
+        ..Config::default()
     };
     let catalog = CatalogInspector::new(&client)
         .inspect_schema_with_config("rls_test", &config)

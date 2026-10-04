@@ -1,18 +1,41 @@
-//! `engine.config.yaml`: changes to the generated GraphQL schema that the database cannot
-//! express. Everything is keyed by database object name (stable across renames) and describes
-//! schema-level operations: rename, describe or hide types and fields, choose which root
-//! fields exist, declare the keys and relations of views, and mount functions as fields.
-//! Schema design itself — tables, constraints, types, functions — belongs in SQL.
+//! `graphpg.yaml`: the configuration of one graphpg server. Shared sections (`server`,
+//! `database`, `auth`, `rbac`, `debug`) apply to every API; `graphql` and `openapi` hold what
+//! belongs to one API, each switchable with `enabled`. Everything else describes the
+//! generated APIs where the database cannot say what is wanted: rename, describe or hide
+//! types and fields, choose which operations exist, declare the keys and relations of views,
+//! and mount functions as fields. Those entries are keyed by database object name (stable
+//! across renames) and shared by both APIs. Schema design itself (tables, constraints, types,
+//! functions) belongs in SQL.
+//!
+//! One file serves every environment: `dev:` and `prod:` blocks hold the settings that differ,
+//! merged over the rest for the mode the server starts in (see [`super::loader`]).
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EngineConfig {
-    /// Config format version (`"1.0"`).
+pub struct Config {
+    /// The HTTP listener.
     #[serde(default)]
-    pub version: Option<String>,
+    pub server: ServerConfig,
+    /// The PostgreSQL connection, the schemas to expose and the read replicas.
+    #[serde(default)]
+    pub database: DatabaseConfig,
+    /// Authentication (OAuth 2.0 bearer tokens) and the Row-Level Security session context.
+    #[serde(default)]
+    pub auth: AuthConfig,
+    /// Role-based access control (RBAC) schema pruning configuration.
+    #[serde(default)]
+    pub rbac: RbacConfig,
+    /// Diagnostics added to responses. For development only.
+    #[serde(default)]
+    pub debug: DebugConfig,
+    /// The GraphQL API.
+    #[serde(default)]
+    pub graphql: GraphqlConfig,
+    /// The REST API and its OpenAPI description.
+    #[serde(default)]
+    pub openapi: OpenapiConfig,
     /// Tables, views, materialized views and foreign tables, by relation name.
     #[serde(default)]
     pub entities: BTreeMap<String, EntityConfig>,
@@ -29,24 +52,185 @@ pub struct EngineConfig {
     /// Search root fields (`usersFuzzySearch`, ...).
     #[serde(default)]
     pub search: SearchConfig,
+}
+
+/// A number given as text, which is what `${NAME}` produces: `port: '${PORT}'`.
+fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Native<T> {
+        Value(T),
+        Text(String),
+    }
+    match Native::<T>::deserialize(deserializer)? {
+        Native::Value(value) => Ok(value),
+        Native::Text(text) => text
+            .trim()
+            .to_ascii_lowercase()
+            .parse()
+            .map_err(|e| serde::de::Error::custom(format!("invalid value {text:?}: {e}"))),
+    }
+}
+
+/// A switch given as text, which is what `${NAME}` produces: `true`, `false`, `1`, `0`,
+/// `yes`, `no`, `on` or `off`.
+fn switch<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Native {
+        Value(bool),
+        Text(String),
+    }
+    match Native::deserialize(deserializer)? {
+        Native::Value(value) => Ok(value),
+        Native::Text(text) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => Ok(true),
+            "false" | "no" | "off" | "0" => Ok(false),
+            _ => Err(serde::de::Error::custom(format!(
+                "invalid value {text:?} (true or false)"
+            ))),
+        },
+    }
+}
+
+/// The HTTP listener.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ServerConfig {
+    /// Address to listen on.
+    #[serde(default = "default_host")]
+    pub host: String,
+    /// Port to listen on.
+    #[serde(deserialize_with = "lenient", default = "default_port")]
+    pub port: u16,
+}
+
+fn default_host() -> String {
+    "0.0.0.0".to_string()
+}
+fn default_port() -> u16 {
+    4000
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: default_host(),
+            port: default_port(),
+        }
+    }
+}
+
+/// Database connection used when the config names none.
+pub const DEFAULT_DATABASE_URL: &str = "postgres://postgres:postgres@localhost:5432/graphpg";
+
+/// Schema inspected when the config names none.
+pub const DEFAULT_SCHEMA: &str = "app_public";
+
+/// The PostgreSQL connection, the schemas to expose and the read replicas.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DatabaseConfig {
+    /// Connection string. Keep credentials out of the file: `url: ${DATABASE_URL}`.
+    #[serde(default = "default_database_url")]
+    pub url: String,
+    /// Connections in the pool.
+    #[serde(deserialize_with = "lenient", default = "default_pool_size")]
+    pub pool_size: usize,
+    /// Schemas to expose, the first being the default schema (`app_public` when empty).
+    #[serde(default)]
+    pub schemas: Vec<String>,
+    /// Connection strings of read replicas: queries run on those that are standbys.
+    #[serde(default)]
+    pub replicas: Vec<String>,
+    /// Append a sqlcommenter comment (route, field, trace context) to every statement.
+    #[serde(deserialize_with = "switch", default = "default_true")]
+    pub sql_comments: bool,
+}
+
+fn default_database_url() -> String {
+    DEFAULT_DATABASE_URL.to_string()
+}
+fn default_pool_size() -> usize {
+    10
+}
+fn default_true() -> bool {
+    true
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            url: default_database_url(),
+            pool_size: default_pool_size(),
+            schemas: Vec::new(),
+            replicas: Vec::new(),
+            sql_comments: true,
+        }
+    }
+}
+
+impl DatabaseConfig {
+    /// The schemas to inspect, the first being the default: [`schemas`](Self::schemas), else
+    /// [`DEFAULT_SCHEMA`].
+    pub fn resolved_schemas(&self) -> Vec<String> {
+        if self.schemas.is_empty() {
+            vec![DEFAULT_SCHEMA.to_string()]
+        } else {
+            self.schemas.clone()
+        }
+    }
+}
+
+/// Diagnostics added to responses. Never enable them in production.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DebugConfig {
+    /// Include the generated SQL in the response `extensions`.
+    #[serde(default, deserialize_with = "switch")]
+    pub sql: bool,
+    /// Include PostgreSQL's `EXPLAIN (ANALYZE)` output of every statement.
+    #[serde(default, deserialize_with = "switch")]
+    pub explain: bool,
+}
+
+/// The GraphQL API.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GraphqlConfig {
+    /// Serve the GraphQL API at `/graphql`.
+    #[serde(deserialize_with = "switch", default = "default_true")]
+    pub enabled: bool,
+    /// Serve the GraphiQL IDE at `/graphiql`. On in `dev` mode, off in `prod`.
+    #[serde(default, deserialize_with = "switch")]
+    pub ui: bool,
     /// Apollo Federation configuration.
     #[serde(default)]
     pub federation: FederationConfig,
-    /// Role-based access control (RBAC) schema pruning configuration.
-    #[serde(default)]
-    pub rbac: RbacConfig,
-    /// Authentication (OAuth 2.0 bearer tokens) and the Row-Level Security session context.
-    #[serde(default)]
-    pub auth: AuthConfig,
-    /// Serve the GraphiQL IDE at `/graphiql`: for development and pre-production, off by
-    /// default (`GRAPHIQL` overrides).
-    #[serde(default)]
-    pub graphiql: bool,
-    /// Database schemas to inspect, the first being the default schema. When empty, the
-    /// `DATABASE_SCHEMA` environment variable names them, else `app_public` (see
-    /// [`ConfigOverrides::apply`]).
-    #[serde(default)]
-    pub schemas: Vec<String>,
+}
+
+impl Default for GraphqlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ui: false,
+            federation: FederationConfig::default(),
+        }
+    }
+}
+
+/// The REST API and its OpenAPI description.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OpenapiConfig {
+    /// Serve the REST API. Off until the REST surface exists.
+    #[serde(default, deserialize_with = "switch")]
+    pub enabled: bool,
 }
 
 /// Apollo Federation configuration for exposing this engine as a federated subgraph.
@@ -54,7 +238,7 @@ pub struct EngineConfig {
 #[serde(deny_unknown_fields)]
 pub struct FederationConfig {
     /// Enable Apollo Federation subgraph mode.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "switch")]
     pub enabled: bool,
     /// Federation spec version (defaults to "v2.3").
     #[serde(default)]
@@ -66,7 +250,7 @@ pub struct FederationConfig {
 #[serde(deny_unknown_fields)]
 pub struct RbacConfig {
     /// Whether to prune the GraphQL schema based on PostgreSQL role privileges.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "switch")]
     pub enabled: bool,
     /// Optional PostgreSQL role to switch to (`SET ROLE`) during schema inspection.
     /// If None, privileges are checked against the currently connected database user/role.
@@ -84,7 +268,7 @@ pub struct RbacConfig {
 #[serde(deny_unknown_fields)]
 pub struct AuthConfig {
     /// Whether requests are authenticated.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "switch")]
     pub enabled: bool,
     /// The authorization server's issuer identifier: a token's `iss` must equal it, and the
     /// signing keys are discovered from its metadata unless `jwks_uri` names them.
@@ -98,8 +282,8 @@ pub struct AuthConfig {
     #[serde(default)]
     pub jwks_uri: Option<String>,
     /// A shared secret verifying HMAC-signed tokens (HS256, HS384, HS512) instead of a key
-    /// set, for authorization servers that sign that way; `env:NAME` reads it from the
-    /// environment. At least 32 bytes.
+    /// set, for authorization servers that sign that way. Keep it out of the file:
+    /// `secret: ${AUTH_JWT_SECRET}`. At least 32 bytes.
     #[serde(default)]
     pub secret: Option<String>,
     /// Signature algorithms (`alg`) accepted. By default the asymmetric ones with a key set
@@ -111,7 +295,7 @@ pub struct AuthConfig {
     #[serde(default)]
     pub token_type: Option<String>,
     /// Clock skew tolerated when checking `exp` and `nbf`, in seconds.
-    #[serde(default = "default_leeway")]
+    #[serde(default = "default_leeway", deserialize_with = "lenient")]
     pub leeway_seconds: u64,
     /// The PostgreSQL roles requests run as.
     #[serde(default)]
@@ -255,38 +439,16 @@ impl ExtensionsConfig {
     }
 }
 
-impl EngineConfig {
-    /// Load and parse an `engine.config.yaml` file.
-    pub fn load_from_file<P: AsRef<Path>>(
-        path: P,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let path = path.as_ref();
-        let content =
-            std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        Self::from_yaml(&content).map_err(|e| format!("{}: {e}", path.display()).into())
-    }
-
-    pub fn from_yaml(yaml: &str) -> Result<Self, serde_yaml::Error> {
-        // An empty file is an empty config
-        if yaml.trim().is_empty() {
-            return Ok(Self::default());
-        }
-        serde_yaml::from_str(yaml)
-    }
-}
-
-/// Schema inspected when neither the config nor the environment names one.
-pub const DEFAULT_SCHEMA: &str = "app_public";
-
-/// Settings given outside the config file (environment variables and CLI flags). They are
-/// applied over the file at startup and again on every hot reload, so a reload sees the same
-/// effective config as startup.
+/// Settings given outside the config file (environment variables and CLI flags), applied over
+/// the file at startup and again on every hot reload so a reload sees the same effective
+/// config as startup. Transitional: the config file, with `${ENV}` interpolation, replaces
+/// them.
 #[derive(Debug, Clone, Default)]
 pub struct ConfigOverrides {
     /// `DATABASE_SCHEMAS`: comma-separated schemas, taking precedence over the config file.
     pub database_schemas: Option<String>,
     /// `DATABASE_SCHEMA`: one schema (or a comma-separated list), used when neither
-    /// `DATABASE_SCHEMAS` nor the config file's `schemas` names any.
+    /// `DATABASE_SCHEMAS` nor the config file's `database.schemas` names any.
     pub database_schema: Option<String>,
     /// `--federation` / `FEDERATION`.
     pub federation: bool,
@@ -305,11 +467,11 @@ pub struct ConfigOverrides {
 }
 
 impl ConfigOverrides {
-    /// Applies the overrides to `config`. Afterwards `config.schemas` is the resolved,
-    /// non-empty list of schemas to inspect, the first being the default schema:
-    /// `DATABASE_SCHEMAS`, else the config file's `schemas`, else `DATABASE_SCHEMA`, else
-    /// [`DEFAULT_SCHEMA`].
-    pub fn apply(&self, config: &mut EngineConfig) {
+    /// Applies the overrides to `config`. Afterwards `config.database.schemas` is the
+    /// resolved, non-empty list of schemas to inspect, the first being the default schema:
+    /// `DATABASE_SCHEMAS`, else the config file's `database.schemas`, else `DATABASE_SCHEMA`,
+    /// else [`DEFAULT_SCHEMA`].
+    pub fn apply(&self, config: &mut Config) {
         fn split(list: Option<&str>) -> Vec<String> {
             list.unwrap_or_default()
                 .split(',')
@@ -320,18 +482,16 @@ impl ConfigOverrides {
         }
         let from_env = split(self.database_schemas.as_deref());
         if !from_env.is_empty() {
-            config.schemas = from_env;
-        } else if config.schemas.is_empty() {
-            config.schemas = split(self.database_schema.as_deref());
+            config.database.schemas = from_env;
+        } else if config.database.schemas.is_empty() {
+            config.database.schemas = split(self.database_schema.as_deref());
         }
-        if config.schemas.is_empty() {
-            config.schemas = vec![DEFAULT_SCHEMA.to_string()];
-        }
+        config.database.schemas = config.database.resolved_schemas();
         if self.federation {
-            config.federation.enabled = true;
+            config.graphql.federation.enabled = true;
         }
         if let Some(graphiql) = self.graphiql {
-            config.graphiql = graphiql;
+            config.graphql.ui = graphiql;
         }
         // Empty variables (a template's `AUTH_JWT_SECRET=`) override nothing
         let set = |v: &Option<String>| {
@@ -547,7 +707,6 @@ mod tests {
     #[test]
     fn test_parse_sample_yaml_config() {
         let yaml_str = r#"
-version: "1.0"
 entities:
   users:
     type_name: Person
@@ -572,8 +731,7 @@ functions:
       field_name: flattenedItems
       arguments: { m_id: id }
 "#;
-        let config = EngineConfig::from_yaml(yaml_str).expect("failed to parse YAML");
-        assert_eq!(config.version.as_deref(), Some("1.0"));
+        let config = Config::from_yaml(yaml_str).expect("failed to parse YAML");
         assert_eq!(config.entities.len(), 2);
 
         let users = &config.entities["users"];
@@ -603,13 +761,13 @@ functions:
 
     #[test]
     fn rejects_unknown_keys() {
-        let err = EngineConfig::from_yaml("entities:\n  users:\n    rename_type: X\n").unwrap_err();
+        let err = Config::from_yaml("entities:\n  users:\n    rename_type: X\n").unwrap_err();
         assert!(err.to_string().contains("rename_type"), "{err}");
     }
 
     #[test]
     fn empty_config() {
-        let config = EngineConfig::from_yaml("  \n").unwrap();
+        let config = Config::from_yaml("  \n").unwrap();
         assert!(config.entities.is_empty() && config.functions.is_empty());
     }
 }

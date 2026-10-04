@@ -4,7 +4,7 @@ use super::models::{
     StiMetadata, StiVariant, TableMetadata, TypeLimits, UniqueKey,
 };
 use crate::compiler::quote_ident;
-use crate::config::EngineConfig;
+use crate::config::Config;
 use std::collections::HashMap;
 use thiserror::Error;
 use tokio_postgres::Client;
@@ -100,13 +100,9 @@ impl<'a> CatalogInspector<'a> {
     /// The schemas to inspect: the config's `schemas` when it names any (as it always does
     /// once [`ConfigOverrides`](crate::config::ConfigOverrides) resolved it), else
     /// `schema_name`.
-    pub fn effective_schemas<'s>(
-        &self,
-        schema_name: &'s str,
-        config: &'s EngineConfig,
-    ) -> Vec<&'s str> {
-        if !config.schemas.is_empty() {
-            config.schemas.iter().map(|s| s.as_str()).collect()
+    pub fn effective_schemas<'s>(&self, schema_name: &'s str, config: &'s Config) -> Vec<&'s str> {
+        if !config.database.schemas.is_empty() {
+            config.database.schemas.iter().map(|s| s.as_str()).collect()
         } else if !schema_name.is_empty() {
             vec![schema_name]
         } else {
@@ -116,7 +112,7 @@ impl<'a> CatalogInspector<'a> {
 
     /// Inspects `schema_name` without an engine config.
     pub async fn inspect_schema(&self, schema_name: &str) -> Result<DatabaseCatalog, CatalogError> {
-        self.inspect_schema_with_config(schema_name, &EngineConfig::default())
+        self.inspect_schema_with_config(schema_name, &Config::default())
             .await
     }
 
@@ -125,7 +121,7 @@ impl<'a> CatalogInspector<'a> {
         &self,
         schema_names: &[&str],
     ) -> Result<DatabaseCatalog, CatalogError> {
-        self.inspect_schemas_with_config(schema_names, &EngineConfig::default())
+        self.inspect_schemas_with_config(schema_names, &Config::default())
             .await
     }
 
@@ -133,17 +129,17 @@ impl<'a> CatalogInspector<'a> {
     pub async fn inspect_schemas_with_config(
         &self,
         schema_names: &[&str],
-        config: &EngineConfig,
+        config: &Config,
     ) -> Result<DatabaseCatalog, CatalogError> {
         let base = self.inspect_base(schema_names, config).await?;
         finalize(base, config)
     }
 
-    /// Inspects `schema_name` (or multiple schemas if defined in `config.schemas`) and applies `config`.
+    /// Inspects `schema_name` (or multiple schemas if defined in `config.database.schemas`) and applies `config`.
     pub async fn inspect_schema_with_config(
         &self,
         schema_name: &str,
-        config: &EngineConfig,
+        config: &Config,
     ) -> Result<DatabaseCatalog, CatalogError> {
         let schemas = self.effective_schemas(schema_name, config);
         self.inspect_schemas_with_config(&schemas, config).await
@@ -155,7 +151,7 @@ impl<'a> CatalogInspector<'a> {
     pub async fn inspect_base(
         &self,
         schema_names: &[&str],
-        config: &EngineConfig,
+        config: &Config,
     ) -> Result<DatabaseCatalog, CatalogError> {
         let (extensions, installed) = self.extension_filter(config).await?;
         let mut catalog = DatabaseCatalog::default();
@@ -190,7 +186,7 @@ impl<'a> CatalogInspector<'a> {
         &self,
         schema_names: &[&str],
         extensions: &ExtensionFilter,
-        config: &EngineConfig,
+        config: &Config,
         catalog: &mut DatabaseCatalog,
     ) -> Result<(), CatalogError> {
         catalog.tables = self
@@ -333,7 +329,7 @@ impl<'a> CatalogInspector<'a> {
     /// Validates `extensions.expose` against the installed extensions.
     async fn extension_filter(
         &self,
-        config: &EngineConfig,
+        config: &Config,
     ) -> Result<(ExtensionFilter, Vec<String>), CatalogError> {
         let installed: Vec<String> = self
             .client
@@ -370,7 +366,7 @@ impl<'a> CatalogInspector<'a> {
         schema_names: &[&str],
         extensions: &ExtensionFilter,
         server_version: u32,
-        config: &EngineConfig,
+        config: &Config,
     ) -> Result<Vec<TableMetadata>, CatalogError> {
         let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
         let rel_query = format!(
@@ -1561,7 +1557,7 @@ impl<'a> CatalogInspector<'a> {
 /// from [`CatalogInspector::inspect_base`] and resolves the remaining names.
 pub fn finalize(
     mut catalog: DatabaseCatalog,
-    config: &EngineConfig,
+    config: &Config,
 ) -> Result<DatabaseCatalog, CatalogError> {
     for t in &mut catalog.tables {
         refresh_key_operations(t);

@@ -178,7 +178,7 @@ type UserSearchResults { hits: [UserSearchHit!]!  hasMore: Boolean! }
 type UserSearchHit { score: Float!  node: User! }
 ```
 
-- `first` defaults to 10 and may be at most 50. Both are set in `engine.config.yaml` (`search: { default_limit, max_limit }`). A larger `first` is an error.
+- `first` defaults to 10 and may be at most 50. Both are set in `graphpg.yaml` (`search: { default_limit, max_limit }`). A larger `first` is an error.
 - `hasMore` says more rows matched than were returned (the query fetches one extra row). A UI can use it to prompt "refine your search".
 - `score` is the relevance, higher is better. Its scale depends on the method: word similarity for fuzzy, vector similarity for semantic, BM25 score, or fused reciprocal rank.
 - Fuzzy search uses trigram **word similarity**: how well the query matches some part of the value. A partly typed `"ada lov"` matches `"Ada Lovelace"` (0.875; whole-string similarity would give 0.5), which is what a typeahead needs. A row matches when `column %> query` holds, that is, when its word similarity reaches `pg_trgm.word_similarity_threshold` (0.6 by default), or `minSimilarity` when it is given.

@@ -4,7 +4,7 @@ mod common;
 use axum::http::header;
 use axum::http::StatusCode;
 use graphpg::catalog::CatalogInspector;
-use graphpg::config::{EngineConfig, FederationConfig};
+use graphpg::config::{Config, FederationConfig};
 use graphpg::schema::SchemaBuilder;
 use graphpg::server::{create_pool, create_router, ServerState};
 use http_body_util::BodyExt;
@@ -26,9 +26,9 @@ async fn setup_app(federation_enabled: bool) -> axum::Router {
     });
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
+    let mut config = Config::default();
     if federation_enabled {
-        config.federation = FederationConfig {
+        config.graphql.federation = FederationConfig {
             enabled: true,
             version: Some("v2.3".to_string()),
         };
@@ -66,8 +66,8 @@ async fn test_federation_subgraph_sdl_schema_export() {
     });
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
-    config.federation = FederationConfig {
+    let mut config = Config::default();
+    config.graphql.federation = FederationConfig {
         enabled: true,
         version: Some("v2.3".to_string()),
     };
@@ -140,8 +140,8 @@ async fn test_federation_runtime_schema_directives_and_types() {
     });
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
-    config.federation = FederationConfig {
+    let mut config = Config::default();
+    config.graphql.federation = FederationConfig {
         enabled: true,
         version: Some("v2.3".to_string()),
     };

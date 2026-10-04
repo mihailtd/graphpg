@@ -53,13 +53,13 @@ DATABASE_URL=postgres://user:pass@localhost/mydb DATABASE_SCHEMA=public graphpg 
 - **Authorization from the database**: OAuth 2.0 bearer tokens are verified and their claims are made available to **Row-Level Security** policies; the GraphQL schema is pruned to what the connecting role may do, from `GRANT`s.
 - **Apollo Federation v2** subgraph mode, `@defer` / `@stream`, streaming NDJSON/CSV export and `COPY` import, read replicas, OpenTelemetry spans.
 
-Schema design stays in SQL. An optional [`engine.config.yaml`](docs/configuration.md) renames and hides things and declares keys for views; it is not required.
+Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) renames and hides things and declares keys for views; it is not required.
 
 ## Documentation
 
 | | |
 | :--- | :--- |
-| [Configuration](docs/configuration.md) | Running graphpg, environment variables, `engine.config.yaml`, multiple schemas, dev mode |
+| [Configuration](docs/configuration.md) | Running graphpg, environment variables, `graphpg.yaml`, multiple schemas, dev mode |
 | [Schema mapping](docs/schema-mapping.md) | How tables, types, functions and constraints become GraphQL |
 | [GraphQL API](docs/graphql-api.md) | Pagination, filtering, aggregates, mutations, nested writes, errors, search |
 | [Authentication](docs/authentication.md) | OAuth 2.0 resource server and Row-Level Security |

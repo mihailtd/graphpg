@@ -1,6 +1,6 @@
 # Configuration
 
-graphpg is configured by environment variables and command-line flags (deployment concerns), and by an optional `engine.config.yaml` (changes to the generated schema that the database cannot express). Environment variables and flags override the file.
+graphpg is configured by one optional file, `graphpg.yaml`, which serves every environment (shared settings, then `dev:` and `prod:` blocks for what differs), and, for now, by environment variables and command-line flags that override it. The file's `${NAME}` references read the environment, so credentials stay out of it.
 
 ## Running
 
@@ -21,11 +21,11 @@ graphpg export-config-schema --out .engine/schema.config.json
 ```bash
 docker run -p 4000:4000 \
   -e DATABASE_URL=postgres://user:pass@db/mydb \
-  -v "$PWD/engine.config.yaml:/app/engine.config.yaml:ro" \
+  -v "$PWD/graphpg.yaml:/app/graphpg.yaml:ro" \
   ghcr.io/mihailtd/graphpg:1.0.1
 ```
 
-The image is a statically linked binary on `gcr.io/distroless/static`: no shell, no package manager, CA certificates, and a non-root user (UID 65532). graphpg reads `engine.config.yaml` from the working directory, `/app`. Because there is no shell or `curl` in the image, probe `GET /health` from outside (a Kubernetes `httpGet` probe, or your load balancer) rather than with a `HEALTHCHECK` command. The container stops cleanly on `SIGTERM`.
+The image is a statically linked binary on `gcr.io/distroless/static`: no shell, no package manager, CA certificates, and a non-root user (UID 65532). graphpg reads `graphpg.yaml` from the working directory, `/app`. Because there is no shell or `curl` in the image, probe `GET /health` from outside (a Kubernetes `httpGet` probe, or your load balancer) rather than with a `HEALTHCHECK` command. The container stops cleanly on `SIGTERM`.
 
 | Tag | Moves | Use for |
 | :--- | :--- | :--- |
@@ -56,7 +56,7 @@ OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOIN
 | `DATABASE_REPLICA_URLS` | | | Comma-separated read replicas ([details](performance.md#operations)) |
 | `DATABASE_SCHEMAS` / `DATABASE_SCHEMA` | | `app_public` | Schemas to expose, comma-separated ([multiple schemas](#multiple-schemas)) |
 | `PORT` | | `4000` | Listening port |
-| `ENGINE_CONFIG` | `--config <path>` | `./engine.config.yaml` if present | Config file |
+| `ENGINE_CONFIG` | `--config <path>` | `./graphpg.yaml` if present | Config file |
 | `GRAPHIQL` | `--graphiql` / `--no-graphiql` | off | GraphiQL IDE: development and pre-production only |
 | `FEDERATION` | `--federation` | off | Apollo Federation subgraph mode ([guide](federation-and-rbac.md)) |
 | `AUTH_ENABLED`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWKS_URI`, `AUTH_JWT_SECRET` | `--auth` / `--no-auth` | off | OAuth 2.0 bearer tokens ([guide](authentication.md)) |
@@ -68,14 +68,47 @@ OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOIN
 | `RUST_LOG` | | `info` | Log filter |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | | | Trace export, when built with the `otel` feature |
 
-## `engine.config.yaml`
+## `graphpg.yaml`
 
-The config changes the generated GraphQL schema where the database cannot say what is wanted. Schema design (tables, constraints, types, functions) stays in SQL; the config only holds GraphQL-level operations, keyed by **database** names so renames never break it.
-
-The server loads `--config <path>`, else `ENGINE_CONFIG`, else `./engine.config.yaml` when present. `graphpg export-config-schema` writes a JSON Schema (`.engine/schema.config.json`) listing the actual relations, columns, constraints and functions for editor completion and validation. In `--dev` mode the config is re-read when it changes. Every reference is validated at startup and all problems are reported together.
+One file configures a server for every environment. Shared settings come first; the settings that differ between modes go in `dev:` and `prod:` blocks, which are merged over the shared ones for the mode the server starts in (`--dev` selects development, otherwise production).
 
 ```yaml
-version: "1.0"
+database:
+  url: ${DATABASE_URL}          # strings read the environment; ${NAME:-default} gives a default
+  pool_size: 10
+  schemas: [auth, app]          # the first is the default schema (default: app_public)
+  replicas: []                  # read replica connection strings
+  sql_comments: true            # sqlcommenter comments on every statement
+
+server:
+  host: 0.0.0.0
+  port: 4000
+
+auth: { ... }                   # OAuth 2.0 bearer tokens (see authentication.md)
+rbac: { enabled: false }        # prune the APIs to what a role may access
+debug: { sql: false, explain: false }   # development only
+
+graphql:
+  enabled: true                 # serve /graphql
+  ui: false                     # the GraphiQL IDE: on by default in dev mode only
+  federation: { enabled: false }
+openapi:
+  enabled: false                # the REST API and its OpenAPI description
+
+dev:                            # settings that differ in dev mode
+  database: { pool_size: 2 }
+prod: {}                        # ... and in prod mode
+```
+
+The effective config of a mode is built in four steps, each overriding the last: the built-in defaults, the mode's built-in defaults (`dev` turns the GraphiQL IDE on), the shared settings, then the mode's block. Mappings merge key by key; anything else, a list included, is replaced. An unknown key is an error in the shared settings and in both blocks, so a typo in `dev:` is found when starting `prod`.
+
+Strings may read the environment: `${NAME}` (an error when unset or empty) and `${NAME:-default}`. Quote them inside `[...]` and `{...}`, write `$${` for a literal `${`, and use them for numbers and switches too (`port: '${PORT}'`; switches also read `on`, `off`, `yes`, `no`, `1` and `0`).
+
+The sections that follow, `entities`, `functions`, `types`, `extensions` and `search`, change the generated APIs where the database cannot say what is wanted. Schema design (tables, constraints, types, functions) stays in SQL; these hold only API-level operations, keyed by **database** names so renames never break them, and shared by every API.
+
+The server loads `--config <path>`, else `ENGINE_CONFIG`, else `./graphpg.yaml` when present. `graphpg export-config-schema` writes a JSON Schema (`.engine/schema.config.json`) listing the actual relations, columns, constraints and functions for editor completion and validation. In `--dev` mode the config is re-read when it changes. Every reference is validated at startup and all problems are reported together.
+
+```yaml
 entities:                      # tables, views, materialized views, foreign tables
   authors:
     type_name: Writer          # derived names follow: WriterFilter, createWriter, ...
@@ -124,17 +157,18 @@ extensions:
 
 ## Multiple schemas
 
-List the schemas to expose, in `engine.config.yaml` or the environment:
+List the schemas to expose, in `graphpg.yaml` or the environment:
 
 ```yaml
-schemas: [auth, app, billing]
+database:
+  schemas: [auth, app, billing]
 ```
 
 ```bash
 DATABASE_SCHEMAS="auth,app,billing" graphpg
 ```
 
-Schemas are chosen in this order, at startup and on every dev-mode reload: `DATABASE_SCHEMAS`, else the config's `schemas`, else `DATABASE_SCHEMA`, else `app_public`. The first schema listed is the default: where two schemas have a table of the same name, unqualified names in the config resolve to it.
+Schemas are chosen in this order, at startup and on every dev-mode reload: `DATABASE_SCHEMAS`, else the config's `database.schemas`, else `DATABASE_SCHEMA`, else `app_public`. The first schema listed is the default: where two schemas have a table of the same name, unqualified names in the config resolve to it.
 
 Foreign keys across schemas become ordinary relations, joined in the same single SQL statement (`app.posts.author_id` referencing `auth.users.id` gives `Post.user` and `User.posts`). `node(id:)` and Federation `_entities` route to the right schema.
 

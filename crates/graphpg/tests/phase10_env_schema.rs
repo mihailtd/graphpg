@@ -1,13 +1,13 @@
 //! Schema-driven smoke tests against the database and schema configured in `.env`
 //! (`DATABASE_URL`, `DATABASE_SCHEMA`) and the engine config the server would load
-//! (`ENGINE_CONFIG`, else the workspace's `engine.config.yaml`) — the largest schema we test with.
+//! (`ENGINE_CONFIG`, else the workspace's `graphpg.yaml`) — the largest schema we test with.
 //!
 //! Nothing here names a table: queries are generated from the catalog and the built GraphQL
 //! schema, so the same tests run against any database.
 mod common;
 use apollo_compiler::schema::ExtendedType;
 use graphpg::catalog::{CatalogInspector, Polymorphism};
-use graphpg::config::EngineConfig;
+use graphpg::config::Config;
 use graphpg::planner::QueryPlanner;
 use graphpg::schema::SchemaBuilder;
 use graphpg::{DatabaseCatalog, ExecutionEngine};
@@ -32,12 +32,12 @@ async fn setup() -> Env {
             eprintln!("connection error: {}", e);
         }
     });
-    let config_path = std::env::var("ENGINE_CONFIG").unwrap_or_else(|_| {
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../engine.config.yaml").to_string()
-    });
+    let config_path = std::env::var("ENGINE_CONFIG")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../graphpg.yaml").to_string());
     let config = match std::path::Path::new(&config_path).is_file() {
-        true => EngineConfig::load_from_file(&config_path).expect("engine config"),
-        false => EngineConfig::default(),
+        true => Config::load_from_file(&config_path, graphpg::config::Mode::Prod)
+            .expect("engine config"),
+        false => Config::default(),
     };
     let started = std::time::Instant::now();
     let catalog = CatalogInspector::new(&client)

@@ -1,4 +1,4 @@
-use graphpg::config::{ConfigOverrides, EngineConfig};
+use graphpg::config::{Config, ConfigOverrides, Mode, DEFAULT_CONFIG_FILE};
 use graphpg::server::Authenticator;
 use graphpg::{
     create_pool, create_router, CatalogInspector, DebugOptions, SchemaBuilder, ServerState,
@@ -48,10 +48,7 @@ fn flag_or_env(on: &str, off: &str, env_key: &str) -> Result<Option<bool>, Strin
     }
 }
 
-/// Default config file, used when present.
-const DEFAULT_CONFIG_PATH: &str = "engine.config.yaml";
-
-/// Engine config path: `--config <path>`, else `ENGINE_CONFIG`, else `engine.config.yaml` when
+/// Config path: `--config <path>`, else `ENGINE_CONFIG`, else `graphpg.yaml` when
 /// that file exists. An explicitly named file must exist.
 fn config_path() -> Result<Option<std::path::PathBuf>, String> {
     let args: Vec<String> = std::env::args().collect();
@@ -66,10 +63,10 @@ fn config_path() -> Result<Option<std::path::PathBuf>, String> {
         });
     match explicit {
         Some(path) if std::path::Path::new(&path).is_file() => Ok(Some(path.into())),
-        Some(path) => Err(format!("engine config not found: {path}")),
-        None => Ok(std::path::Path::new(DEFAULT_CONFIG_PATH)
+        Some(path) => Err(format!("config not found: {path}")),
+        None => Ok(std::path::Path::new(DEFAULT_CONFIG_FILE)
             .is_file()
-            .then(|| DEFAULT_CONFIG_PATH.into())),
+            .then(|| DEFAULT_CONFIG_FILE.into())),
     }
 }
 
@@ -111,12 +108,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let pool = create_pool(&database_url, pool_size)?;
     let config_path = config_path()?;
+    let is_dev_mode = switch("--dev", "DEV") || switch("--watch", "WATCH");
+    let mode = if is_dev_mode { Mode::Dev } else { Mode::Prod };
     let mut config = match &config_path {
         Some(path) => {
-            tracing::info!(path = %path.display(), "loading engine config");
-            EngineConfig::load_from_file(path).map_err(|e| e.to_string())?
+            tracing::info!(path = %path.display(), %mode, "loading config");
+            Config::load_from_file(path, mode).map_err(|e| e.to_string())?
         }
-        None => EngineConfig::default(),
+        None => Config::defaults(mode),
     };
     // Environment and flags over the file; the watcher re-applies them on every reload
     let overrides = ConfigOverrides {
@@ -131,7 +130,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         auth_secret: std::env::var("AUTH_JWT_SECRET").ok(),
     };
     overrides.apply(&mut config);
-    let schemas: Vec<&str> = config.schemas.iter().map(String::as_str).collect();
+    let schemas: Vec<&str> = config.database.schemas.iter().map(String::as_str).collect();
     let default_schema = schemas[0].to_string();
 
     // Check CLI subcommands
@@ -180,7 +179,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let out_path = get_out_path("--out", "SUBGRAPH_SCHEMA_OUT", "subgraph.graphql");
         let client = pool.get().await?;
         let mut cfg = config.clone();
-        cfg.federation.enabled = true;
+        cfg.graphql.federation.enabled = true;
         let catalog = CatalogInspector::new(&client)
             .inspect_schemas_with_config(&schemas, &cfg)
             .await?;
@@ -201,9 +200,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let client = pool.get().await?;
         let inspector = CatalogInspector::new(&client);
         // Database names only: the schema must not depend on the config it validates
-        let base = inspector
-            .inspect_base(&schemas, &EngineConfig::default())
-            .await?;
+        let base = inspector.inspect_base(&schemas, &Config::default()).await?;
         let schema_json = graphpg::ConfigSchemaGenerator::generate(&base);
 
         if let Some(parent) = std::path::Path::new(&out_path).parent() {
@@ -244,13 +241,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     tracing::info!(
-        schemas = %config.schemas.join(","),
+        schemas = %config.database.schemas.join(","),
         tables = catalog.tables.len(),
         pool_size,
         "introspected database"
     );
-
-    let is_dev_mode = switch("--dev", "DEV") || switch("--watch", "WATCH");
 
     let sql_comments = !std::env::var("SQL_COMMENTS")
         .is_ok_and(|v| matches!(v.as_str(), "0" | "false" | "no" | "off"));
@@ -304,7 +299,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_sql_comments(sql_comments)
             .with_replicas(replicas)
             .with_auth(authenticator)
-            .with_graphiql(config.graphiql),
+            .with_graphiql(config.graphql.ui),
     );
     if !state.replicas.is_empty() {
         state.refresh_replicas().await;
@@ -340,7 +335,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("graphpg listening on http://{}/graphql", addr);
-    if config.graphiql {
+    if config.graphql.ui {
         tracing::info!("GraphiQL available at http://localhost:{}/graphiql", port);
     }
     if debug.sql || debug.explain {

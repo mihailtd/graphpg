@@ -8,7 +8,7 @@
 //! and the SQL it compiles to.
 mod common;
 use graphpg::catalog::{finalize, CatalogInspector};
-use graphpg::config::EngineConfig;
+use graphpg::config::Config;
 use graphpg::execution::ExecutionEngine;
 use graphpg::planner::QueryPlanner;
 use graphpg::schema::SchemaBuilder;
@@ -424,7 +424,7 @@ fn spatial_catalog() -> DatabaseCatalog {
         "server_version": 180000,
     }))
     .expect("catalog");
-    finalize(catalog, &EngineConfig::default()).expect("finalize")
+    finalize(catalog, &Config::default()).expect("finalize")
 }
 
 #[test]

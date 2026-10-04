@@ -4,7 +4,7 @@ mod common;
 use axum::http::header;
 use axum::http::StatusCode;
 use graphpg::catalog::CatalogInspector;
-use graphpg::config::EngineConfig;
+use graphpg::config::Config;
 use graphpg::schema::SchemaBuilder;
 use graphpg::server::{create_pool, create_router, ServerState};
 use http_body_util::BodyExt;
@@ -105,8 +105,8 @@ async fn setup_app() -> axum::Router {
     ensure_multi_schema_db(&client).await;
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
-    config.schemas = vec!["multi_auth".to_string(), "multi_app".to_string()];
+    let mut config = Config::default();
+    config.database.schemas = vec!["multi_auth".to_string(), "multi_app".to_string()];
 
     let catalog = inspector
         .inspect_schemas_with_config(&["multi_auth", "multi_app"], &config)
@@ -141,8 +141,8 @@ async fn test_multi_schema_smart_naming_and_sdl() {
     ensure_multi_schema_db(&client).await;
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
-    config.schemas = vec!["multi_auth".to_string(), "multi_app".to_string()];
+    let mut config = Config::default();
+    config.database.schemas = vec!["multi_auth".to_string(), "multi_app".to_string()];
 
     let catalog = inspector
         .inspect_schemas_with_config(&["multi_auth", "multi_app"], &config)
@@ -469,9 +469,9 @@ async fn test_multi_schema_federation_entities() {
     ensure_multi_schema_db(&client).await;
 
     let inspector = CatalogInspector::new(&client);
-    let mut config = EngineConfig::default();
-    config.schemas = vec!["multi_auth".to_string(), "multi_app".to_string()];
-    config.federation.enabled = true;
+    let mut config = Config::default();
+    config.database.schemas = vec!["multi_auth".to_string(), "multi_app".to_string()];
+    config.graphql.federation.enabled = true;
 
     let catalog = inspector
         .inspect_schemas_with_config(&["multi_auth", "multi_app"], &config)

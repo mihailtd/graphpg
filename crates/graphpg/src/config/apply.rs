@@ -1,4 +1,4 @@
-//! Applies an [`EngineConfig`] to an inspected catalog, in two phases:
+//! Applies an [`Config`] to an inspected catalog, in two phases:
 //!
 //! - [`apply_structure`] runs before relations, polymorphism and many-to-many links are
 //!   detected: it adds the primary keys and foreign keys of relations that cannot declare
@@ -7,7 +7,7 @@
 //!   descriptions, omitted fields, operations and types.
 //!
 //! Both validate every reference and return all problems at once.
-use super::models::{EngineConfig, Operation};
+use super::models::{Config, Operation};
 use crate::catalog::{
     is_graphql_name, DatabaseCatalog, ForeignKeyMetadata, SearchLimits, TableMetadata,
 };
@@ -28,7 +28,7 @@ fn check_name(errors: &mut Errors, path: &str, name: &str) -> bool {
 /// says why nothing was resolved, `kind` naming the objects searched.
 fn resolve_name<'a>(
     objects: impl Iterator<Item = (&'a str, &'a str)>,
-    config: &EngineConfig,
+    config: &Config,
     name: &str,
     kind: &str,
 ) -> Result<usize, String> {
@@ -49,7 +49,7 @@ fn resolve_name<'a>(
         [(i, _)] => Ok(*i),
         many => match many
             .iter()
-            .find(|(_, s)| config.schemas.first().is_some_and(|d| d == s))
+            .find(|(_, s)| config.database.schemas.first().is_some_and(|d| d == s))
         {
             Some((i, _)) => Ok(*i),
             None => {
@@ -64,7 +64,7 @@ const RELATION: &str = "table, view, materialized view or foreign table";
 
 fn table_index(
     catalog: &DatabaseCatalog,
-    config: &EngineConfig,
+    config: &Config,
     name: &str,
     kind: &str,
 ) -> Result<usize, String> {
@@ -82,7 +82,7 @@ fn table_index(
 /// The relation an `entities` key names.
 fn find_table<'c>(
     catalog: &'c DatabaseCatalog,
-    config: &EngineConfig,
+    config: &Config,
     name: &str,
 ) -> Result<&'c TableMetadata, String> {
     table_index(catalog, config, name, RELATION).map(|i| &catalog.tables[i])
@@ -90,7 +90,7 @@ fn find_table<'c>(
 
 fn find_table_mut<'c>(
     catalog: &'c mut DatabaseCatalog,
-    config: &EngineConfig,
+    config: &Config,
     name: &str,
 ) -> Result<&'c mut TableMetadata, String> {
     table_index(catalog, config, name, RELATION).map(|i| &mut catalog.tables[i])
@@ -99,17 +99,13 @@ fn find_table_mut<'c>(
 /// The relation a reference (a foreign key target, a mount parent) names.
 fn find_relation<'c>(
     catalog: &'c DatabaseCatalog,
-    config: &EngineConfig,
+    config: &Config,
     name: &str,
 ) -> Result<&'c TableMetadata, String> {
     table_index(catalog, config, name, "relation").map(|i| &catalog.tables[i])
 }
 
-fn function_index(
-    catalog: &DatabaseCatalog,
-    config: &EngineConfig,
-    name: &str,
-) -> Result<usize, String> {
+fn function_index(catalog: &DatabaseCatalog, config: &Config, name: &str) -> Result<usize, String> {
     resolve_name(
         catalog
             .functions
@@ -122,7 +118,7 @@ fn function_index(
 }
 
 /// Declared keys, virtual foreign keys and function mounts.
-pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> Result<(), Errors> {
+pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &Config) -> Result<(), Errors> {
     let mut errors = Errors::new();
 
     // Primary keys first: a virtual foreign key may reference a declared key
@@ -376,10 +372,7 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
 }
 
 /// Names, descriptions, omitted fields, operations and types.
-pub fn apply_presentation(
-    catalog: &mut DatabaseCatalog,
-    config: &EngineConfig,
-) -> Result<(), Errors> {
+pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &Config) -> Result<(), Errors> {
     let mut errors = Errors::new();
     let mut omitted = Vec::new();
 
@@ -399,8 +392,8 @@ pub fn apply_presentation(
         catalog.search_limits = SearchLimits { default, max };
     }
 
-    catalog.federation_enabled = config.federation.enabled;
-    catalog.federation_version = config.federation.version.clone();
+    catalog.federation_enabled = config.graphql.federation.enabled;
+    catalog.federation_version = config.graphql.federation.version.clone();
 
     for (name, entity) in &config.entities {
         let path = format!("entities.{name}");
