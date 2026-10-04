@@ -3103,13 +3103,14 @@ impl SqlCompiler {
             outer_pairs.push(Self::json_pair("__typename", "'Connection'"));
         }
 
+        let stats_where_sql = Self::where_sql(&where_clauses[..base_where]);
         let stats_from = if !selections.grouped.is_empty() {
             Some(Self::grouped_stats(
                 &selections.grouped,
                 &stats_cols,
                 table_alias,
                 &from,
-                &where_sql,
+                &stats_where_sql,
                 params,
             ))
         } else if stats_cols.is_empty() {
@@ -3120,7 +3121,7 @@ impl SqlCompiler {
                 .map(|(expr, name)| format!("{expr} AS \"{name}\""))
                 .collect();
             Some(format!(
-                "(SELECT {} FROM {from}{where_sql}) _stats",
+                "(SELECT {} FROM {from}{stats_where_sql}) _stats",
                 cols.join(", ")
             ))
         };
