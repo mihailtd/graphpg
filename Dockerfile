@@ -53,6 +53,5 @@ LABEL org.opencontainers.image.title="graphpg" \
 COPY --from=build /graphpg /usr/local/bin/graphpg
 WORKDIR /app
 USER 65532:65532
-ENV PORT=4000
 EXPOSE 4000
 ENTRYPOINT ["/usr/local/bin/graphpg"]

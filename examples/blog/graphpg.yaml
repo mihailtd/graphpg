@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./.engine/schema.config.json
+# yaml-language-server: $schema=./graphpg.schema.json
 #
 # One file for every environment. Everything here is optional: delete it and graphpg still
 # serves the whole schema of the database.
@@ -6,7 +6,12 @@ database:
   schemas: [blog]
 
 graphql:
+  enabled: true
   ui: true # the GraphiQL IDE; on by default only in dev mode, so the demo asks for it
+
+openapi:
+  enabled: true
+  ui: true # the Scalar API reference; on by default only in dev mode, so the demo asks for it
 
 # What the database cannot express, keyed by database object name
 

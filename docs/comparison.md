@@ -40,7 +40,7 @@ graphpg belongs to a family of tools that expose a PostgreSQL database as a Grap
 | Event triggers / webhooks | No | No (use a job queue) | Yes |
 | REST endpoints | No | No | Yes |
 | Admin console / schema editor | GraphiQL only | Ruru IDE | Full web console |
-| Live schema reload on DDL changes | Yes (`--dev`) | Watch mode | Console and metadata API |
+| Live schema reload on DDL changes | Yes (`--mode dev`) | Watch mode | Console and metadata API |
 | Telemetry | tracing spans over OTLP, sqlcommenter | Plugins | Built in |
 
 ## When something else fits better

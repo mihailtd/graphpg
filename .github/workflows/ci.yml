@@ -207,7 +207,7 @@ jobs:
         run: |
           docker run -d --name graphpg --network host \
             -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/blog \
-            -e DATABASE_SCHEMA=blog -e GRAPHIQL=true graphpg:ci
+            -v "$PWD/examples/blog/graphpg.yaml:/app/graphpg.yaml:ro" graphpg:ci
           for i in $(seq 1 30); do curl -sf localhost:4000/health && break; sleep 1; done
           curl -sf localhost:4000/graphql -H 'content-type: application/json' \
             -d '{"query":"{ authors { username } }"}' | tee /dev/stderr | grep -q '"username":"ada"'

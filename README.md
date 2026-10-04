@@ -19,8 +19,8 @@ Run the published container image against your own database:
 
 ```bash
 docker run --rm -p 4000:4000 \
-  -e DATABASE_URL=postgres://user:pass@host.docker.internal/mydb -e DATABASE_SCHEMA=public \
-  ghcr.io/mihailtd/graphpg:1.0.1
+  -e DATABASE_URL=postgres://user:pass@host.docker.internal/mydb \
+  ghcr.io/mihailtd/graphpg:1.0.1 --mode dev
 ```
 
 The image is a static binary on `distroless/static` (about 27 MB with the embedded GraphiQL and Scalar UIs, no shell, non-root, signed with Sigstore). See [running in a container](docs/configuration.md#running-in-a-container).
@@ -29,7 +29,7 @@ Or build from source:
 
 ```bash
 cargo install --path crates/graphpg          # or: cargo build --release
-DATABASE_URL=postgres://user:pass@localhost/mydb DATABASE_SCHEMA=public graphpg --graphiql
+DATABASE_URL=postgres://user:pass@localhost/mydb graphpg --mode dev
 ```
 
 ```graphql

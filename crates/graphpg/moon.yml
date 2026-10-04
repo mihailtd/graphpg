@@ -15,13 +15,11 @@ fileGroups:
 
 tasks:
   dev:
-    # run the server against DATABASE_URL (copy .env.example to .env); GraphiQL on, port 4000
-    command: cargo run --locked --bin graphpg
+    # run the server against DATABASE_URL (copy .env.example to .env); dev mode (GraphiQL on, watcher on)
+    command: cargo run --locked --bin graphpg -- --mode dev
     preset: server
     deps:
       - graphiql-ui:build
-    env:
-      GRAPHIQL: "true"
     options:
       runFromWorkspaceRoot: true
   build:

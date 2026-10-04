@@ -72,4 +72,4 @@ A function that returns a table becomes a field: `{ popularTags(first: 5) { node
 
 ## Editor support for the config
 
-`graphpg export-config-schema` writes `.engine/schema.config.json`, a JSON Schema listing the real tables, columns, constraints and functions of your database. `graphpg.yaml` points at it, so editors that use the YAML language server offer completion and validation.
+`graphpg export-config-schema` writes `graphpg.schema.json`, a JSON Schema listing the real tables, columns, constraints and functions of your database. `graphpg.yaml` points at it, so editors that use the YAML language server offer completion and validation.

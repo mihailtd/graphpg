@@ -232,6 +232,8 @@ GRANT SELECT (id) ON TABLE public.customers TO billing_svc;
 
 #### Configure Subgraph 1: Sales Service (`sales.config.yaml`)
 ```yaml
+server:
+  port: 4001
 graphql:
   federation:
     enabled: true
@@ -241,12 +243,14 @@ rbac:
 ```
 Run with:
 ```bash
-PORT=4001 ENGINE_CONFIG=sales.config.yaml graphpg
+graphpg --config sales.config.yaml
 ```
 *Result:* Exposes `Customer` and `Order` entities with `@key(fields: "id")` and full queries/mutations. `payments` and `invoices` are pruned.
 
 #### Configure Subgraph 2: Billing Service (`billing.config.yaml`)
 ```yaml
+server:
+  port: 4002
 graphql:
   federation:
     enabled: true
@@ -256,7 +260,7 @@ rbac:
 ```
 Run with:
 ```bash
-PORT=4002 ENGINE_CONFIG=billing.config.yaml graphpg
+graphpg --config billing.config.yaml
 ```
 *Result:* Exposes `Payment` and `Invoice` entities with `@key(fields: "id")` and full queries/mutations. Exposes stub `Customer` entity containing only `id` with `@key(fields: "id")`.
 

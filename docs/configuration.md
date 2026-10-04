@@ -1,20 +1,20 @@
 # Configuration
 
-graphpg is configured by one optional file, `graphpg.yaml`, which serves every environment (shared settings, then `dev:` and `prod:` blocks for what differs), and, for now, by environment variables and command-line flags that override it. The file's `${NAME}` references read the environment, so credentials stay out of it.
+graphpg is configured by one optional file, `graphpg.yaml`, which serves every environment (shared settings, then `dev:` and `prod:` blocks for what differs). Secrets (`DATABASE_URL`, `DATABASE_REPLICA_URLS`, `AUTH_JWT_SECRET`) are environment-only. The file's `${NAME}` references read non-secret environment variables, so settings can also be parameterized per environment.
 
 ## Running
 
 ```bash
-graphpg                              # serve on :4000 (DATABASE_URL, PORT)
-graphpg --dev                        # also watch the database for DDL changes
+graphpg                              # serve in prod mode on :4000
+graphpg --mode dev                   # dev mode (watch DDL, auto-export, GraphiQL/Scalar on)
 graphpg --config path/to/file.yaml   # explicit config file
 graphpg advise                       # print schema advice and exit
 graphpg export-graphql --out schema.graphql
 graphpg export-subgraph --out subgraph.graphql          # Apollo Federation SDL
-graphpg export-config-schema --out .engine/schema.config.json
+graphpg export-config-schema --out graphpg.schema.json
 ```
 
-`DATABASE_URL` defaults to `postgres://postgres:postgres@localhost:5432/graphpg`, which is only meant for local development: set it explicitly everywhere else. A `.env` file in the working directory is loaded when present.
+`DATABASE_URL` is required and must be provided via the environment or `.env` file in the working directory.
 
 ### Running in a container
 
@@ -41,80 +41,94 @@ OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOIN
 
 | Path | Method | |
 | :--- | :--- | :--- |
-| `/graphql` | `POST` | Queries, mutations, `@defer` / `@stream` (as `multipart/mixed`) and Federation `_entities` |
+| `/graphql` | `POST` | Queries, mutations, `@defer` / `@stream` (as `multipart/mixed`) and Federation `_entities` (404 when `graphql.enabled: false`) |
+| `/rest` | `GET` | REST API (404 when `openapi.enabled: false`) |
 | `/graphiql` | `GET` | GraphiQL IDE, when `graphql.ui` is on (404 otherwise) |
-| `/scalar` | `GET` | Scalar API reference, when `openapi.ui` is on (404 otherwise); it shows the OpenAPI document at `/openapi.json` once the REST API serves one |
-| `/export` | `POST` | A connection query streamed as NDJSON or CSV |
-| `/import/{Type}` | `POST` | NDJSON rows of `Create<Type>Input`, inserted all-or-nothing with `COPY` |
+| `/scalar` | `GET` | Scalar API reference, when `openapi.ui` is on (404 otherwise); it shows the OpenAPI document at `/openapi.json` |
+| `/export` | `POST` | A connection query streamed as NDJSON or CSV (404 when `graphql.enabled: false`) |
+| `/import/{Type}` | `POST` | NDJSON rows of `Create<Type>Input`, inserted all-or-nothing with `COPY` (404 when `graphql.enabled: false`) |
 | `/health` | `GET` | Liveness |
 
-### Environment variables and flags
+### Secret environment variables
 
-| Variable | Flag | Default | |
+Secrets are strictly environment-only. They are never kept in `graphpg.yaml`, never exported in configuration schemas, and are redacted in debug outputs.
+
+| Variable | Required | Description |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | yes | PostgreSQL connection string |
+| `DATABASE_REPLICA_URLS` | no | Comma-separated read replica connection URLs ([details](performance.md#operations)) |
+| `AUTH_JWT_SECRET` | no | Shared HMAC secret for JWT verification ([guide](authentication.md)) |
+
+### Command-line flags and environment
+
+| Flag | Environment Variable | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `DATABASE_URL` | | local dev URL | PostgreSQL connection string |
-| `DATABASE_POOL_SIZE` | | `10` | Connections in the pool |
-| `DATABASE_REPLICA_URLS` | | | Comma-separated read replicas ([details](performance.md#operations)) |
-| `DATABASE_SCHEMAS` / `DATABASE_SCHEMA` | | `app_public` | Schemas to expose, comma-separated ([multiple schemas](#multiple-schemas)) |
-| `PORT` | | `4000` | Listening port |
-| `ENGINE_CONFIG` | `--config <path>` | `./graphpg.yaml` if present | Config file |
-| `GRAPHIQL` | `--graphiql` / `--no-graphiql` | off | GraphiQL IDE: development and pre-production only |
-| `FEDERATION` | `--federation` | off | Apollo Federation subgraph mode ([guide](federation-and-rbac.md)) |
-| `AUTH_ENABLED`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWKS_URI`, `AUTH_JWT_SECRET` | `--auth` / `--no-auth` | off | OAuth 2.0 bearer tokens ([guide](authentication.md)) |
-| `DEV` / `WATCH` | `--dev` / `--watch` | off | [Development mode](#development-mode---dev) |
-| `DEBUG` | `--debug` | off | Include the generated SQL in response `extensions` |
-| `DEBUG_EXPLAIN` | `--debug-explain` | off | Include PostgreSQL's `EXPLAIN` output. Never enable the debug flags in production |
-| `SQL_COMMENTS` | | on | `0` turns off [sqlcommenter](performance.md#operations) comments |
-| `GRAPHQL_SCHEMA_OUT`, `CONFIG_SCHEMA_OUT`, `SUBGRAPH_SCHEMA_OUT` | `--out <path>` | | Output paths of the export commands and of dev-mode exports |
-| `RUST_LOG` | | `info` | Log filter |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | | | Trace export, when built with the `otel` feature |
+| `--mode <dev\|prod>` | `GRAPHPG_MODE` | `prod` | Runtime mode: `--mode` flag takes precedence over `GRAPHPG_MODE` |
+| `--config <path>` | | `./graphpg.yaml` if present | Path to YAML config file (an explicitly named path must exist) |
+
+### Subcommands
+
+| Subcommand | Flag | Default output path | Description |
+| :--- | :--- | :--- | :--- |
+| `export-graphql` | `--out <path>` | `config.export.graphql` (`schema.graphql`) | Export GraphQL SDL schema |
+| `export-subgraph` | `--out <path>` | `config.export.subgraph` (`subgraph.graphql`) | Export Apollo Federation Subgraph SDL |
+| `export-config-schema` | `--out <path>` | `config.export.config_schema` (`graphpg.schema.json`) | Export JSON Schema for `graphpg.yaml` |
+| `advise` | | | Inspect schema and print advice warnings/info |
 
 ## `graphpg.yaml`
 
-One file configures a server for every environment. Shared settings come first; the settings that differ between modes go in `dev:` and `prod:` blocks, which are merged over the shared ones for the mode the server starts in (`--dev` selects development, otherwise production).
+One file configures a server for every environment. Shared settings come first; settings that differ between modes go in `dev:` and `prod:` blocks, which are merged over the shared ones for the mode the server starts in.
 
 ```yaml
 database:
-  url: ${DATABASE_URL}          # strings read the environment; ${NAME:-default} gives a default
   pool_size: 10
   schemas: [auth, app]          # the first is the default schema (default: app_public)
-  replicas: []                  # read replica connection strings
   sql_comments: true            # sqlcommenter comments on every statement
 
 server:
   host: 0.0.0.0
   port: 4000
 
+watch:
+  enabled: false                # watch DDL; default: true in dev, false in prod
+  export: true                  # write export files on schema change
+
+export:
+  graphql: schema.graphql
+  subgraph: subgraph.graphql
+  config_schema: graphpg.schema.json
+
 auth: { ... }                   # OAuth 2.0 bearer tokens (see authentication.md)
 rbac: { enabled: false }        # prune the APIs to what a role may access
-debug: { sql: false, explain: false }   # development only
 
 graphql:
-  enabled: true                 # serve /graphql
+  enabled: true                 # serve /graphql, /export, /import/...
   ui: false                     # the GraphiQL IDE: on by default in dev mode only
   federation: { enabled: false }
 openapi:
-  enabled: false                # the REST API and its OpenAPI description
+  enabled: true                 # the REST API at /rest and its OpenAPI description (alias: rest)
   ui: false                     # the Scalar API reference: on by default in dev mode only
 
 dev:                            # settings that differ in dev mode
-  database: { pool_size: 2 }
+  debug:
+    sql: true                   # dev-only: generated SQL in response extensions
+    explain: true               # dev-only: EXPLAIN ANALYZE in response extensions
 prod: {}                        # ... and in prod mode
 ```
 
-The effective config of a mode is built in four steps, each overriding the last: the built-in defaults, the mode's built-in defaults (`dev` turns the GraphiQL IDE and the Scalar API reference on), the shared settings, then the mode's block. Mappings merge key by key; anything else, a list included, is replaced. An unknown key is an error in the shared settings and in both blocks, so a typo in `dev:` is found when starting `prod`.
+The effective config of a mode is built in four steps, each overriding the last: the built-in defaults, the mode's built-in defaults (`dev` turns the GraphiQL IDE, Scalar API reference, and watch mode on), the shared settings, then the mode's block. Mappings merge key by key; anything else, a list included, is replaced. An unknown key is an error in the shared settings and in both blocks, so a typo in `dev:` is found when starting `prod`.
 
 ### The UIs
 
-`graphql.ui` serves the GraphiQL IDE at `/graphiql` and `openapi.ui` the Scalar API reference at `/scalar`. Both are on in dev mode and off in prod, and either can be set explicitly. They are part of the binary (and of the container image), load nothing from other hosts, and work offline, so a strict Content-Security-Policy can allow `'self'` only. In a container, turn one on with a mounted config (`graphql: { ui: true }`) or, for GraphiQL, `GRAPHIQL=true`.
+`graphql.ui` serves the GraphiQL IDE at `/graphiql` and `openapi.ui` (alias `rest.ui`) the Scalar API reference at `/scalar`. Both are on in dev mode and off in prod, and either can be set explicitly. They are part of the binary (and of the container image), load nothing from other hosts, and work offline, so a strict Content-Security-Policy can allow `'self'` only.
 
 The GraphiQL source is `packages/graphiql-ui`; `moon run graphiql-ui:build` builds it into `crates/graphpg-ui/assets`, which the server embeds. A build without those files still runs, and `/graphiql` says so.
 
-Strings may read the environment: `${NAME}` (an error when unset or empty) and `${NAME:-default}`. Quote them inside `[...]` and `{...}`, write `$${` for a literal `${`, and use them for numbers and switches too (`port: '${PORT}'`; switches also read `on`, `off`, `yes`, `no`, `1` and `0`).
+Strings may read non-secret environment variables: `${NAME}` (an error when unset or empty) and `${NAME:-default}`. Quote them inside `[...]` and `{...}`, write `$${` for a literal `${`, and use them for numbers and switches too (`port: '${PORT}'`; switches also read `on`, `off`, `yes`, `no`, `1` and `0`).
 
 The sections that follow, `entities`, `functions`, `types`, `extensions` and `search`, change the generated APIs where the database cannot say what is wanted. Schema design (tables, constraints, types, functions) stays in SQL; these hold only API-level operations, keyed by **database** names so renames never break them, and shared by every API.
 
-The server loads `--config <path>`, else `ENGINE_CONFIG`, else `./graphpg.yaml` when present. `graphpg export-config-schema` writes a JSON Schema (`.engine/schema.config.json`) listing the actual relations, columns, constraints and functions for editor completion and validation. In `--dev` mode the config is re-read when it changes. Every reference is validated at startup and all problems are reported together.
+The server loads `--config <path>`, else `./graphpg.yaml` when present. `graphpg export-config-schema` writes a JSON Schema (`graphpg.schema.json`) listing the actual relations, columns, constraints and functions for editor completion and validation. In dev mode the config is re-read when it changes. Every reference is validated at startup and all problems are reported together.
 
 ```yaml
 entities:                      # tables, views, materialized views, foreign tables
@@ -165,18 +179,14 @@ extensions:
 
 ## Multiple schemas
 
-List the schemas to expose, in `graphpg.yaml` or the environment:
+List the schemas to expose in `graphpg.yaml`:
 
 ```yaml
 database:
   schemas: [auth, app, billing]
 ```
 
-```bash
-DATABASE_SCHEMAS="auth,app,billing" graphpg
-```
-
-Schemas are chosen in this order, at startup and on every dev-mode reload: `DATABASE_SCHEMAS`, else the config's `database.schemas`, else `DATABASE_SCHEMA`, else `app_public`. The first schema listed is the default: where two schemas have a table of the same name, unqualified names in the config resolve to it.
+The first schema listed is the default: where two schemas have a table of the same name, unqualified names in the config resolve to it. If `database.schemas` is omitted, graphpg defaults to `app_public`.
 
 Foreign keys across schemas become ordinary relations, joined in the same single SQL statement (`app.posts.author_id` referencing `auth.users.id` gives `Post.user` and `User.posts`). `node(id:)` and Federation `_entities` route to the right schema.
 
@@ -190,17 +200,28 @@ Names stay natural while they are unique across schemas (`User`, `Post`). When t
 
 In the config, qualify an entity as `schema.table` (`auth.users:`) when its name is ambiguous.
 
-## Development mode (`--dev`)
+## Runtime modes and watching
 
-The engine provides continuous schema synchronization without server restarts:
-1. Installs an event trigger on `ddl_command_end` and `sql_drop`.
-2. Emits asynchronous PostgreSQL notifications via `pg_notify('graphpg_watch', ...)`.
-3. The engine server holds an `Arc<RwLock<Schema>>` and `Arc<RwLock<DatabaseCatalog>>`.
-4. When a DDL notification is received:
-   - Live catalogs are re-introspected in ~1.5s.
-   - GraphQL SDL and YAML JSON Schema hints are updated in memory.
-   - Files are auto-exported to `schema.graphql` and `.engine/schema.config.json`.
-   - In-flight HTTP requests continue without interruption.
+The server operates in either `prod` (production, the default) or `dev` (development) mode, selected via `--mode dev|prod` or `GRAPHPG_MODE` (`--mode` takes precedence).
+
+```yaml
+watch:
+  enabled: true   # re-introspect on DDL changes; default: true in dev, false in prod
+  export: true    # auto-export schemas on DDL changes; default: true
+```
+
+### Development mode (`--mode dev`)
+
+- `watch.enabled` defaults to `true`: graphpg installs an event trigger on `ddl_command_end` and `sql_drop`, listens for asynchronous notifications (`LISTEN graphpg_watch`), and re-introspects live catalogs in ~1.5s without interrupting in-flight requests.
+- When `watch.export` is `true` (default), changes automatically write the files defined in `export:` (`export.graphql`, `export.subgraph`, `export.config_schema`).
+- `graphql.ui` (GraphiQL) and `openapi.ui` (Scalar) default to `true`.
+- The watcher hot-reload always uses the selected mode overlay.
+- Debug outputs (`debug.sql` and `debug.explain`) may be enabled under `dev:`.
+
+### Production mode (`--mode prod`)
+
+- `watch.enabled`, `graphql.ui`, and `openapi.ui` default to `false`. If any of these dev features are explicitly enabled, a startup warning is logged.
+- `debug.sql` and `debug.explain` are **dev-only**: validation rejects them if enabled in the shared section or `prod:` block (`debug.sql is only allowed in the dev: block`).
 
 ---
 

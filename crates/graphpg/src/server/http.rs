@@ -10,15 +10,13 @@ use apollo_compiler::{ExecutableDocument, Schema};
 use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::Json;
 use deadpool_postgres::{
     CreatePoolError, ManagerConfig, Pool, PoolConfig, RecyclingMethod, Runtime,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio_postgres::NoTls;
-use tower_http::cors::CorsLayer;
 use tracing::Instrument;
 
 #[derive(Debug, Deserialize)]
@@ -146,6 +144,15 @@ pub struct DebugOptions {
     pub explain: bool,
 }
 
+impl From<crate::config::DebugConfig> for DebugOptions {
+    fn from(c: crate::config::DebugConfig) -> Self {
+        Self {
+            sql: c.sql,
+            explain: c.explain,
+        }
+    }
+}
+
 pub struct ServerState {
     pub pool: Pool,
     pub schema: std::sync::RwLock<Arc<Valid<Schema>>>,
@@ -166,6 +173,12 @@ pub struct ServerState {
     pub graphiql: bool,
     /// Serve the Scalar OpenAPI UI at `/scalar` (development and pre-production only).
     pub scalar: bool,
+    /// Serve the GraphQL API at `/graphql`, `/export` and `/import/...`.
+    pub graphql_enabled: bool,
+    /// Serve the REST API and OpenAPI document at `/rest`.
+    pub openapi_enabled: bool,
+    /// The engine configuration, if passed to the state.
+    pub config: Option<crate::config::Config>,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -201,6 +214,9 @@ impl ServerState {
             auth: None,
             graphiql: false,
             scalar: false,
+            graphql_enabled: true,
+            openapi_enabled: true,
+            config: None,
         }
     }
 
@@ -302,6 +318,34 @@ impl ServerState {
         self
     }
 
+    /// Serves the GraphQL API at `/graphql`, `/export` and `/import/...`, or not (the default is on).
+    pub fn with_graphql_enabled(mut self, on: bool) -> Self {
+        self.graphql_enabled = on;
+        self
+    }
+
+    /// Serves the REST API and OpenAPI document at `/rest`, or not (the default is on).
+    pub fn with_openapi_enabled(mut self, on: bool) -> Self {
+        self.openapi_enabled = on;
+        self
+    }
+
+    /// Alias for [`with_openapi_enabled`](Self::with_openapi_enabled).
+    pub fn with_rest_enabled(self, on: bool) -> Self {
+        self.with_openapi_enabled(on)
+    }
+
+    /// Configures the server state from [`Config`](crate::config::Config).
+    pub fn with_config(mut self, config: crate::config::Config) -> Self {
+        self.graphql_enabled = config.graphql.enabled;
+        self.openapi_enabled = config.openapi.enabled;
+        self.graphiql = config.graphql.ui;
+        self.scalar = config.openapi.ui;
+        self.sql_comments = config.database.sql_comments;
+        self.config = Some(config);
+        self
+    }
+
     /// The role and settings a request runs with: `None` when authentication is off.
     pub async fn authenticate(
         &self,
@@ -374,29 +418,16 @@ fn errors_response(
     (status, graphql_headers(), Json(res)).into_response()
 }
 
-pub fn create_router(state: Arc<ServerState>) -> Router {
-    let mut router = Router::new()
-        .route("/graphql", post(graphql_handler))
-        .route("/export", post(super::bulk::export_handler))
-        .route("/import/{type_name}", post(super::bulk::import_handler))
-        .route("/health", get(health_handler));
-    // The IDE is a development tool: without it, `/graphiql` is not found
-    if state.graphiql {
-        router = router.merge(graphpg_ui::graphiql_router());
-    }
-    // The OpenAPI UI: without it, `/scalar` is not found
-    if state.scalar {
-        router = router.merge(graphpg_ui::scalar_router());
-    }
-    router.layer(CorsLayer::permissive()).with_state(state)
-}
-
-async fn health_handler() -> impl IntoResponse {
+pub(crate) async fn health_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "ok",
         "engine": "graphpg",
         "version": "0.1.0"
     }))
+}
+
+pub(crate) async fn rest_handler() -> impl IntoResponse {
+    (StatusCode::OK, "hello world")
 }
 
 /// Pretty-prints generated SQL for humans (the executed statement is unchanged).
@@ -471,7 +502,7 @@ pub(crate) fn execute_introspection(
     }
 }
 
-async fn graphql_handler(
+pub(crate) async fn graphql_handler(
     State(state): State<Arc<ServerState>>,
     request_headers: HeaderMap,
     Json(req): Json<GraphQLRequest>,

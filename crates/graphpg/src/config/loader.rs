@@ -46,7 +46,7 @@ impl Mode {
     /// Settings that differ from the field defaults by mode.
     fn defaults(self) -> &'static str {
         match self {
-            Mode::Dev => "graphql:\n  ui: true\nopenapi:\n  ui: true\n",
+            Mode::Dev => "graphql:\n  ui: true\nopenapi:\n  ui: true\nwatch:\n  enabled: true\n",
             Mode::Prod => "{}",
         }
     }
@@ -68,6 +68,20 @@ impl std::str::FromStr for Mode {
             other => Err(format!("unknown mode {other:?} (dev or prod)")),
         }
     }
+}
+
+/// Resolves the mode from the `--mode` flag (if given), else the `GRAPHPG_MODE` environment variable
+/// (if set and non-empty), else [`Mode::Prod`].
+pub fn resolve_mode(flag: Option<&str>, env: Option<&str>) -> Result<Mode, String> {
+    if let Some(m) = flag {
+        return m.parse();
+    }
+    if let Some(m) = env {
+        if !m.is_empty() {
+            return m.parse();
+        }
+    }
+    Ok(Mode::Prod)
 }
 
 /// What was wrong with a config file: every problem found, not only the first.
@@ -147,12 +161,22 @@ impl Config {
         }
 
         let mut problems = Vec::new();
+        check_removed_secret_keys(&Value::Mapping(shared.clone()), "", &mut problems);
+        for (m, block) in &blocks {
+            check_removed_secret_keys(&Value::Mapping(block.clone()), m.as_str(), &mut problems);
+        }
+        if !problems.is_empty() {
+            return Err(ConfigError { problems });
+        }
+
         let mut shared = Value::Mapping(shared);
+        normalize_rest_key(&mut shared);
         interpolate(&mut shared, "", env, &mut problems);
         let blocks: Vec<(Mode, Value)> = blocks
             .into_iter()
             .map(|(m, block)| {
                 let mut block = Value::Mapping(block);
+                normalize_rest_key(&mut block);
                 interpolate(&mut block, m.as_str(), env, &mut problems);
                 (m, block)
             })
@@ -174,14 +198,84 @@ impl Config {
                 serde_yaml::from_str(m.defaults()).expect("built-in mode defaults parse");
             merge(&mut merged, shared.clone());
             merge(&mut merged, block.clone());
-            match serde_yaml::from_value::<Config>(merged) {
-                Ok(config) if m == mode => requested = Some(config),
-                Ok(_) => {}
+            let config = match serde_yaml::from_value::<Config>(merged) {
+                Ok(config) => config,
                 Err(e) if m == mode => return Err(ConfigError::one(e.to_string())),
                 Err(e) => return Err(ConfigError::one(format!("{m}: {e}"))),
+            };
+            if m == Mode::Prod {
+                if config.debug.sql {
+                    return Err(ConfigError::one(
+                        "debug.sql is only allowed in the dev: block",
+                    ));
+                }
+                if config.debug.explain {
+                    return Err(ConfigError::one(
+                        "debug.explain is only allowed in the dev: block",
+                    ));
+                }
+            }
+            if m == mode {
+                requested = Some(config);
             }
         }
         Ok(requested.expect("the requested mode was built"))
+    }
+}
+
+fn check_removed_secret_keys(val: &Value, prefix: &str, problems: &mut Vec<String>) {
+    if let Value::Mapping(map) = val {
+        for (k, v) in map {
+            let key_str = match k.as_str() {
+                Some(s) => s,
+                None => continue,
+            };
+            let path = if prefix.is_empty() {
+                key_str.to_string()
+            } else {
+                format!("{prefix}.{key_str}")
+            };
+            if path == "database.url" || path.ends_with(".database.url") {
+                problems.push(format!(
+                    "{path} is not a config key: the connection string is a secret, set DATABASE_URL"
+                ));
+            } else if path == "database.replicas" || path.ends_with(".database.replicas") {
+                problems.push(format!(
+                    "{path} is not a config key: replica URLs are secrets, set DATABASE_REPLICA_URLS"
+                ));
+            } else if path == "auth.secret" || path.ends_with(".auth.secret") {
+                problems.push(format!(
+                    "{path} is not a config key: the JWT secret is a secret, set AUTH_JWT_SECRET"
+                ));
+            }
+            check_removed_secret_keys(v, &path, problems);
+        }
+    }
+}
+
+fn normalize_rest_key(val: &mut Value) {
+    match val {
+        Value::Mapping(map) => {
+            let rest_key = Value::String("rest".to_string());
+            let openapi_key = Value::String("openapi".to_string());
+            if let Some(rest_val) = map.remove(&rest_key) {
+                match map.get_mut(&openapi_key) {
+                    Some(openapi_val) => merge(openapi_val, rest_val),
+                    None => {
+                        map.insert(openapi_key, rest_val);
+                    }
+                }
+            }
+            for (_, v) in map.iter_mut() {
+                normalize_rest_key(v);
+            }
+        }
+        Value::Sequence(seq) => {
+            for v in seq.iter_mut() {
+                normalize_rest_key(v);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -319,8 +413,12 @@ mod tests {
         assert_eq!(config.server.port, 4000);
         assert_eq!(config.database.pool_size, 10);
         assert!(config.graphql.enabled);
-        assert!(!config.openapi.enabled);
+        assert!(config.openapi.enabled);
         assert!(!config.graphql.ui && !config.openapi.ui);
+        assert!(!config.watch.enabled && config.watch.export);
+        assert_eq!(config.export.graphql, "schema.graphql");
+        assert_eq!(config.export.subgraph, "subgraph.graphql");
+        assert_eq!(config.export.config_schema, "graphpg.schema.json");
         assert_eq!(config.database.resolved_schemas(), vec!["app_public"]);
     }
 
@@ -340,15 +438,58 @@ prod:
         assert!(dev.graphql.ui && !prod.graphql.ui);
         // Both UIs follow the mode
         assert!(dev.openapi.ui && !prod.openapi.ui);
+        // Watch setting follows the mode
+        assert!(dev.watch.enabled && !prod.watch.enabled);
+        assert!(dev.watch.export && prod.watch.export);
         assert_eq!((dev.database.pool_size, prod.database.pool_size), (2, 20));
         // Deep merge: a block's setting does not drop its siblings
         assert!(dev.graphql.federation.enabled && prod.graphql.federation.enabled);
     }
 
     #[test]
+    fn test_openapi_config() {
+        // default Prod
+        let cfg = parse("", Mode::Prod).unwrap();
+        assert!(cfg.graphql.enabled);
+        assert!(!cfg.graphql.ui);
+        assert!(cfg.openapi.enabled);
+        assert!(!cfg.openapi.ui);
+
+        // default Dev
+        let cfg = parse("", Mode::Dev).unwrap();
+        assert!(cfg.graphql.enabled);
+        assert!(cfg.graphql.ui);
+        assert!(cfg.openapi.enabled);
+        assert!(cfg.openapi.ui);
+
+        // using openapi key
+        let yaml = "openapi: { enabled: false, ui: true }";
+        let cfg = parse(yaml, Mode::Prod).unwrap();
+        assert!(!cfg.openapi.enabled);
+        assert!(cfg.openapi.ui);
+
+        // using rest alias key
+        let yaml = "rest: { enabled: false, ui: true }";
+        let cfg = parse(yaml, Mode::Prod).unwrap();
+        assert!(!cfg.openapi.enabled);
+        assert!(cfg.openapi.ui);
+
+        // using both merges with openapi taking precedence
+        let yaml = "rest: { enabled: false }\nopenapi: { ui: true }";
+        let cfg = parse(yaml, Mode::Prod).unwrap();
+        assert!(!cfg.openapi.enabled);
+        assert!(cfg.openapi.ui);
+    }
+
+    #[test]
     fn a_block_overrides_a_mode_default() {
-        let config = parse("dev: { graphql: { ui: false } }", Mode::Dev).unwrap();
+        let config = parse(
+            "dev: { graphql: { ui: false }, watch: { enabled: false } }",
+            Mode::Dev,
+        )
+        .unwrap();
         assert!(!config.graphql.ui);
+        assert!(!config.watch.enabled);
     }
 
     #[test]
@@ -377,50 +518,119 @@ prod:
     }
 
     #[test]
+    fn removed_secret_keys_produce_helpful_errors() {
+        let err = parse("database: { url: 'postgres://localhost/db' }", Mode::Prod).unwrap_err();
+        assert_eq!(
+            err.problems[0],
+            "database.url is not a config key: the connection string is a secret, set DATABASE_URL"
+        );
+
+        let err = parse(
+            "database: { replicas: ['postgres://localhost/replica'] }",
+            Mode::Prod,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.problems[0],
+            "database.replicas is not a config key: replica URLs are secrets, set DATABASE_REPLICA_URLS"
+        );
+
+        let err = parse(
+            "auth: { secret: 'secret123456789012345678901234567890' }",
+            Mode::Prod,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.problems[0],
+            "auth.secret is not a config key: the JWT secret is a secret, set AUTH_JWT_SECRET"
+        );
+
+        let err = parse(
+            "dev: { database: { url: 'postgres://localhost/db' } }",
+            Mode::Prod,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.problems[0],
+            "dev.database.url is not a config key: the connection string is a secret, set DATABASE_URL"
+        );
+    }
+
+    #[test]
+    fn debug_is_dev_only() {
+        // debug.sql in shared section fails even when starting dev
+        let err = parse("debug: { sql: true }", Mode::Dev).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "debug.sql is only allowed in the dev: block"
+        );
+
+        // debug.explain in shared section fails even when starting dev
+        let err = parse("debug: { explain: true }", Mode::Dev).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "debug.explain is only allowed in the dev: block"
+        );
+
+        // in prod block it fails
+        let err = parse("prod: { debug: { sql: true } }", Mode::Prod).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "debug.sql is only allowed in the dev: block"
+        );
+
+        // in dev block it is accepted for dev and prod
+        let dev = parse("dev: { debug: { sql: true, explain: true } }", Mode::Dev).unwrap();
+        assert!(dev.debug.sql && dev.debug.explain);
+        let prod = parse("dev: { debug: { sql: true, explain: true } }", Mode::Prod).unwrap();
+        assert!(!prod.debug.sql && !prod.debug.explain);
+    }
+
+    #[test]
     fn environment_references_are_expanded_in_strings() {
-        let env = env_of(&[("DATABASE_URL", "postgres://db/app"), ("SCHEMA", "billing")]);
+        let env = env_of(&[("HOST", "127.0.0.1"), ("SCHEMA", "billing")]);
         let yaml = "
+server:
+  host: ${HOST}
 database:
-  url: ${DATABASE_URL}
   schemas: ['${SCHEMA}', '${OTHER:-public}']
-  replicas: ['${REPLICA:-}']
 ";
         let config = Config::parse(yaml, Mode::Prod, &env).unwrap();
-        assert_eq!(config.database.url, "postgres://db/app");
+        assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.database.schemas, ["billing", "public"]);
     }
 
     #[test]
     fn missing_variables_are_all_reported_with_their_path() {
         let yaml = "
-database: { url: '${A}' }
-auth: { secret: 'x${B}' }
+server: { host: '${A}' }
+auth: { issuer: 'https://${B}' }
 dev:
-  database: { url: '${C}' }
+  server: { host: '${C}' }
 ";
         let err = parse(yaml, Mode::Prod).unwrap_err();
         assert_eq!(err.problems.len(), 3, "{err}");
-        assert!(err.problems[0].starts_with("database.url: the environment variable `A`"));
-        assert!(err.problems[1].starts_with("auth.secret: the environment variable `B`"));
-        assert!(err.problems[2].starts_with("dev.database.url: the environment variable `C`"));
+        assert!(err.problems[0].starts_with("server.host: the environment variable `A`"));
+        assert!(err.problems[1].starts_with("auth.issuer: the environment variable `B`"));
+        assert!(err.problems[2].starts_with("dev.server.host: the environment variable `C`"));
     }
 
     #[test]
     fn empty_variables_count_as_unset() {
         let env = env_of(&[("EMPTY", "")]);
         let config =
-            Config::parse("database: { url: '${EMPTY:-fallback}' }", Mode::Prod, &env).unwrap();
-        assert_eq!(config.database.url, "fallback");
-        assert!(Config::parse("database: { url: '${EMPTY}' }", Mode::Prod, &env).is_err());
+            Config::parse("server: { host: '${EMPTY:-fallback}' }", Mode::Prod, &env).unwrap();
+        assert_eq!(config.server.host, "fallback");
+        assert!(Config::parse("server: { host: '${EMPTY}' }", Mode::Prod, &env).is_err());
     }
 
     #[test]
     fn dollars_can_be_escaped_and_lone_ones_are_text() {
-        let config = parse("database: { url: 'a$$ {b} $c $${D}' }", Mode::Prod).unwrap();
-        assert_eq!(config.database.url, "a$ {b} $c ${D}");
-        let err = parse("database: { url: '${A' }", Mode::Prod).unwrap_err();
+        let config = parse("server: { host: 'a$$ {b} $c $${D}' }", Mode::Prod).unwrap();
+        assert_eq!(config.server.host, "a$ {b} $c ${D}");
+        let err = parse("server: { host: '${A' }", Mode::Prod).unwrap_err();
         assert!(err.to_string().contains("unterminated"), "{err}");
-        let err = parse("database: { url: '${1A}' }", Mode::Prod).unwrap_err();
+        let err = parse("server: { host: '${1A}' }", Mode::Prod).unwrap_err();
         assert!(err.to_string().contains("not a variable name"), "{err}");
     }
 
@@ -430,13 +640,13 @@ dev:
         let yaml = "
 server: { port: '${PORT}' }
 database: { sql_comments: '${SQL_COMMENTS}', pool_size: '${POOL}' }
-debug: { sql: 'true' }
+graphql: { ui: 'true' }
 ";
         let config = Config::parse(yaml, Mode::Prod, &env).unwrap();
         assert_eq!(config.server.port, 8080);
         assert_eq!(config.database.pool_size, 7);
         assert!(!config.database.sql_comments);
-        assert!(config.debug.sql);
+        assert!(config.graphql.ui);
         let err = parse("server: { port: 'many' }", Mode::Prod).unwrap_err();
         assert!(err.to_string().contains("many"), "{err}");
     }
@@ -447,5 +657,26 @@ debug: { sql: 'true' }
         assert_eq!("Production".parse::<Mode>(), Ok(Mode::Prod));
         assert!("staging".parse::<Mode>().is_err());
         assert_eq!(Mode::default(), Mode::Prod);
+    }
+
+    #[test]
+    fn test_resolve_mode() {
+        // default is prod
+        assert_eq!(resolve_mode(None, None).unwrap(), Mode::Prod);
+        assert_eq!(resolve_mode(None, Some("")).unwrap(), Mode::Prod);
+
+        // env beats default
+        assert_eq!(resolve_mode(None, Some("dev")).unwrap(), Mode::Dev);
+        assert_eq!(resolve_mode(None, Some("development")).unwrap(), Mode::Dev);
+        assert_eq!(resolve_mode(None, Some("prod")).unwrap(), Mode::Prod);
+
+        // flag beats env
+        assert_eq!(resolve_mode(Some("dev"), Some("prod")).unwrap(), Mode::Dev);
+        assert_eq!(resolve_mode(Some("prod"), Some("dev")).unwrap(), Mode::Prod);
+
+        // invalid values error
+        assert!(resolve_mode(Some("invalid"), None).is_err());
+        assert!(resolve_mode(None, Some("invalid")).is_err());
+        assert!(resolve_mode(Some("invalid"), Some("dev")).is_err());
     }
 }

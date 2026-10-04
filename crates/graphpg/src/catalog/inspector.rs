@@ -97,8 +97,7 @@ impl<'a> CatalogInspector<'a> {
         Self { client }
     }
 
-    /// The schemas to inspect: the config's `schemas` when it names any (as it always does
-    /// once [`ConfigOverrides`](crate::config::ConfigOverrides) resolved it), else
+    /// The schemas to inspect: the config's `schemas` when it names any, else
     /// `schema_name`.
     pub fn effective_schemas<'s>(&self, schema_name: &'s str, config: &'s Config) -> Vec<&'s str> {
         if !config.database.schemas.is_empty() {
