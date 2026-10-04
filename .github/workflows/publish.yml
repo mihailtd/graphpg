@@ -102,8 +102,9 @@ jobs:
             VERSION=${{ github.ref_name }}
             REVISION=${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.slug }}
-          cache-to: type=gha,scope=${{ matrix.slug }},mode=max
+          # the registry cache is shared with the Image check of pull requests (image.yml)
+          cache-from: type=registry,ref=${{ env.IMAGE }}/buildcache:${{ matrix.slug }}
+          cache-to: type=registry,ref=${{ env.IMAGE }}/buildcache:${{ matrix.slug }},mode=max
           provenance: false
           sbom: false
       - name: Scan the image for known vulnerabilities

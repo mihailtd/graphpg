@@ -24,26 +24,11 @@ jobs:
   # parts. Everything below waits for them. Locally: `pnpm verify` (and `pnpm fix` to apply fixes).
   check:
     runs-on: ubuntu-latest
-    outputs:
-      docker: ${{ steps.docker.outputs.changed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      # Whether this pull request touches what the image build depends on (see the `image` job)
-      - id: docker
-        if: github.event_name == 'pull_request'
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          pattern='^(Dockerfile|\.dockerignore|Cargo\.(toml|lock)|rust-toolchain\.toml|pnpm-(lock|workspace)\.yaml|package\.json|crates/[^/]+/(Cargo\.toml|build\.rs)|packages/[^/]+/package\.json|\.github/workflows/(ci|publish)\.yml)$'
-          if git diff --name-only "$BASE...$HEAD" | grep -Eq "$pattern"; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
@@ -166,53 +151,3 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: moon run e2e:typecheck e2e:test
-
-  # Builds the release image on pull requests (without pushing) so a broken Dockerfile is
-  # caught before it reaches main, and checks that the container starts and serves.
-  #
-  # It runs only when a file the build depends on changed (the `docker` output of `check`): a
-  # change to Rust or TypeScript sources cannot break the Docker build in a new way, and the
-  # Publish workflow builds the image on every push to main anyway. It reads main's layer cache
-  # (the amd64 scope of Publish), so the dependencies, the slow part, are not compiled again
-  # unless the lockfile changed, and it writes no cache of its own.
-  image:
-    needs: check
-    if: github.event_name == 'pull_request' && needs.check.outputs.docker == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: blog
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres -d blog"
-          --health-interval 5s --health-timeout 5s --health-retries 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          load: true
-          tags: graphpg:ci
-          cache-from: type=gha,scope=amd64
-      - name: Load the blog example
-        run: psql postgres://postgres:postgres@localhost:5432/blog -v ON_ERROR_STOP=1 -f examples/blog/schema.sql
-      - name: Run the container
-        run: |
-          docker run -d --name graphpg --network host \
-            -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/blog \
-            -e DATABASE_SCHEMA=blog -e GRAPHIQL=true graphpg:ci
-          for i in $(seq 1 30); do curl -sf localhost:4000/health && break; sleep 1; done
-          curl -sf localhost:4000/graphql -H 'content-type: application/json' \
-            -d '{"query":"{ authors { username } }"}' | tee /dev/stderr | grep -q '"username":"ada"'
-          # The GraphiQL UI is part of the image: its page names a script, which is served
-          script=$(curl -sf localhost:4000/graphiql | grep -o '/graphiql/graphiql\.[A-Z0-9]*\.js')
-          test -n "$script"
-          curl -sf -H 'Accept-Encoding: gzip' -o /dev/null -w '%{size_download} bytes of %{content_type}\n' "localhost:4000$script"
-          docker stop --time 5 graphpg
-          test "$(docker inspect graphpg --format '{{.State.ExitCode}}')" = "0"
