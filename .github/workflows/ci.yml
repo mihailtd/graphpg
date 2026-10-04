@@ -31,14 +31,15 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # Whether this pull request touches what the image build depends on (see the `image` job)
+      # Whether this pull request touches what the image build depends on (see the `image` job).
+      # Workflow files are not in the list: a change to them cannot break the Docker build.
       - id: docker
         if: github.event_name == 'pull_request'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          pattern='^(Dockerfile|\.dockerignore|Cargo\.(toml|lock)|rust-toolchain\.toml|pnpm-(lock|workspace)\.yaml|package\.json|crates/[^/]+/(Cargo\.toml|build\.rs)|packages/[^/]+/package\.json|\.github/workflows/(ci|publish)\.yml)$'
+          pattern='^(Dockerfile|\.dockerignore|Cargo\.(toml|lock)|rust-toolchain\.toml|pnpm-(lock|workspace)\.yaml|package\.json|crates/[^/]+/(Cargo\.toml|build\.rs)|packages/[^/]+/package\.json)$'
           if git diff --name-only "$BASE...$HEAD" | grep -Eq "$pattern"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
