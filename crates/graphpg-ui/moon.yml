@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://moonrepo.dev/schemas/project.json
+language: rust
+layer: library
+
+dependsOn:
+  - graphiql-ui
+
+fileGroups:
+  sources:
+    - src/**/*
+    - build.rs
+    - Cargo.toml
+    - /Cargo.toml
+    - /Cargo.lock
+
+tasks:
+  build:
+    command: cargo build --locked -p graphpg-ui
+    deps:
+      - graphiql-ui:build
+    inputs:
+      - "@globs(sources)"
+      - assets/**/*
+  test:
+    command: cargo test --locked -p graphpg-ui
+    deps:
+      - graphiql-ui:build
+    inputs:
+      - "@globs(sources)"
+      - assets/**/*
+  typecheck:
+    command: cargo check --locked -p graphpg-ui --all-targets
+    inputs:
+      - "@globs(sources)"
+  lint:
+    command: cargo clippy --locked -p graphpg-ui --all-targets -- -D warnings
+    inputs:
+      - "@globs(sources)"
+  format:
+    command: cargo fmt --check
+    inputs:
+      - "@globs(sources)"
+  fix:
+    command: cargo fmt
+    options:
+      cache: false

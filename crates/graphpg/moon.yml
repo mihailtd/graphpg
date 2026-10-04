@@ -2,6 +2,9 @@
 language: rust
 layer: application
 
+dependsOn:
+  - graphpg-ui
+
 fileGroups:
   sources:
     - src/**/*
@@ -15,17 +18,23 @@ tasks:
     # run the server against DATABASE_URL (copy .env.example to .env); GraphiQL on, port 4000
     command: cargo run --locked --bin graphpg
     preset: server
+    deps:
+      - graphiql-ui:build
     env:
       GRAPHIQL: "true"
     options:
       runFromWorkspaceRoot: true
   build:
     command: cargo build --locked -p graphpg
+    deps:
+      - graphpg-ui:build
     inputs: ["@globs(sources)"]
     outputs: [/target/debug/graphpg]
   test:
     # needs PostgreSQL: TEST_DATABASE_URL, or `docker compose up -d` in the repository root
     command: cargo test --locked -p graphpg
+    deps:
+      - graphpg-ui:build
     inputs: ["@globs(sources)"]
     options:
       cache: false

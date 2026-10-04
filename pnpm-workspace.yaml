@@ -1,5 +1,6 @@
 packages:
   - e2e
+  - packages/*
 
 # esbuild (used by vitest and drizzle-kit) downloads its platform binary in a postinstall script
 allowBuilds:

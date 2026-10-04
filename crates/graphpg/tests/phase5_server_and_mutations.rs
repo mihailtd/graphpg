@@ -527,7 +527,16 @@ async fn test_graphiql_page_served() {
         .body(Body::empty())
         .unwrap();
     assert_eq!(
-        off.oneshot(request).await.unwrap().status(),
+        off.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    let request_js = Request::builder()
+        .method("GET")
+        .uri("/graphiql/graphiql.js")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        off.oneshot(request_js).await.unwrap().status(),
         StatusCode::NOT_FOUND
     );
 
@@ -545,7 +554,7 @@ async fn test_graphiql_page_served() {
         .uri("/graphiql")
         .body(Body::empty())
         .unwrap();
-    let response = app.oneshot(request).await.unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let content_type = response
         .headers()
@@ -557,5 +566,141 @@ async fn test_graphiql_page_served() {
     assert!(content_type.starts_with("text/html"), "{content_type}");
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let html = String::from_utf8_lossy(&body);
-    assert!(html.contains("graphiql@5.4.0"));
+    assert!(html.contains("<title>graphpg · GraphiQL</title>"));
+    assert!(
+        !html.contains("esm.sh"),
+        "GraphiQL must not reference external CDNs like esm.sh: {html}"
+    );
+
+    // Extract the hashed CSS and JS links from the HTML
+    let css_start = html.find("/graphiql/graphiql.").expect("css link");
+    let css_end = html[css_start..].find(".css").expect(".css") + css_start + 4;
+    let css_path = &html[css_start..css_end];
+
+    let js_start = html.rfind("/graphiql/graphiql.").expect("js link");
+    let js_end = html[js_start..].find(".js").expect(".js") + js_start + 3;
+    let js_path = &html[js_start..js_end];
+
+    // Vendored static assets are embedded and served directly by the server
+    for (asset_path, expected_mime) in [
+        (js_path, "application/javascript"),
+        (css_path, "text/css"),
+        ("/graphiql/editor.worker.js", "application/javascript"),
+        ("/graphiql/graphql.worker.js", "application/javascript"),
+        ("/graphiql/json.worker.js", "application/javascript"),
+    ] {
+        let req = Request::builder()
+            .method("GET")
+            .uri(asset_path)
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "Failed for asset {asset_path}"
+        );
+        let ct = res
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            ct.starts_with(expected_mime),
+            "Expected {expected_mime} for {asset_path}, got {ct}"
+        );
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        assert!(!bytes.is_empty(), "Asset {asset_path} is empty");
+    }
+}
+
+#[tokio::test]
+async fn test_scalar_page_served() {
+    let (_client, schema, catalog) = setup_test().await;
+
+    // Off by default: a development tool
+    let off = create_router(server_state(schema.clone(), catalog.clone(), 1));
+    let request = Request::builder()
+        .method("GET")
+        .uri("/scalar")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        off.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    let request_js = Request::builder()
+        .method("GET")
+        .uri("/scalar/scalar.js")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        off.oneshot(request_js).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let state = ServerState::new(
+        create_pool(common::db_url(), 1).expect("pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    );
+    let app = create_router(Arc::new(state.with_scalar(true)));
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/scalar")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(content_type.starts_with("text/html"), "{content_type}");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let html = String::from_utf8_lossy(&body);
+    assert!(html.contains("Scalar"), "{html}");
+    assert!(html.contains("/scalar/scalar.js"), "{html}");
+    assert!(html.contains("/openapi.json"), "{html}");
+    // Verify agent is disabled as requested
+    assert!(
+        html.contains("\"disabled\":true") || html.contains("\"disabled\": true"),
+        "{html}"
+    );
+
+    // Also test trailing slash
+    let request_slash = Request::builder()
+        .method("GET")
+        .uri("/scalar/")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(request_slash).await.unwrap().status(),
+        StatusCode::OK
+    );
+
+    // Vendored static asset scalar.js is embedded and served directly by the server
+    let req = Request::builder()
+        .method("GET")
+        .uri("/scalar/scalar.js")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let ct = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(ct.starts_with("application/javascript"), "{ct}");
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(!bytes.is_empty(), "scalar.js is empty");
 }

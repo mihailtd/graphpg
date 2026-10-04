@@ -15,13 +15,15 @@ To use another database, set `TEST_DATABASE_URL`. The tests create their own sch
 
 ## Monorepo commands
 
-The repository is a [moon](https://moonrepo.dev) workspace: Rust in `crates/graphpg`, and the end-to-end suite in `e2e/` (TypeScript, with [Drizzle](https://orm.drizzle.team) owning the test schema and migrations). moon installs the pinned Rust and Node/pnpm toolchains (`.moon/toolchains.yml`) itself. Install moon, then from the repository root:
+The repository is a [moon](https://moonrepo.dev) workspace: Rust in `crates/graphpg`, the embedded web UIs (`crates/graphpg-ui`, built from the JS packages in `packages/`, GraphiQL in `packages/graphiql-ui`), and the end-to-end suite in `e2e/` (TypeScript, with [Drizzle](https://orm.drizzle.team) owning the test schema and migrations). moon installs the pinned Rust and Node/pnpm toolchains (`.moon/toolchains.yml`) itself. Install moon, then from the repository root:
 
 ```bash
 pnpm install               # once: Node dependencies (git hooks are installed on the first moon run)
 pnpm db:up                 # PostgreSQL 18 + pgvector (db:down stops it, db:reset wipes it)
-pnpm dev                   # run graphpg against DATABASE_URL (copy .env.example to .env), GraphiQL on
-pnpm build                 # cargo build
+pnpm dev                   # build the UI, run graphpg against DATABASE_URL (copy .env.example to .env), GraphiQL on
+moon run graphiql-ui:dev   # in a second terminal: rebuild the UI on change (a debug graphpg reads it from disk, reload the page)
+pnpm build                 # build the UI, then cargo build
+pnpm bundle:graphiql       # build the GraphiQL UI only
 pnpm test                  # Rust integration tests, then the end-to-end suite
 pnpm test:e2e              # Drizzle migrates + seeds, the built graphpg is queried
 pnpm test:e2e:watch        # the same, re-run on change

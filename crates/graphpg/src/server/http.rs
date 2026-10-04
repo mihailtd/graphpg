@@ -9,7 +9,7 @@ use apollo_compiler::validation::Valid;
 use apollo_compiler::{ExecutableDocument, Schema};
 use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use deadpool_postgres::{
@@ -20,8 +20,6 @@ use std::sync::Arc;
 use tokio_postgres::NoTls;
 use tower_http::cors::CorsLayer;
 use tracing::Instrument;
-
-const GRAPHIQL_HTML: &str = include_str!("graphiql.html");
 
 #[derive(Debug, Deserialize)]
 pub struct GraphQLRequest {
@@ -166,6 +164,8 @@ pub struct ServerState {
     pub auth: Option<Arc<super::Authenticator>>,
     /// Serve the GraphiQL IDE at `/graphiql` (development and pre-production only).
     pub graphiql: bool,
+    /// Serve the Scalar OpenAPI UI at `/scalar` (development and pre-production only).
+    pub scalar: bool,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -200,6 +200,7 @@ impl ServerState {
             next_replica: std::sync::atomic::AtomicUsize::new(0),
             auth: None,
             graphiql: false,
+            scalar: false,
         }
     }
 
@@ -289,6 +290,12 @@ impl ServerState {
         self
     }
 
+    /// Serves the Scalar OpenAPI UI at `/scalar`, or not (the default).
+    pub fn with_scalar(mut self, on: bool) -> Self {
+        self.scalar = on;
+        self
+    }
+
     /// Turns sqlcommenter tags on or off.
     pub fn with_sql_comments(mut self, on: bool) -> Self {
         self.sql_comments = on;
@@ -375,7 +382,11 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
         .route("/health", get(health_handler));
     // The IDE is a development tool: without it, `/graphiql` is not found
     if state.graphiql {
-        router = router.route("/graphiql", get(graphiql_handler));
+        router = router.merge(graphpg_ui::graphiql_router());
+    }
+    // The OpenAPI UI: without it, `/scalar` is not found
+    if state.scalar {
+        router = router.merge(graphpg_ui::scalar_router());
     }
     router.layer(CorsLayer::permissive()).with_state(state)
 }
@@ -386,10 +397,6 @@ async fn health_handler() -> impl IntoResponse {
         "engine": "graphpg",
         "version": "0.1.0"
     }))
-}
-
-async fn graphiql_handler() -> Html<&'static str> {
-    Html(GRAPHIQL_HTML)
 }
 
 /// Pretty-prints generated SQL for humans (the executed statement is unchanged).

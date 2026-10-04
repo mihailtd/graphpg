@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://moonrepo.dev/schemas/project.json
+language: typescript
+layer: library
+
+fileGroups:
+  sources:
+    - src/**/*
+    - build.mjs
+    - package.json
+
+tasks:
+  build:
+    # through pnpm: moon installs the workspace dependencies before a pnpm task, not before a bare node
+    command: pnpm run build
+    inputs:
+      - src/**/*
+      - build.mjs
+      - package.json
+      - /pnpm-lock.yaml
+    outputs:
+      - /crates/graphpg-ui/assets/graphiql/**
+  dev:
+    # rebuilds on change; a debug graphpg reads the files from disk, so reload the page
+    command: pnpm run dev
+    preset: server
+  lint:
+    command: pnpm exec biome lint
+    inputs:
+      - "@globs(sources)"
+      - /biome.json
+    options:
+      affectedFiles: true
+  format:
+    command: pnpm exec biome format
+    inputs:
+      - "@globs(sources)"
+      - /biome.json
+    options:
+      affectedFiles: true
+  fix:
+    command: pnpm exec biome check --write .
+    options:
+      cache: false

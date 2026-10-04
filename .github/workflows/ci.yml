@@ -45,6 +45,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
+        with:
+          auto-install: true
+      - name: Build UI assets
+        run: moon run graphpg-ui:build
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.98.1
@@ -53,8 +59,12 @@ jobs:
         run: psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f docker/init.sql
       - name: Build
         run: cargo build --workspace --locked
+        env:
+          GRAPHPG_REQUIRE_UI: "1"
       - name: Test
         run: cargo test --workspace --locked
+        env:
+          GRAPHPG_REQUIRE_UI: "1"
 
   example:
     runs-on: ubuntu-latest
@@ -150,9 +160,13 @@ jobs:
         run: |
           docker run -d --name graphpg --network host \
             -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/blog \
-            -e DATABASE_SCHEMA=blog graphpg:ci
+            -e DATABASE_SCHEMA=blog -e GRAPHIQL=true graphpg:ci
           for i in $(seq 1 30); do curl -sf localhost:4000/health && break; sleep 1; done
           curl -sf localhost:4000/graphql -H 'content-type: application/json' \
             -d '{"query":"{ authors { username } }"}' | tee /dev/stderr | grep -q '"username":"ada"'
+          # The GraphiQL UI is part of the image: its page names a script, which is served
+          script=$(curl -sf localhost:4000/graphiql | grep -o '/graphiql/graphiql\.[A-Z0-9]*\.js')
+          test -n "$script"
+          curl -sf -H 'Accept-Encoding: gzip' -o /dev/null -w '%{size_download} bytes of %{content_type}\n' "localhost:4000$script"
           docker stop --time 5 graphpg
           test "$(docker inspect graphpg --format '{{.State.ExitCode}}')" = "0"
