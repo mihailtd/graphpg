@@ -704,3 +704,58 @@ async fn test_scalar_page_served() {
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     assert!(!bytes.is_empty(), "scalar.js is empty");
 }
+
+#[tokio::test]
+async fn test_graphql_disabled_returns_404() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(
+        ServerState::new(
+            create_pool(common::db_url(), 2).expect("Failed to create pool"),
+            schema,
+            catalog,
+            "app_public".to_string(),
+            DebugOptions::default(),
+        )
+        .with_graphql_enabled(false),
+    );
+    let app = create_router(state);
+
+    // /graphql returns 404
+    let req = Request::builder()
+        .method("POST")
+        .uri("/graphql")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"query": "{ __typename }"}"#))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // /export returns 404
+    let req = Request::builder()
+        .method("POST")
+        .uri("/export")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"query": "{ __typename }"}"#))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // /import/User returns 404
+    let req = Request::builder()
+        .method("POST")
+        .uri("/import/User")
+        .header(header::CONTENT_TYPE, "application/x-ndjson")
+        .body(Body::from("{}"))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // /health still returns 200
+    let req = Request::builder()
+        .method("GET")
+        .uri("/health")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}

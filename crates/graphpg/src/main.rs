@@ -1,72 +1,126 @@
-use graphpg::config::{Config, ConfigOverrides, Mode, DEFAULT_CONFIG_FILE};
-use graphpg::server::Authenticator;
-use graphpg::{
-    create_pool, create_router, CatalogInspector, DebugOptions, SchemaBuilder, ServerState,
-};
+use clap::{Parser, Subcommand};
+use graphpg::config::{resolve_mode, Config, Mode, Secrets, DEFAULT_CONFIG_FILE};
+use graphpg::server::{create_pool, create_router, Authenticator, ServerState};
+use graphpg::{CatalogInspector, SchemaBuilder};
 use std::error::Error;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const DEFAULT_DATABASE_URL: &str = "postgres://postgres:postgres@localhost:5432/graphpg";
+#[derive(Parser, Debug)]
+#[command(
+    name = "graphpg",
+    version,
+    about = "Instant GraphQL engine for PostgreSQL"
+)]
+pub struct Cli {
+    /// Path to the YAML configuration file
+    #[arg(long, value_name = "PATH", global = true)]
+    pub config: Option<PathBuf>,
 
-fn env_or(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
+    /// Runtime mode: dev or prod
+    #[arg(long, value_name = "MODE", global = true)]
+    pub mode: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
 }
 
-fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> Result<T, String> {
-    match std::env::var(key) {
-        Ok(v) => v
-            .parse()
-            .map_err(|_| format!("invalid value for {key}: {v:?}")),
-        Err(_) => Ok(default),
-    }
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Export the GraphQL SDL schema
+    #[command(alias = "export-graphql-schema")]
+    ExportGraphql {
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
+    /// Export the Apollo Federation Subgraph SDL schema
+    ExportSubgraph {
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
+    /// Export the JSON Schema for graphpg.yaml
+    ExportConfigSchema {
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
+    /// Inspect schemas and print advice / optimization suggestions
+    Advise,
+    /// Schema subcommands
+    Schema {
+        #[command(subcommand)]
+        command: SchemaCommands,
+    },
 }
 
-/// A boolean switch set by a CLI flag (`--debug`) or an env var (`DEBUG=1`/`true`).
-fn switch(flag: &str, env_key: &str) -> bool {
-    std::env::args().any(|a| a == flag)
-        || std::env::var(env_key).is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+#[derive(Subcommand, Debug)]
+pub enum SchemaCommands {
+    /// Export the GraphQL SDL schema
+    #[command(alias = "export-schema")]
+    ExportGraphql {
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
+    /// Export the Apollo Federation Subgraph SDL schema
+    ExportSubgraph {
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
+    /// Export the JSON Schema for graphpg.yaml
+    ExportConfigSchema {
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
 }
 
-/// A setting turned on (`on` flag) or off (`off` flag), else by `env_key` (`true`/`false`),
-/// over the config file; `None` leaves the file's setting.
-fn flag_or_env(on: &str, off: &str, env_key: &str) -> Result<Option<bool>, String> {
-    if std::env::args().any(|a| a == on) {
-        return Ok(Some(true));
-    }
-    if std::env::args().any(|a| a == off) {
-        return Ok(Some(false));
-    }
-    match std::env::var(env_key).map(|v| v.trim().to_ascii_lowercase()) {
-        Err(_) => Ok(None),
-        Ok(v) if v.is_empty() => Ok(None),
-        Ok(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on") => Ok(Some(true)),
-        Ok(v) if matches!(v.as_str(), "0" | "false" | "no" | "off") => Ok(Some(false)),
-        Ok(v) => Err(format!(
-            "invalid value for {env_key}: {v:?} (true or false)"
-        )),
-    }
+/// Formats the single startup log summary line.
+pub fn startup_log_summary(mode: Mode, config: &Config) -> String {
+    let on_off = |b: bool| if b { "on" } else { "off" };
+    format!(
+        "mode={} graphql.ui={} openapi.ui={} watch={} debug.sql={}",
+        mode,
+        on_off(config.graphql.ui),
+        on_off(config.openapi.ui),
+        on_off(config.watch.enabled),
+        on_off(config.debug.sql)
+    )
 }
 
-/// Config path: `--config <path>`, else `ENGINE_CONFIG`, else `graphpg.yaml` when
-/// that file exists. An explicitly named file must exist.
-fn config_path() -> Result<Option<std::path::PathBuf>, String> {
-    let args: Vec<String> = std::env::args().collect();
-    let explicit = args
-        .iter()
-        .position(|a| a == "--config")
-        .and_then(|i| args.get(i + 1).cloned())
-        .or_else(|| {
-            std::env::var("ENGINE_CONFIG")
-                .ok()
-                .filter(|v| !v.is_empty())
-        });
+/// Identifies dev features explicitly turned on in production mode to log warnings.
+pub fn prod_warnings(mode: Mode, config: &Config) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if mode == Mode::Prod {
+        if config.graphql.ui {
+            warnings.push("graphql.ui is enabled in production mode".to_string());
+        }
+        if config.openapi.ui {
+            warnings.push("openapi.ui is enabled in production mode".to_string());
+        }
+        if config.watch.enabled {
+            warnings.push("watch.enabled is enabled in production mode".to_string());
+        }
+    }
+    warnings
+}
+
+/// Resolves the config path: `--config <path>` (must exist), else `./graphpg.yaml` if it exists.
+fn resolve_config_path(explicit: Option<&Path>) -> Result<Option<PathBuf>, String> {
     match explicit {
-        Some(path) if std::path::Path::new(&path).is_file() => Ok(Some(path.into())),
-        Some(path) => Err(format!("config not found: {path}")),
-        None => Ok(std::path::Path::new(DEFAULT_CONFIG_FILE)
-            .is_file()
-            .then(|| DEFAULT_CONFIG_FILE.into())),
+        Some(path) => {
+            if path.is_file() {
+                Ok(Some(path.to_path_buf()))
+            } else {
+                Err(format!("config not found: {}", path.display()))
+            }
+        }
+        None => {
+            let default_path = Path::new(DEFAULT_CONFIG_FILE);
+            if default_path.is_file() {
+                Ok(Some(default_path.to_path_buf()))
+            } else {
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -98,119 +152,114 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _ = dotenvy::dotenv();
     let _telemetry = graphpg::telemetry::init();
 
-    let database_url = env_or("DATABASE_URL", DEFAULT_DATABASE_URL);
-    let pool_size: usize = env_parse("DATABASE_POOL_SIZE", 10)?;
-    let port: u16 = env_parse("PORT", 4000)?;
-    let debug = DebugOptions {
-        sql: switch("--debug", "DEBUG"),
-        explain: switch("--debug-explain", "DEBUG_EXPLAIN"),
-    };
+    let cli = Cli::parse();
 
-    let pool = create_pool(&database_url, pool_size)?;
-    let config_path = config_path()?;
-    let is_dev_mode = switch("--dev", "DEV") || switch("--watch", "WATCH");
-    let mode = if is_dev_mode { Mode::Dev } else { Mode::Prod };
-    let mut config = match &config_path {
+    let mode = resolve_mode(
+        cli.mode.as_deref(),
+        std::env::var("GRAPHPG_MODE").ok().as_deref(),
+    )?;
+
+    let secrets = Secrets::from_env()?;
+
+    let config_path = resolve_config_path(cli.config.as_deref())?;
+    let config = match &config_path {
         Some(path) => {
             tracing::info!(path = %path.display(), %mode, "loading config");
             Config::load_from_file(path, mode).map_err(|e| e.to_string())?
         }
         None => Config::defaults(mode),
     };
-    // Environment and flags over the file; the watcher re-applies them on every reload
-    let overrides = ConfigOverrides {
-        database_schemas: std::env::var("DATABASE_SCHEMAS").ok(),
-        database_schema: std::env::var("DATABASE_SCHEMA").ok(),
-        federation: switch("--federation", "FEDERATION"),
-        graphiql: flag_or_env("--graphiql", "--no-graphiql", "GRAPHIQL")?,
-        auth_enabled: flag_or_env("--auth", "--no-auth", "AUTH_ENABLED")?,
-        auth_issuer: std::env::var("AUTH_ISSUER").ok(),
-        auth_audience: std::env::var("AUTH_AUDIENCE").ok(),
-        auth_jwks_uri: std::env::var("AUTH_JWKS_URI").ok(),
-        auth_secret: std::env::var("AUTH_JWT_SECRET").ok(),
-    };
-    overrides.apply(&mut config);
+
+    let pool = create_pool(&secrets.database_url, config.database.pool_size)?;
     let schemas: Vec<&str> = config.database.schemas.iter().map(String::as_str).collect();
     let default_schema = schemas[0].to_string();
 
     // Check CLI subcommands
-    let args: Vec<String> = std::env::args().collect();
-    let is_export_graphql = args
-        .iter()
-        .any(|a| a == "export-graphql" || a == "export-graphql-schema")
-        || (args.len() >= 3
-            && args[1] == "schema"
-            && (args[2] == "export-graphql" || args[2] == "export-schema"));
-    let is_export_subgraph = args.iter().any(|a| a == "export-subgraph")
-        || (args.len() >= 3 && args[1] == "schema" && args[2] == "export-subgraph");
-    let is_advise = args.iter().any(|a| a == "advise");
-    let is_export_config_schema = args.iter().any(|a| a == "export-config-schema")
-        || (args.len() >= 3 && args[1] == "schema" && args[2] == "export-config-schema");
+    match cli.command {
+        Some(Commands::ExportGraphql { out })
+        | Some(Commands::Schema {
+            command: SchemaCommands::ExportGraphql { out },
+        }) => {
+            let out_path = out.unwrap_or_else(|| PathBuf::from(&config.export.graphql));
+            let client = pool.get().await?;
+            let catalog = CatalogInspector::new(&client)
+                .inspect_schemas_with_config(&schemas, &config)
+                .await?;
+            let sdl = SchemaBuilder::generate_sdl(&catalog);
 
-    // Helper to find --out <path> argument
-    let get_out_path = |flag: &str, env_var: &str, default_path: &str| -> String {
-        if let Some(pos) = args.iter().position(|a| a == flag) {
-            if let Some(val) = args.get(pos + 1) {
-                return val.clone();
+            if let Some(parent) = out_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
             }
+            std::fs::write(&out_path, sdl)?;
+            println!("✓ Exported GraphQL SDL schema to: {}", out_path.display());
+            return Ok(());
         }
-        std::env::var(env_var).unwrap_or_else(|_| default_path.to_string())
-    };
+        Some(Commands::ExportSubgraph { out })
+        | Some(Commands::Schema {
+            command: SchemaCommands::ExportSubgraph { out },
+        }) => {
+            let out_path = out.unwrap_or_else(|| PathBuf::from(&config.export.subgraph));
+            let client = pool.get().await?;
+            let mut cfg = config.clone();
+            cfg.graphql.federation.enabled = true;
+            let catalog = CatalogInspector::new(&client)
+                .inspect_schemas_with_config(&schemas, &cfg)
+                .await?;
+            let sdl = SchemaBuilder::generate_federation_subgraph_sdl(&catalog);
 
-    if is_export_graphql {
-        let out_path = get_out_path("--out", "GRAPHQL_SCHEMA_OUT", "schema.graphql");
-        let client = pool.get().await?;
-        let catalog = CatalogInspector::new(&client)
-            .inspect_schemas_with_config(&schemas, &config)
-            .await?;
-        let sdl = SchemaBuilder::generate_sdl(&catalog);
-
-        if let Some(parent) = std::path::Path::new(&out_path).parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
+            if let Some(parent) = out_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
             }
+            std::fs::write(&out_path, sdl)?;
+            println!(
+                "✓ Exported Apollo Federation Subgraph SDL to: {}",
+                out_path.display()
+            );
+            return Ok(());
         }
-        std::fs::write(&out_path, sdl)?;
-        println!("✓ Exported GraphQL SDL schema to: {}", out_path);
-        return Ok(());
-    }
+        Some(Commands::ExportConfigSchema { out })
+        | Some(Commands::Schema {
+            command: SchemaCommands::ExportConfigSchema { out },
+        }) => {
+            let out_path = out.unwrap_or_else(|| PathBuf::from(&config.export.config_schema));
+            let client = pool.get().await?;
+            let inspector = CatalogInspector::new(&client);
+            let base = inspector.inspect_base(&schemas, &Config::default()).await?;
+            let schema_json = graphpg::ConfigSchemaGenerator::generate(&base);
 
-    if is_export_subgraph {
-        let out_path = get_out_path("--out", "SUBGRAPH_SCHEMA_OUT", "subgraph.graphql");
-        let client = pool.get().await?;
-        let mut cfg = config.clone();
-        cfg.graphql.federation.enabled = true;
-        let catalog = CatalogInspector::new(&client)
-            .inspect_schemas_with_config(&schemas, &cfg)
-            .await?;
-        let sdl = SchemaBuilder::generate_federation_subgraph_sdl(&catalog);
-
-        if let Some(parent) = std::path::Path::new(&out_path).parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
+            if let Some(parent) = out_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
             }
+            std::fs::write(&out_path, serde_json::to_string_pretty(&schema_json)?)?;
+            println!(
+                "✓ Exported YAML config JSON schema to: {}",
+                out_path.display()
+            );
+            return Ok(());
         }
-        std::fs::write(&out_path, sdl)?;
-        println!("✓ Exported Apollo Federation Subgraph SDL to: {}", out_path);
-        return Ok(());
-    }
-
-    if is_export_config_schema {
-        let out_path = get_out_path("--out", "CONFIG_SCHEMA_OUT", ".engine/schema.config.json");
-        let client = pool.get().await?;
-        let inspector = CatalogInspector::new(&client);
-        // Database names only: the schema must not depend on the config it validates
-        let base = inspector.inspect_base(&schemas, &Config::default()).await?;
-        let schema_json = graphpg::ConfigSchemaGenerator::generate(&base);
-
-        if let Some(parent) = std::path::Path::new(&out_path).parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
+        Some(Commands::Advise) => {
+            let client = pool.get().await?;
+            let inspector = CatalogInspector::new(&client);
+            let catalog = inspector
+                .inspect_schemas_with_config(&schemas, &config)
+                .await?;
+            let advice = inspector.advise_schemas(&schemas, &catalog).await?;
+            for a in &advice {
+                let level = match a.level {
+                    graphpg::catalog::AdviceLevel::Warning => "warning",
+                    graphpg::catalog::AdviceLevel::Info => "info",
+                };
+                println!("{level}: {}", a.message);
             }
+            return Ok(());
         }
-        std::fs::write(&out_path, serde_json::to_string_pretty(&schema_json)?)?;
-        println!("✓ Exported YAML config JSON schema to: {}", out_path);
-        return Ok(());
+        None => {}
     }
 
     // Introspect once at startup on a pooled connection, then hand it back.
@@ -224,16 +273,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let advice = inspector.advise_schemas(&schemas, &catalog).await?;
         (catalog, schema, advice)
     };
-    if is_advise {
-        for a in &advice {
-            let level = match a.level {
-                graphpg::catalog::AdviceLevel::Warning => "warning",
-                graphpg::catalog::AdviceLevel::Info => "info",
-            };
-            println!("{level}: {}", a.message);
-        }
-        return Ok(());
-    }
+
     for a in &advice {
         match a.level {
             graphpg::catalog::AdviceLevel::Warning => tracing::warn!("{}", a.message),
@@ -243,43 +283,38 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tracing::info!(
         schemas = %config.database.schemas.join(","),
         tables = catalog.tables.len(),
-        pool_size,
+        pool_size = config.database.pool_size,
         "introspected database"
     );
 
-    let sql_comments = !std::env::var("SQL_COMMENTS")
-        .is_ok_and(|v| matches!(v.as_str(), "0" | "false" | "no" | "off"));
-    // Read replicas: comma-separated URLs; queries run on those that are standbys
-    let replica_urls: Vec<String> = std::env::var("DATABASE_REPLICA_URLS")
-        .unwrap_or_default()
-        .split(',')
-        .map(|u| u.trim().to_string())
-        .filter(|u| !u.is_empty())
-        .collect();
-    let replicas = replica_urls
+    let replicas = secrets
+        .replica_urls
         .iter()
-        .map(|url| create_pool(url, pool_size))
+        .map(|url| create_pool(url, config.database.pool_size))
         .collect::<Result<Vec<_>, _>>()?;
-    // Requests are authenticated (OAuth 2.0 bearer tokens) when `auth.enabled`; a configuration
-    // problem stops startup
-    let authenticator = match Authenticator::new(&config.auth).await {
-        Ok(authenticator) => authenticator,
-        Err(err) => {
-            eprintln!("invalid auth configuration:\n{err}");
-            std::process::exit(1);
-        }
-    };
+
+    let authenticator =
+        match Authenticator::new(&config.auth, secrets.auth_jwt_secret.as_deref()).await {
+            Ok(authenticator) => authenticator,
+            Err(err) => {
+                eprintln!("invalid auth configuration:\n{err}");
+                std::process::exit(1);
+            }
+        };
+
     match &config.auth {
         auth if auth.enabled => {
             tracing::info!(
                 issuer = auth.issuer.as_deref().unwrap_or_default(),
                 "authentication: OAuth 2.0 bearer tokens"
             );
-            // Without a role to switch to, policies only apply if the login role is subject to them
             if auth.roles.authenticated.is_none() {
                 let bypasses = match pool.get().await {
                     Ok(client) => client
-                        .query_one("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user", &[])
+                        .query_one(
+                            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user",
+                            &[],
+                        )
                         .await
                         .is_ok_and(|row| row.get::<_, bool>(0)),
                     Err(_) => false,
@@ -294,14 +329,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         _ => tracing::warn!("authentication is off: every request runs as the database user"),
     }
+
     let state = Arc::new(
-        ServerState::new(pool, schema, catalog, default_schema, debug)
-            .with_sql_comments(sql_comments)
+        ServerState::new(pool, schema, catalog, default_schema, config.debug.into())
+            .with_sql_comments(config.database.sql_comments)
             .with_replicas(replicas)
             .with_auth(authenticator)
             .with_graphiql(config.graphql.ui)
-            .with_scalar(config.openapi.ui),
+            .with_scalar(config.openapi.ui)
+            .with_graphql_enabled(config.graphql.enabled)
+            .with_config(config.clone()),
     );
+
     if !state.replicas.is_empty() {
         state.refresh_replicas().await;
         let standbys = state
@@ -319,36 +358,51 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    if is_dev_mode {
+    if config.watch.enabled {
         let watcher_options = graphpg::server::WatcherOptions {
-            database_url: database_url.clone(),
-            overrides,
-            graphql_out: std::env::var("GRAPHQL_SCHEMA_OUT")
-                .unwrap_or_else(|_| "schema.graphql".to_string()),
-            config_schema_out: std::env::var("CONFIG_SCHEMA_OUT")
-                .unwrap_or_else(|_| ".engine/schema.config.json".to_string()),
+            database_url: secrets.database_url.clone(),
+            mode,
             config_path: config_path.clone(),
         };
         graphpg::server::start_schema_watcher(watcher_options, state.clone());
-        println!("🚀 [dev mode] Active: watching PostgreSQL schema for DDL changes and auto-generating schemas");
+        tracing::info!("watching PostgreSQL schema for DDL changes and auto-generating schemas");
     }
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
+        .parse()
+        .map_err(|e| {
+            format!(
+                "invalid bind address '{}:{}': {e}",
+                config.server.host, config.server.port
+            )
+        })?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("graphpg listening on http://{}/graphql", addr);
+
+    tracing::info!("{}", startup_log_summary(mode, &config));
+    for warning in prod_warnings(mode, &config) {
+        tracing::warn!("{warning}");
+    }
+
+    if config.graphql.enabled {
+        tracing::info!("graphpg listening on http://{}/graphql", addr);
+    } else {
+        tracing::info!("graphpg listening on http://{}", addr);
+    }
     if config.graphql.ui {
-        tracing::info!("GraphiQL available at http://localhost:{}/graphiql", port);
+        tracing::info!(
+            "GraphiQL available at http://localhost:{}/graphiql",
+            config.server.port
+        );
     }
     if config.openapi.ui {
         tracing::info!(
             "Scalar API reference available at http://localhost:{}/scalar",
-            port
+            config.server.port
         );
     }
-    if debug.sql || debug.explain {
-        let explain = debug.explain;
+    if config.debug.sql || config.debug.explain {
         tracing::warn!(
-            explain,
+            explain = config.debug.explain,
             "debug mode: responses include generated SQL — do not enable in production"
         );
     }
@@ -358,4 +412,61 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clap_unknown_or_removed_flags_error() {
+        assert!(Cli::try_parse_from(["graphpg", "--dev"]).is_err());
+        assert!(Cli::try_parse_from(["graphpg", "--watch"]).is_err());
+        assert!(Cli::try_parse_from(["graphpg", "--unknown-flag"]).is_err());
+        assert!(Cli::try_parse_from(["graphpg", "--debug"]).is_err());
+    }
+
+    #[test]
+    fn test_clap_valid_flags() {
+        let cli =
+            Cli::try_parse_from(["graphpg", "--mode", "dev", "--config", "graphpg.yaml"]).unwrap();
+        assert_eq!(cli.mode.as_deref(), Some("dev"));
+        assert_eq!(cli.config, Some(PathBuf::from("graphpg.yaml")));
+    }
+
+    #[test]
+    fn test_startup_log_summary() {
+        let mut dev_cfg = Config::defaults(Mode::Dev);
+        dev_cfg.debug.sql = true;
+        assert_eq!(
+            startup_log_summary(Mode::Dev, &dev_cfg),
+            "mode=dev graphql.ui=on openapi.ui=on watch=on debug.sql=on"
+        );
+
+        let prod_cfg = Config::defaults(Mode::Prod);
+        assert_eq!(
+            startup_log_summary(Mode::Prod, &prod_cfg),
+            "mode=prod graphql.ui=off openapi.ui=off watch=off debug.sql=off"
+        );
+    }
+
+    #[test]
+    fn test_prod_warnings() {
+        let prod_cfg = Config::defaults(Mode::Prod);
+        assert!(prod_warnings(Mode::Prod, &prod_cfg).is_empty());
+
+        let mut custom_prod = Config::defaults(Mode::Prod);
+        custom_prod.graphql.ui = true;
+        custom_prod.openapi.ui = true;
+        custom_prod.watch.enabled = true;
+        let warnings = prod_warnings(Mode::Prod, &custom_prod);
+        assert_eq!(warnings.len(), 3);
+        assert!(warnings[0].contains("graphql.ui"));
+        assert!(warnings[1].contains("openapi.ui"));
+        assert!(warnings[2].contains("watch.enabled"));
+
+        // In dev mode, no warnings even if features are on
+        let dev_cfg = Config::defaults(Mode::Dev);
+        assert!(prod_warnings(Mode::Dev, &dev_cfg).is_empty());
+    }
 }

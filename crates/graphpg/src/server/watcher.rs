@@ -1,5 +1,5 @@
 use crate::catalog::{finalize, CatalogError, CatalogInspector};
-use crate::config::{Config, ConfigOverrides, ConfigSchemaGenerator};
+use crate::config::{Config, ConfigSchemaGenerator, Mode};
 use crate::schema::SchemaBuilder;
 use crate::server::ServerState;
 use std::sync::Arc;
@@ -9,11 +9,7 @@ use tokio_postgres::NoTls;
 
 pub struct WatcherOptions {
     pub database_url: String,
-    /// Environment and flag overrides, applied over the config file on every reload as at
-    /// startup.
-    pub overrides: ConfigOverrides,
-    pub graphql_out: String,
-    pub config_schema_out: String,
+    pub mode: Mode,
     /// Engine config re-read on every reload (and watched for changes), if any.
     pub config_path: Option<std::path::PathBuf>,
 }
@@ -170,15 +166,14 @@ async fn query_catalog_fingerprint(state: &ServerState, schemas: &[String]) -> S
     }
 }
 
-/// The config file (if any) with the environment and flag overrides applied, as at startup.
-fn load_config(
+/// The config file (if any) with the selected mode applied, as at startup.
+pub fn load_config(
     options: &WatcherOptions,
 ) -> Result<Config, Box<dyn std::error::Error + Send + Sync>> {
-    let mut config = match &options.config_path {
-        Some(path) => Config::load_from_file(path, crate::config::Mode::Dev)?,
-        None => Config::defaults(crate::config::Mode::Dev),
+    let config = match &options.config_path {
+        Some(path) => Config::load_from_file(path, options.mode)?,
+        None => Config::defaults(options.mode),
     };
-    options.overrides.apply(&mut config);
     Ok(config)
 }
 
@@ -213,10 +208,12 @@ async fn reload_and_regenerate(
         }
         Err(err) => return Err(err.into()),
     };
-    write_file(
-        &options.config_schema_out,
-        &serde_json::to_string_pretty(&config_json)?,
-    )?;
+    if config.watch.export {
+        write_file(
+            &config.export.config_schema,
+            &serde_json::to_string_pretty(&config_json)?,
+        )?;
+    }
     let new_catalog = finalize(base?, &config)?;
 
     // 2. Re-build GraphQL Schema
@@ -224,10 +221,16 @@ async fn reload_and_regenerate(
     let sdl = SchemaBuilder::generate_sdl(&new_catalog);
 
     // 3. Update in-memory ServerState atomically
-    state.reload(new_schema, new_catalog);
+    state.reload(new_schema, new_catalog.clone());
 
-    // 4. Write the SDL to disk
-    write_file(&options.graphql_out, &sdl)?;
+    // 4. Write export files to disk
+    if config.watch.export {
+        write_file(&config.export.graphql, &sdl)?;
+        if config.graphql.federation.enabled {
+            let fed_sdl = SchemaBuilder::generate_federation_subgraph_sdl(&new_catalog);
+            write_file(&config.export.subgraph, &fed_sdl)?;
+        }
+    }
 
     let elapsed = start.elapsed();
     println!(
@@ -249,4 +252,77 @@ fn write_file(path: &str, content: &str) -> std::io::Result<()> {
         }
     }
     std::fs::write(path, content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_config_uses_selected_mode() {
+        let dev_options = WatcherOptions {
+            database_url: "postgres://localhost/test".to_string(),
+            mode: Mode::Dev,
+            config_path: None,
+        };
+        let dev_cfg = load_config(&dev_options).expect("load dev config");
+        assert!(dev_cfg.watch.enabled);
+        assert!(dev_cfg.graphql.ui);
+        assert!(dev_cfg.openapi.ui);
+
+        let prod_options = WatcherOptions {
+            database_url: "postgres://localhost/test".to_string(),
+            mode: Mode::Prod,
+            config_path: None,
+        };
+        let prod_cfg = load_config(&prod_options).expect("load prod config");
+        assert!(!prod_cfg.watch.enabled);
+        assert!(!prod_cfg.graphql.ui);
+        assert!(!prod_cfg.openapi.ui);
+    }
+
+    #[test]
+    fn test_load_config_from_file_uses_selected_mode_overlay() {
+        use std::io::Write;
+        let config_path = std::env::temp_dir().join(format!(
+            "graphpg_test_watcher_{}.yaml",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let yaml = r#"
+server:
+  port: 5000
+dev:
+  server:
+    port: 5001
+prod:
+  server:
+    port: 5002
+"#;
+        let mut file = std::fs::File::create(&config_path).unwrap();
+        file.write_all(yaml.as_bytes()).unwrap();
+
+        let dev_options = WatcherOptions {
+            database_url: "postgres://localhost/test".to_string(),
+            mode: Mode::Dev,
+            config_path: Some(config_path.clone()),
+        };
+        let dev_cfg = load_config(&dev_options).expect("load dev config");
+        assert_eq!(dev_cfg.server.port, 5001);
+        assert!(dev_cfg.watch.enabled);
+
+        let prod_options = WatcherOptions {
+            database_url: "postgres://localhost/test".to_string(),
+            mode: Mode::Prod,
+            config_path: Some(config_path.clone()),
+        };
+        let prod_cfg = load_config(&prod_options).expect("load prod config");
+        assert_eq!(prod_cfg.server.port, 5002);
+        assert!(!prod_cfg.watch.enabled);
+
+        let _ = std::fs::remove_file(config_path);
+    }
 }

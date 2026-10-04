@@ -185,11 +185,14 @@ impl Authenticator {
     /// The authenticator of `config`, `None` when authentication is off. The configuration is
     /// checked (every problem reported at once); with a key set, its keys are loaded now, a
     /// failure logged and retried on the first requests.
-    pub async fn new(config: &AuthConfig) -> Result<Option<Arc<Self>>, String> {
+    pub async fn new(
+        config: &AuthConfig,
+        secret: Option<&str>,
+    ) -> Result<Option<Arc<Self>>, String> {
         if !config.enabled {
             return Ok(None);
         }
-        let checked = check(config)?;
+        let checked = check(config, secret)?;
         let keys = match checked.secret {
             Some(secret) => Keys::Secret(DecodingKey::from_secret(secret.as_bytes())),
             None => {
@@ -388,7 +391,7 @@ struct Checked {
 }
 
 /// Checks an enabled configuration, reporting every problem.
-fn check(config: &AuthConfig) -> Result<Checked, String> {
+fn check(config: &AuthConfig, secret: Option<&str>) -> Result<Checked, String> {
     let mut errors = Vec::new();
     let issuer = config.issuer.clone().unwrap_or_default();
     if issuer.is_empty() {
@@ -398,16 +401,16 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
         errors.push("auth.audience: required (a token's `aud` must contain it)".to_string());
     }
 
-    let secret = config.secret.clone();
-    if let Some(secret) = &secret {
+    let secret = secret.map(str::to_string);
+    if let Some(ref secret) = secret {
         // RFC 7518 §3.2: an HMAC key at least as long as the hash
         if secret.len() < 32 {
-            errors.push("auth.secret: must be at least 32 bytes".to_string());
+            errors.push("AUTH_JWT_SECRET: must be at least 32 bytes".to_string());
         }
         if config.jwks_uri.is_some() {
-            errors.push("auth: set `secret` or `jwks_uri`, not both".to_string());
+            errors.push("auth: set AUTH_JWT_SECRET or `jwks_uri`, not both".to_string());
         }
-    } else if config.secret.is_none() {
+    } else {
         for (key, url) in [
             ("issuer", Some(&issuer)),
             ("jwks_uri", config.jwks_uri.as_ref()),
@@ -421,7 +424,7 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
     }
 
     let algorithms: Vec<Algorithm> = if config.algorithms.is_empty() {
-        if config.secret.is_some() {
+        if secret.is_some() {
             vec![Algorithm::HS256]
         } else {
             ASYMMETRIC.to_vec()
@@ -441,12 +444,12 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
     };
     for alg in &algorithms {
         let hmac = alg.family() == AlgorithmFamily::Hmac;
-        if hmac && config.secret.is_none() {
-            errors.push(format!("auth.algorithms: {alg:?} needs `secret`"));
+        if hmac && secret.is_none() {
+            errors.push(format!("auth.algorithms: {alg:?} needs AUTH_JWT_SECRET"));
         }
-        if !hmac && config.secret.is_some() {
+        if !hmac && secret.is_some() {
             errors.push(format!(
-                "auth.algorithms: {alg:?} needs a key set, not `secret`"
+                "auth.algorithms: {alg:?} needs a key set, not AUTH_JWT_SECRET"
             ));
         }
     }
@@ -724,7 +727,6 @@ mod tests {
             enabled: true,
             issuer: Some("https://auth.example.com/".to_string()),
             audience: vec!["api".to_string()],
-            secret: Some("0123456789abcdef0123456789abcdef".to_string()),
             ..AuthConfig::default()
         }
     }
@@ -752,10 +754,10 @@ mod tests {
         let mut cfg = config();
         cfg.issuer = None;
         cfg.audience.clear();
-        cfg.secret = Some("short".to_string());
+        let secret = Some("short");
         cfg.algorithms = vec!["RS256".to_string(), "none".to_string()];
         cfg.session_variables.claims_setting = "claims".to_string();
-        let Err(err) = check(&cfg) else {
+        let Err(err) = check(&cfg, secret) else {
             panic!("accepted")
         };
         for expected in [
@@ -769,9 +771,8 @@ mod tests {
             assert!(err.contains(expected), "missing `{expected}` in:\n{err}");
         }
         let mut cfg = config();
-        cfg.secret = None;
         cfg.jwks_uri = Some("http://keys.example.com/jwks".to_string());
-        let Err(err) = check(&cfg) else {
+        let Err(err) = check(&cfg, None) else {
             panic!("accepted")
         };
         assert!(err.contains("must use https"), "{err}");

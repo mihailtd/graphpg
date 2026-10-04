@@ -36,6 +36,12 @@ pub struct Config {
     /// The REST API and its OpenAPI description.
     #[serde(default)]
     pub openapi: OpenapiConfig,
+    /// Schema watching on DDL changes and auto-export.
+    #[serde(default)]
+    pub watch: WatchConfig,
+    /// File paths for exported schemas.
+    #[serde(default)]
+    pub export: ExportConfig,
     /// Tables, views, materialized views and foreign tables, by relation name.
     #[serde(default)]
     pub entities: BTreeMap<String, EntityConfig>,
@@ -126,36 +132,24 @@ impl Default for ServerConfig {
     }
 }
 
-/// Database connection used when the config names none.
-pub const DEFAULT_DATABASE_URL: &str = "postgres://postgres:postgres@localhost:5432/graphpg";
-
 /// Schema inspected when the config names none.
 pub const DEFAULT_SCHEMA: &str = "app_public";
 
-/// The PostgreSQL connection, the schemas to expose and the read replicas.
+/// The schemas to expose and connection pool settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
-    /// Connection string. Keep credentials out of the file: `url: ${DATABASE_URL}`.
-    #[serde(default = "default_database_url")]
-    pub url: String,
     /// Connections in the pool.
     #[serde(deserialize_with = "lenient", default = "default_pool_size")]
     pub pool_size: usize,
     /// Schemas to expose, the first being the default schema (`app_public` when empty).
     #[serde(default)]
     pub schemas: Vec<String>,
-    /// Connection strings of read replicas: queries run on those that are standbys.
-    #[serde(default)]
-    pub replicas: Vec<String>,
     /// Append a sqlcommenter comment (route, field, trace context) to every statement.
     #[serde(deserialize_with = "switch", default = "default_true")]
     pub sql_comments: bool,
 }
 
-fn default_database_url() -> String {
-    DEFAULT_DATABASE_URL.to_string()
-}
 fn default_pool_size() -> usize {
     10
 }
@@ -166,10 +160,8 @@ fn default_true() -> bool {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            url: default_database_url(),
             pool_size: default_pool_size(),
             schemas: Vec::new(),
-            replicas: Vec::new(),
             sql_comments: true,
         }
     }
@@ -188,7 +180,7 @@ impl DatabaseConfig {
 }
 
 /// Diagnostics added to responses. Never enable them in production.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DebugConfig {
     /// Include the generated SQL in the response `extensions`.
@@ -285,11 +277,6 @@ pub struct AuthConfig {
     /// `issuer` (OpenID Connect discovery, then RFC 8414 metadata).
     #[serde(default)]
     pub jwks_uri: Option<String>,
-    /// A shared secret verifying HMAC-signed tokens (HS256, HS384, HS512) instead of a key
-    /// set, for authorization servers that sign that way. Keep it out of the file:
-    /// `secret: ${AUTH_JWT_SECRET}`. At least 32 bytes.
-    #[serde(default)]
-    pub secret: Option<String>,
     /// Signature algorithms (`alg`) accepted. By default the asymmetric ones with a key set
     /// (RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, EdDSA), HS256 with a secret.
     #[serde(default)]
@@ -320,7 +307,6 @@ impl Default for AuthConfig {
             issuer: None,
             audience: Vec::new(),
             jwks_uri: None,
-            secret: None,
             algorithms: Vec::new(),
             token_type: None,
             leeway_seconds: default_leeway(),
@@ -443,83 +429,111 @@ impl ExtensionsConfig {
     }
 }
 
-/// Settings given outside the config file (environment variables and CLI flags), applied over
-/// the file at startup and again on every hot reload so a reload sees the same effective
-/// config as startup. Transitional: the config file, with `${ENV}` interpolation, replaces
-/// them.
-#[derive(Debug, Clone, Default)]
-pub struct ConfigOverrides {
-    /// `DATABASE_SCHEMAS`: comma-separated schemas, taking precedence over the config file.
-    pub database_schemas: Option<String>,
-    /// `DATABASE_SCHEMA`: one schema (or a comma-separated list), used when neither
-    /// `DATABASE_SCHEMAS` nor the config file's `database.schemas` names any.
-    pub database_schema: Option<String>,
-    /// `--federation` / `FEDERATION`.
-    pub federation: bool,
-    /// `GRAPHIQL` (`--graphiql`): turns the GraphiQL IDE on or off.
-    pub graphiql: Option<bool>,
-    /// `AUTH_ENABLED` (`--auth` / `--no-auth`): turns authentication on or off.
-    pub auth_enabled: Option<bool>,
-    /// `AUTH_ISSUER`.
-    pub auth_issuer: Option<String>,
-    /// `AUTH_AUDIENCE`: comma-separated.
-    pub auth_audience: Option<String>,
-    /// `AUTH_JWKS_URI`.
-    pub auth_jwks_uri: Option<String>,
-    /// `AUTH_JWT_SECRET`.
-    pub auth_secret: Option<String>,
+/// Schema watching on DDL changes and auto-export.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WatchConfig {
+    /// Re-introspect on DDL changes. On in `dev` mode, off in `prod`.
+    #[serde(default, deserialize_with = "switch")]
+    pub enabled: bool,
+    /// On each schema change, write the export files.
+    #[serde(default = "default_true", deserialize_with = "switch")]
+    pub export: bool,
 }
 
-impl ConfigOverrides {
-    /// Applies the overrides to `config`. Afterwards `config.database.schemas` is the
-    /// resolved, non-empty list of schemas to inspect, the first being the default schema:
-    /// `DATABASE_SCHEMAS`, else the config file's `database.schemas`, else `DATABASE_SCHEMA`,
-    /// else [`DEFAULT_SCHEMA`].
-    pub fn apply(&self, config: &mut Config) {
-        fn split(list: Option<&str>) -> Vec<String> {
-            list.unwrap_or_default()
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect()
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            export: true,
         }
-        let from_env = split(self.database_schemas.as_deref());
-        if !from_env.is_empty() {
-            config.database.schemas = from_env;
-        } else if config.database.schemas.is_empty() {
-            config.database.schemas = split(self.database_schema.as_deref());
+    }
+}
+
+/// File paths for exported schemas.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExportConfig {
+    /// Path to export GraphQL SDL schema.
+    #[serde(default = "default_export_graphql")]
+    pub graphql: String,
+    /// Path to export Apollo Federation Subgraph SDL.
+    #[serde(default = "default_export_subgraph")]
+    pub subgraph: String,
+    /// Path to export YAML config JSON schema.
+    #[serde(default = "default_export_config_schema")]
+    pub config_schema: String,
+}
+
+fn default_export_graphql() -> String {
+    "schema.graphql".to_string()
+}
+fn default_export_subgraph() -> String {
+    "subgraph.graphql".to_string()
+}
+fn default_export_config_schema() -> String {
+    "graphpg.schema.json".to_string()
+}
+
+impl Default for ExportConfig {
+    fn default() -> Self {
+        Self {
+            graphql: default_export_graphql(),
+            subgraph: default_export_subgraph(),
+            config_schema: default_export_config_schema(),
         }
-        config.database.schemas = config.database.resolved_schemas();
-        if self.federation {
-            config.graphql.federation.enabled = true;
-        }
-        if let Some(graphiql) = self.graphiql {
-            config.graphql.ui = graphiql;
-        }
-        // Empty variables (a template's `AUTH_JWT_SECRET=`) override nothing
-        let set = |v: &Option<String>| {
-            v.as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-                .map(str::to_string)
-        };
-        if let Some(enabled) = self.auth_enabled {
-            config.auth.enabled = enabled;
-        }
-        if let Some(issuer) = set(&self.auth_issuer) {
-            config.auth.issuer = Some(issuer);
-        }
-        let audience = split(self.auth_audience.as_deref());
-        if !audience.is_empty() {
-            config.auth.audience = audience;
-        }
-        if let Some(uri) = set(&self.auth_jwks_uri) {
-            config.auth.jwks_uri = Some(uri);
-        }
-        if let Some(secret) = set(&self.auth_secret) {
-            config.auth.secret = Some(secret);
-        }
+    }
+}
+
+/// Secrets loaded from environment variables only (`DATABASE_URL`, `DATABASE_REPLICA_URLS`, `AUTH_JWT_SECRET`).
+/// Never held in `Config`, serialized, or logged.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Secrets {
+    pub database_url: String,
+    pub replica_urls: Vec<String>,
+    pub auth_jwt_secret: Option<String>,
+}
+
+impl Secrets {
+    pub fn from_env() -> Result<Self, String> {
+        Self::from_env_with(&|k| std::env::var(k).ok())
+    }
+
+    pub fn from_env_with(lookup: &dyn Fn(&str) -> Option<String>) -> Result<Self, String> {
+        let database_url = lookup("DATABASE_URL")
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| "DATABASE_URL is required: set the environment variable".to_string())?;
+
+        let replica_urls = lookup("DATABASE_REPLICA_URLS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty())
+            .collect();
+
+        let auth_jwt_secret = lookup("AUTH_JWT_SECRET").filter(|s| !s.trim().is_empty());
+
+        Ok(Self {
+            database_url,
+            replica_urls,
+            auth_jwt_secret,
+        })
+    }
+}
+
+impl std::fmt::Debug for Secrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Secrets")
+            .field("database_url", &"[REDACTED]")
+            .field(
+                "replica_urls",
+                &format!("[REDACTED; {}]", self.replica_urls.len()),
+            )
+            .field(
+                "auth_jwt_secret",
+                &self.auth_jwt_secret.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
     }
 }
 
@@ -773,5 +787,42 @@ functions:
     fn empty_config() {
         let config = Config::from_yaml("  \n").unwrap();
         assert!(config.entities.is_empty() && config.functions.is_empty());
+    }
+
+    #[test]
+    fn secrets_debug_is_redacted_and_database_url_is_required() {
+        // Redacting Debug: raw values must never appear in Debug format
+        let secrets = Secrets {
+            database_url: "postgres://user:secretpass@db.example.com/mydb".to_string(),
+            replica_urls: vec![
+                "postgres://user:secretpass@replica1/mydb".to_string(),
+                "postgres://user:secretpass@replica2/mydb".to_string(),
+            ],
+            auth_jwt_secret: Some("my-super-secret-jwt-signing-key".to_string()),
+        };
+        let debug_str = format!("{secrets:?}");
+        assert!(!debug_str.contains("secretpass"), "{debug_str}");
+        assert!(!debug_str.contains("secretpass"), "{debug_str}");
+        assert!(
+            !debug_str.contains("my-super-secret-jwt-signing-key"),
+            "{debug_str}"
+        );
+        assert!(debug_str.contains("[REDACTED]"), "{debug_str}");
+
+        // DATABASE_URL is required
+        let err = Secrets::from_env_with(&|_| None).unwrap_err();
+        assert!(err.contains("DATABASE_URL"), "{err}");
+
+        // DATABASE_URL is parsed
+        let parsed = Secrets::from_env_with(&|key| match key {
+            "DATABASE_URL" => Some("postgres://localhost/mydb".to_string()),
+            "DATABASE_REPLICA_URLS" => Some("postgres://r1, postgres://r2".to_string()),
+            "AUTH_JWT_SECRET" => Some("jwtsecret".to_string()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(parsed.database_url, "postgres://localhost/mydb");
+        assert_eq!(parsed.replica_urls, vec!["postgres://r1", "postgres://r2"]);
+        assert_eq!(parsed.auth_jwt_secret.as_deref(), Some("jwtsecret"));
     }
 }

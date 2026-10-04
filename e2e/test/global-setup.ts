@@ -1,10 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { writeFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { databaseUrl, resetDatabase } from "../src/db.ts";
 
 const binary = fileURLToPath(new URL("../../target/debug/graphpg", import.meta.url));
 let server: ChildProcess | undefined;
+let tempConfigPath: string | undefined;
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -21,8 +25,11 @@ async function freePort(): Promise<number> {
 export async function setup(project: { provide: (key: "graphqlUrl", value: string) => void }) {
   await resetDatabase();
   const port = await freePort();
-  server = spawn(binary, [], {
-    env: { ...process.env, DATABASE_URL: databaseUrl, DATABASE_SCHEMA: "blog", PORT: String(port) },
+  tempConfigPath = join(tmpdir(), `graphpg-e2e-${port}.yaml`);
+  writeFileSync(tempConfigPath, `server:\n  port: ${port}\ndatabase:\n  schemas: [blog]\n`);
+
+  server = spawn(binary, ["--config", tempConfigPath], {
+    env: { ...process.env, DATABASE_URL: databaseUrl },
     stdio: ["ignore", "inherit", "inherit"],
   });
   server.once("exit", (code) => code && console.error(`graphpg exited with ${code}`));
@@ -38,4 +45,9 @@ export async function setup(project: { provide: (key: "graphqlUrl", value: strin
 
 export async function teardown() {
   server?.kill("SIGTERM");
+  if (tempConfigPath) {
+    try {
+      unlinkSync(tempConfigPath);
+    } catch {}
+  }
 }

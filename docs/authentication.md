@@ -18,7 +18,7 @@ Authentication is **off by default**. Every request then runs as graphpg's datab
 
 ## Configuration
 
-In `graphpg.yaml` (the editor validates it against `.engine/schema.config.json`):
+In `graphpg.yaml` (the editor validates it against `graphpg.schema.json`):
 
 ```yaml
 auth:
@@ -39,17 +39,9 @@ auth:
       org_id: app.current_org_id         # further settings, from a claim name or dot path
 ```
 
-For HMAC-signed tokens (a shared secret instead of a key set), set `secret: ${JWT_SECRET}` (at least 32 bytes, read from the environment) in place of discovery. Asymmetric keys are preferable.
+For HMAC-signed tokens (a shared secret instead of a key set), set the `AUTH_JWT_SECRET` environment variable (at least 32 bytes). Asymmetric keys are preferable.
 
-Environment variables override the file. Empty values are ignored.
-
-| Variable | Overrides |
-| :--- | :--- |
-| `AUTH_ENABLED` (`true`/`false`), or the flags `--auth` / `--no-auth` | `auth.enabled` |
-| `AUTH_ISSUER` | `auth.issuer` |
-| `AUTH_AUDIENCE` (comma-separated) | `auth.audience` |
-| `AUTH_JWKS_URI` | `auth.jwks_uri` |
-| `AUTH_JWT_SECRET` | `auth.secret` |
+All authentication settings belong in `graphpg.yaml`, except the shared HMAC secret which is a secret and must be provided via the `AUTH_JWT_SECRET` environment variable.
 
 graphpg checks the configuration at startup and refuses to start if it is invalid, listing every problem. Metadata and keys must be served over `https`, except from `localhost`.
 
@@ -80,7 +72,7 @@ Each request runs in a transaction that starts with one statement setting `role`
 
 ## GraphiQL
 
-The GraphiQL IDE at `/graphiql` is for development and pre-production. It is on in dev mode (`--dev`) and off in prod. Set `graphql.ui: true` (or `false`) in the config to choose otherwise. When it is off, `/graphiql` returns 404. Its assets are embedded in the binary, so it works offline and needs no external hosts in a Content-Security-Policy.
+The GraphiQL IDE at `/graphiql` is for development and pre-production. It is on in dev mode (`--mode dev`) and off in prod. Set `graphql.ui: true` (or `false`) in the config to choose otherwise. When it is off, `/graphiql` returns 404. Its assets are embedded in the binary, so it works offline and needs no external hosts in a Content-Security-Policy.
 
 ## Bulk endpoints
 

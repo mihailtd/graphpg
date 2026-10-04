@@ -120,7 +120,6 @@ fn secret_config() -> AuthConfig {
         enabled: true,
         issuer: Some(ISSUER.to_string()),
         audience: vec![AUDIENCE.to_string()],
-        secret: Some(JWT_SECRET.to_string()),
         roles: RolesConfig {
             authenticated: Some("rls_app_user".to_string()),
             anonymous: Some("rls_anon_user".to_string()),
@@ -168,6 +167,10 @@ fn bearer(token: &str) -> Vec<(&'static str, String)> {
 }
 
 async fn setup_app(auth_cfg: AuthConfig) -> axum::Router {
+    setup_app_with_secret(auth_cfg, Some(JWT_SECRET)).await
+}
+
+async fn setup_app_with_secret(auth_cfg: AuthConfig, secret: Option<&str>) -> axum::Router {
     let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
         .await
         .expect("Failed to connect to local PostgreSQL 18.6");
@@ -190,7 +193,7 @@ async fn setup_app(auth_cfg: AuthConfig) -> axum::Router {
         .await
         .expect("inspect rls_test");
     let schema = SchemaBuilder::build(&catalog).expect("Failed to build GraphQL schema");
-    let auth = Authenticator::new(&auth_cfg)
+    let auth = Authenticator::new(&auth_cfg, secret)
         .await
         .expect("valid auth configuration");
     let state = Arc::new(
@@ -558,9 +561,8 @@ async fn authorization_server() -> (
 async fn test_signing_keys_are_discovered_from_the_issuer() {
     let (issuer, sign) = authorization_server().await;
     let mut cfg = secret_config();
-    cfg.secret = None;
     cfg.issuer = Some(issuer);
-    let app = setup_app(cfg).await;
+    let app = setup_app_with_secret(cfg, None).await;
 
     let (status, _, res) = documents(
         &app,

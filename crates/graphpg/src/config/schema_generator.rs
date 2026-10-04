@@ -220,6 +220,31 @@ impl ConfigSchemaGenerator {
             }),
         );
         settings.insert(
+            "watch".to_string(),
+            json!({
+                "type": "object",
+                "description": "Schema watching on DDL changes and auto-export",
+                "properties": {
+                    "enabled": Self::switch_described("Re-introspect on DDL changes (default: on in dev mode, off in prod)"),
+                    "export": Self::switch_described("On each schema change, write the export files (default true)")
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "export".to_string(),
+            json!({
+                "type": "object",
+                "description": "Export paths for schema and configuration files",
+                "properties": {
+                    "graphql": { "type": "string", "description": "Path to export GraphQL SDL schema (default schema.graphql)" },
+                    "subgraph": { "type": "string", "description": "Path to export Apollo Federation Subgraph SDL (default subgraph.graphql)" },
+                    "config_schema": { "type": "string", "description": "Path to export YAML config JSON schema (default graphpg.schema.json)" }
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
             "entities".to_string(),
             json!({
                 "type": "object",
@@ -296,7 +321,7 @@ impl ConfigSchemaGenerator {
         );
         root_properties.insert(
             "dev".to_string(),
-            json!({ "$ref": "#/$defs/mode", "description": "Settings that differ in dev mode (`--dev`), merged over the ones above" }),
+            json!({ "$ref": "#/$defs/mode", "description": "Settings that differ in dev mode (`--mode dev`), merged over the ones above" }),
         );
         root_properties.insert(
             "prod".to_string(),
@@ -342,18 +367,12 @@ impl ConfigSchemaGenerator {
             "type": "object",
             "description": "The PostgreSQL connection, the schemas to expose and the read replicas",
             "properties": {
-                "url": { "type": "string", "description": "Connection string; keep credentials out of the file: ${DATABASE_URL}" },
                 "pool_size": { "type": ["integer", "string"], "description": "Connections in the pool (default 10)" },
                 "schemas": {
                     "type": "array",
                     "items": { "type": "string" },
                     "uniqueItems": true,
                     "description": "Database schemas to expose, the first being the default (default app_public)"
-                },
-                "replicas": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Connection strings of read replicas; queries run on those that are standbys"
                 },
                 "sql_comments": Self::switch_described("Append a sqlcommenter comment to every statement (default true)")
             },
@@ -375,7 +394,6 @@ impl ConfigSchemaGenerator {
                     "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" }, "minItems": 1 }]
                 },
                 "jwks_uri": { "type": "string", "format": "uri", "description": "JSON Web Key Set URL, when not discovered from the issuer" },
-                "secret": { "type": "string", "description": "Shared secret for HMAC-signed tokens instead of a key set, at least 32 bytes; keep it out of the file: ${AUTH_JWT_SECRET}" },
                 "algorithms": {
                     "type": "array",
                     "items": { "type": "string", "enum": ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA", "HS256", "HS384", "HS512"] },
