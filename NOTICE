@@ -6,3 +6,13 @@ Copyright (c) Benjie Gillam and contributors:
   - crates/graphpg/tests/fixtures/forum.sql
   - crates/graphpg/tests/fixtures/interfaces_and_unions.sql
   - queries and expected results referenced in crates/graphpg/tests/phase2..4 and forum_schema.rs
+
+Bundled third-party web assets (packages/graphiql-ui, embedded in crates/graphpg-ui):
+  - GraphiQL (https://github.com/graphql/graphiql), MIT License,
+    Copyright (c) 2015-present GraphQL Foundation and contributors
+  - React and React DOM (https://github.com/facebook/react), MIT License,
+    Copyright (c) Meta Platforms, Inc. and affiliates
+  - Monaco Editor (https://github.com/microsoft/monaco-editor), MIT License,
+    Copyright (c) Microsoft Corporation
+  - @graphiql/plugin-explorer (https://github.com/graphql/graphiql), MIT License,
+    Copyright (c) 2019-present OneGraph, Inc., GraphQL Foundation and contributors

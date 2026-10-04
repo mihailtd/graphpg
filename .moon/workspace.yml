@@ -1,6 +1,8 @@
 # yaml-language-server: $schema=https://moonrepo.dev/schemas/workspace.json
 projects:
   graphpg: crates/graphpg
+  graphpg-ui: crates/graphpg-ui
+  graphiql-ui: packages/graphiql-ui
   e2e: e2e
 
 vcs:

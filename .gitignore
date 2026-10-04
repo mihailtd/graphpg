@@ -42,3 +42,7 @@ node_modules/
 # moon
 .moon/cache
 .moon/docker
+
+# graphpg-ui generated assets
+crates/graphpg-ui/assets/
+

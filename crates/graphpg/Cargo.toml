@@ -31,6 +31,7 @@ opentelemetry = { version = "0.33", optional = true }
 opentelemetry_sdk = { version = "0.33", optional = true, features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["http-proto", "reqwest-client", "trace"] }
 tracing-opentelemetry = { version = "0.34", optional = true }
+graphpg-ui = { path = "../graphpg-ui" }
 
 [features]
 # Export spans (graphql.parse / plan / compile / execute) over OTLP when
