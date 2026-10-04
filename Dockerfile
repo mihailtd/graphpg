@@ -2,7 +2,7 @@
 
 # --- Build: UI assets ------------------------------------------------------------------
 # Base images are pinned by digest; Dependabot proposes updates.
-FROM node:26-alpine@sha256:b341ca66519d9a1c25d4e41f254ffb6fe403fc0f9054c62b863f0660dcc1c199 AS ui
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS ui
 WORKDIR /src
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # pnpm at the version package.json pins (Node 26 images no longer ship Corepack)
