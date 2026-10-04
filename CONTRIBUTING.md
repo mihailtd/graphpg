@@ -25,3 +25,19 @@ To use another database, set `TEST_DATABASE_URL`. The tests create their own sch
 - Keep changes focused, add or update tests, and run `cargo test --workspace` before pushing.
 - Describe behaviour in `docs/` when you add or change a feature.
 - By contributing you agree that your work is licensed under the project's licenses (MIT OR Apache-2.0).
+
+## Releasing
+
+Releases are cut by tagging; the **Publish** workflow does the rest.
+
+1. Bump `version` in `Cargo.toml` (and `Cargo.lock`: run `cargo build`), and add a section to `CHANGELOG.md`. Merge to `main` through a pull request.
+2. Tag that commit and push the tag:
+   ```bash
+   git tag -a v1.0.2 -m "graphpg 1.0.2" && git push origin v1.0.2
+   ```
+   Use a pre-release suffix (`v1.1.0-rc.1`) for release candidates: they get a pre-release on GitHub and no `latest`, `X.Y` or `X` tags.
+3. The workflow refuses a tag that is not on `main` or whose version differs from `Cargo.toml`, runs the tests, builds the image, scans it, pushes it, signs it and creates the GitHub Release with generated notes.
+
+Every push to `main` also publishes `ghcr.io/mihailtd/graphpg:sha-<short hash>` and `:edge`.
+
+Release notes are generated from merged pull requests and grouped by label (`breaking`, `feature`, `bug`, `security`, `documentation`, `dependencies`; `skip-changelog` hides one). Label pull requests before tagging.

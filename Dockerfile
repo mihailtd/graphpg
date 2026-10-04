@@ -1,18 +1,33 @@
 # syntax=docker/dockerfile:1
-FROM rust:1-bookworm AS build
+
+# --- Build: a fully static musl binary -------------------------------------------------
+# Base images are pinned by digest; Dependabot proposes updates.
+FROM rust:1.98.1-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS build
+RUN apk add --no-cache musl-dev build-base cmake perl
 WORKDIR /src
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN cargo build --release --locked --bin graphpg
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --locked --bin graphpg --features otel \
+    && cp target/release/graphpg /graphpg
 
-FROM debian:bookworm-slim
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home-dir /app graphpg
-COPY --from=build /src/target/release/graphpg /usr/local/bin/graphpg
+# --- Runtime: distroless static --------------------------------------------------------
+# No shell, no package manager, no libc; CA certificates and a non-root user only.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.title="graphpg" \
+      org.opencontainers.image.description="GraphQL for PostgreSQL, generated from the database catalogs" \
+      org.opencontainers.image.source="https://github.com/mihailtd/graphpg" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
+
+COPY --from=build /graphpg /usr/local/bin/graphpg
 WORKDIR /app
-USER graphpg
+USER 65532:65532
 ENV PORT=4000
 EXPOSE 4000
-ENTRYPOINT ["graphpg"]
+ENTRYPOINT ["/usr/local/bin/graphpg"]

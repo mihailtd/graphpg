@@ -16,6 +16,27 @@ graphpg export-config-schema --out .engine/schema.config.json
 
 `DATABASE_URL` defaults to `postgres://postgres:postgres@localhost:5432/graphpg`, which is only meant for local development: set it explicitly everywhere else. A `.env` file in the working directory is loaded when present.
 
+### Running in a container
+
+```bash
+docker run -p 4000:4000 \
+  -e DATABASE_URL=postgres://user:pass@db/mydb \
+  -v "$PWD/engine.config.yaml:/app/engine.config.yaml:ro" \
+  ghcr.io/mihailtd/graphpg:1.0.1
+```
+
+The image is a statically linked binary on `gcr.io/distroless/static`: no shell, no package manager, CA certificates, and a non-root user (UID 65532). graphpg reads `engine.config.yaml` from the working directory, `/app`. Because there is no shell or `curl` in the image, probe `GET /health` from outside (a Kubernetes `httpGet` probe, or your load balancer) rather than with a `HEALTHCHECK` command. The container stops cleanly on `SIGTERM`.
+
+| Tag | Moves | Use for |
+| :--- | :--- | :--- |
+| `1.0.1` | never | Pinning a release |
+| `1.0`, `1` | with each patch / minor release | Following a release line |
+| `latest` | with each (non-prerelease) release | Trying it out |
+| `sha-<short hash>` | never | One exact commit of `main` |
+| `edge` | with each commit on `main` | Testing unreleased changes |
+
+OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOINT`.
+
 ### Endpoints
 
 | Path | Method | |

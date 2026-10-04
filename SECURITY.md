@@ -7,7 +7,17 @@ Please report vulnerabilities privately, not in public issues: use GitHub's
 repository, or email contact@mihai.ltd. Include what you found, how to reproduce it and the
 version affected. Expect an acknowledgement within a few days.
 
-graphpg is pre-1.0: only the latest release receives fixes.
+Only the latest release receives fixes.
+
+## Verifying releases
+
+Container images are signed with Sigstore (keyless, by the release workflow) and scanned for known vulnerabilities before they are tagged. Verify one with:
+
+```bash
+cosign verify ghcr.io/mihailtd/graphpg:1.0.1 \
+  --certificate-identity-regexp '^https://github.com/mihailtd/graphpg/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
 
 ## Deployment guidance
 

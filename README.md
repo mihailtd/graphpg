@@ -4,7 +4,7 @@ A GraphQL server for PostgreSQL. Point it at a database and it serves a GraphQL 
 
 graphpg is a single Rust binary. It reads PostgreSQL's catalogs at startup, builds the GraphQL schema, and compiles each request into one SQL statement (lateral joins and JSON aggregation, so nested selections don't cause N+1 queries).
 
-> **Status:** pre-1.0 (`0.1`). The behaviour documented here is covered by an integration test suite that runs against PostgreSQL 18, but interfaces may still change between minor versions.
+> **Status:** 1.0. Versions follow [semantic versioning](https://semver.org); the behaviour documented here is covered by an integration test suite that runs against PostgreSQL 18. See the [changelog](CHANGELOG.md).
 
 ## Quick start
 
@@ -15,7 +15,17 @@ docker compose up --build
 
 Open <http://localhost:4000/graphiql>. The [blog example](examples/blog) loads a small schema and shows relations, filtering, pagination, search and nested writes.
 
-Against your own database:
+Run the published container image against your own database:
+
+```bash
+docker run --rm -p 4000:4000 \
+  -e DATABASE_URL=postgres://user:pass@host.docker.internal/mydb -e DATABASE_SCHEMA=public \
+  ghcr.io/mihailtd/graphpg:1.0.1
+```
+
+The image is a static binary on `distroless/static` (about 20 MB, no shell, non-root, signed with Sigstore). See [running in a container](docs/configuration.md#running-in-a-container).
+
+Or build from source:
 
 ```bash
 cargo install --path crates/graphpg          # or: cargo build --release
