@@ -1,0 +1,23 @@
+# Deletes the caches a pull request wrote once it is closed. Only main's caches are useful
+# afterwards, and the repository has a 10 GB limit that stale ones would fill.
+name: Clean up caches
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the pull request's caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          gh cache list --repo "$REPO" --ref "$REF" --limit 100 --json id --jq '.[].id' \
+            | xargs -r -n1 gh cache delete --repo "$REPO"
