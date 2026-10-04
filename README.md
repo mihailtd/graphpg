@@ -23,7 +23,7 @@ docker run --rm -p 4000:4000 \
   ghcr.io/mihailtd/graphpg:1.0.1
 ```
 
-The image is a static binary on `distroless/static` (about 20 MB, no shell, non-root, signed with Sigstore). See [running in a container](docs/configuration.md#running-in-a-container).
+The image is a static binary on `distroless/static` (about 27 MB with the embedded GraphiQL and Scalar UIs, no shell, non-root, signed with Sigstore). See [running in a container](docs/configuration.md#running-in-a-container).
 
 Or build from source:
 
