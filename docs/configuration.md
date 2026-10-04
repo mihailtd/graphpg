@@ -108,6 +108,8 @@ graphql:
 openapi:
   enabled: true                 # the REST API at /rest and its OpenAPI description (alias: rest)
   ui: false                     # the Scalar API reference: on by default in dev mode only
+  spec: false                   # serve the OpenAPI 3.1 document: on by default in dev mode, off in prod (alias: schema)
+  path: /openapi.json           # path to serve the OpenAPI document at (alias: spec_path)
 
 dev:                            # settings that differ in dev mode
   debug:
@@ -116,11 +118,13 @@ dev:                            # settings that differ in dev mode
 prod: {}                        # ... and in prod mode
 ```
 
-The effective config of a mode is built in four steps, each overriding the last: the built-in defaults, the mode's built-in defaults (`dev` turns the GraphiQL IDE, Scalar API reference, and watch mode on), the shared settings, then the mode's block. Mappings merge key by key; anything else, a list included, is replaced. An unknown key is an error in the shared settings and in both blocks, so a typo in `dev:` is found when starting `prod`.
+The effective config of a mode is built in four steps, each overriding the last: the built-in defaults, the mode's built-in defaults (`dev` turns the GraphiQL IDE, Scalar API reference, OpenAPI spec serving, and watch mode on), the shared settings, then the mode's block. Mappings merge key by key; anything else, a list included, is replaced. An unknown key is an error in the shared settings and in both blocks, so a typo in `dev:` is found when starting `prod`.
 
-### The UIs
+### The OpenAPI Document and UIs
 
 `graphql.ui` serves the GraphiQL IDE at `/graphiql` and `openapi.ui` (alias `rest.ui`) the Scalar API reference at `/scalar`. Both are on in dev mode and off in prod, and either can be set explicitly. They are part of the binary (and of the container image), load nothing from other hosts, and work offline, so a strict Content-Security-Policy can allow `'self'` only.
+
+`openapi.spec` (alias `schema`) serves the generated OpenAPI 3.1 document at `openapi.path` (default `/openapi.json`, alias `spec_path`). It is on by default in dev mode, and off in prod mode. When enabled, requests receive JSON by default and YAML when requested (`Accept: application/yaml`). When either `openapi.enabled` or `openapi.spec` is disabled, the endpoint returns 404.
 
 The GraphiQL source is `packages/graphiql-ui`; `moon run graphiql-ui:build` builds it into `crates/graphpg-ui/assets`, which the server embeds. A build without those files still runs, and `/graphiql` says so.
 

@@ -803,3 +803,121 @@ async fn test_rest_endpoint_enabled_and_disabled() {
     let res = app_disabled.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn test_openapi_spec_serving_and_content_negotiation() {
+    let (_client, schema, catalog) = setup_test().await;
+
+    // 1. Spec enabled (e.g. dev mode)
+    let state_enabled = Arc::new(
+        ServerState::new(
+            create_pool(common::db_url(), 2).expect("Failed to create pool"),
+            schema.clone(),
+            catalog.clone(),
+            "app_public".to_string(),
+            DebugOptions::default(),
+        )
+        .with_openapi_spec(true),
+    );
+    let app_enabled = create_router(state_enabled.clone());
+
+    // GET /openapi.json returns 200 with JSON by default
+    let req = Request::builder()
+        .method("GET")
+        .uri("/openapi.json")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_enabled.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/json; charset=utf-8"
+    );
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let json_doc: serde_json::Value =
+        serde_json::from_slice(&body_bytes).expect("Valid JSON OpenAPI document");
+    assert_eq!(json_doc["openapi"], "3.1.0");
+    assert_eq!(json_doc["info"]["title"], "graphpg REST API");
+    assert!(json_doc["paths"]["/rest"].is_object());
+    assert!(json_doc["components"]["schemas"].is_object());
+
+    // GET /openapi.json with Accept: application/yaml returns YAML
+    let req = Request::builder()
+        .method("GET")
+        .uri("/openapi.json")
+        .header(header::ACCEPT, "application/yaml")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_enabled.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/yaml; charset=utf-8"
+    );
+    let yaml_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let yaml_doc: serde_json::Value =
+        serde_yaml::from_slice(&yaml_bytes).expect("Valid YAML OpenAPI document");
+    assert_eq!(yaml_doc["openapi"], "3.1.0");
+
+    // 2. Spec disabled returns 404
+    let state_disabled = Arc::new(
+        ServerState::new(
+            create_pool(common::db_url(), 2).expect("Failed to create pool"),
+            schema.clone(),
+            catalog.clone(),
+            "app_public".to_string(),
+            DebugOptions::default(),
+        )
+        .with_openapi_spec(false),
+    );
+    let app_disabled = create_router(state_disabled);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/openapi.json")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_disabled.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // 3. Custom path: /spec
+    let state_custom = Arc::new(
+        ServerState::new(
+            create_pool(common::db_url(), 2).expect("Failed to create pool"),
+            schema.clone(),
+            catalog.clone(),
+            "app_public".to_string(),
+            DebugOptions::default(),
+        )
+        .with_openapi_spec(true)
+        .with_openapi_path("/spec".to_string()),
+    );
+    let app_custom = create_router(state_custom);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/spec")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_custom.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/openapi.json")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_custom.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // 4. Reload updates the OpenAPI document
+    let mut modified_catalog = catalog.clone();
+    modified_catalog.tables.clear();
+    state_enabled.reload(schema, modified_catalog);
+    let updated_doc = state_enabled.current_openapi_document();
+    assert!(
+        updated_doc["components"]["schemas"]
+            .as_object()
+            .unwrap()
+            .is_empty(),
+        "Schemas should be empty after reloading with catalog without tables"
+    );
+}

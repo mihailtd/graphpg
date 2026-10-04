@@ -12,6 +12,7 @@ pub use http::{
     MIN_WAL_POSITION_HEADER, WAL_POSITION_HEADER,
 };
 pub use router::{
-    apply_layers, create_router, graphql_routes, health_routes, rest_routes, ui_routes,
+    apply_layers, create_router, graphql_routes, health_routes, openapi_routes, rest_routes,
+    ui_routes,
 };
 pub use watcher::{start_schema_watcher, WatcherOptions};

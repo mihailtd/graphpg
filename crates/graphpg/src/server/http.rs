@@ -1,6 +1,7 @@
 use crate::catalog::DatabaseCatalog;
 use crate::compiler::{CompiledOperation, CompiledQuery, SqlCompiler};
 use crate::execution::{ExecutionEngine, ExecutionError};
+use crate::openapi::OpenApiGenerator;
 use crate::planner::{PlannerError, QueryPlanner};
 use crate::server::cache::RequestCache;
 use apollo_compiler::executable::Operation;
@@ -177,6 +178,12 @@ pub struct ServerState {
     pub graphql_enabled: bool,
     /// Serve the REST API and OpenAPI document at `/rest`.
     pub openapi_enabled: bool,
+    /// Serve the OpenAPI 3.1 document at `openapi_path` (default `/openapi.json`).
+    pub openapi_spec: bool,
+    /// Path to serve the OpenAPI document at (defaults to `/openapi.json`).
+    pub openapi_path: String,
+    /// Cached OpenAPI 3.1 document.
+    pub openapi_document: std::sync::RwLock<Arc<serde_json::Value>>,
     /// The engine configuration, if passed to the state.
     pub config: Option<crate::config::Config>,
 }
@@ -201,6 +208,7 @@ impl ServerState {
         default_schema: String,
         debug: DebugOptions,
     ) -> Self {
+        let openapi_doc = OpenApiGenerator::generate(&catalog, &crate::config::Config::default());
         Self {
             pool,
             schema: std::sync::RwLock::new(Arc::new(schema)),
@@ -216,6 +224,9 @@ impl ServerState {
             scalar: false,
             graphql_enabled: true,
             openapi_enabled: true,
+            openapi_spec: false,
+            openapi_path: "/openapi.json".to_string(),
+            openapi_document: std::sync::RwLock::new(Arc::new(openapi_doc)),
             config: None,
         }
     }
@@ -335,13 +346,37 @@ impl ServerState {
         self.with_openapi_enabled(on)
     }
 
+    /// Serves the OpenAPI 3.1 document at [`openapi_path`](Self::with_openapi_path), or not (the default).
+    pub fn with_openapi_spec(mut self, on: bool) -> Self {
+        self.openapi_spec = on;
+        self
+    }
+
+    /// Sets the path to serve the OpenAPI document at (e.g. `/openapi.json`).
+    pub fn with_openapi_path(mut self, mut path: String) -> Self {
+        if !path.starts_with('/') {
+            path = format!("/{path}");
+        }
+        self.openapi_path = path;
+        self
+    }
+
     /// Configures the server state from [`Config`](crate::config::Config).
     pub fn with_config(mut self, config: crate::config::Config) -> Self {
         self.graphql_enabled = config.graphql.enabled;
         self.openapi_enabled = config.openapi.enabled;
+        self.openapi_spec = config.openapi.spec;
+        self.openapi_path = if config.openapi.path.starts_with('/') {
+            config.openapi.path.clone()
+        } else {
+            format!("/{}", config.openapi.path)
+        };
         self.graphiql = config.graphql.ui;
         self.scalar = config.openapi.ui;
         self.sql_comments = config.database.sql_comments;
+        let cat = self.current_catalog();
+        let doc = OpenApiGenerator::generate(&cat, &config);
+        *self.openapi_document.write().unwrap() = Arc::new(doc);
         self.config = Some(config);
         self
     }
@@ -365,7 +400,14 @@ impl ServerState {
         self.catalog.read().unwrap().clone()
     }
 
+    pub fn current_openapi_document(&self) -> Arc<serde_json::Value> {
+        self.openapi_document.read().unwrap().clone()
+    }
+
     pub fn reload(&self, schema: Valid<Schema>, catalog: DatabaseCatalog) {
+        let cfg = self.config.as_ref().cloned().unwrap_or_default();
+        let doc = OpenApiGenerator::generate(&catalog, &cfg);
+        *self.openapi_document.write().unwrap() = Arc::new(doc);
         *self.schema.write().unwrap() = Arc::new(schema);
         *self.catalog.write().unwrap() = Arc::new(catalog);
         // Statements prepared, documents validated and operations compiled for the previous
@@ -428,6 +470,56 @@ pub(crate) async fn health_handler() -> impl IntoResponse {
 
 pub(crate) async fn rest_handler() -> impl IntoResponse {
     (StatusCode::OK, "hello world")
+}
+
+pub(crate) async fn openapi_spec_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !state.openapi_enabled || !state.openapi_spec {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+    let doc = state.current_openapi_document();
+    let accept = headers
+        .get(header::ACCEPT)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+
+    let wants_yaml = accept.contains("application/yaml")
+        || accept.contains("text/yaml")
+        || accept.contains("application/x-yaml");
+
+    if wants_yaml {
+        match serde_yaml::to_string(&*doc) {
+            Ok(yaml) => (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/yaml; charset=utf-8")],
+                yaml,
+            )
+                .into_response(),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                format!("Failed to serialize OpenAPI YAML: {err}"),
+            )
+                .into_response(),
+        }
+    } else {
+        match serde_json::to_string(&*doc) {
+            Ok(json_str) => (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                json_str,
+            )
+                .into_response(),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                format!("Failed to serialize OpenAPI JSON: {err}"),
+            )
+                .into_response(),
+        }
+    }
 }
 
 /// Pretty-prints generated SQL for humans (the executed statement is unchanged).
