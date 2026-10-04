@@ -17,9 +17,13 @@ on:
 permissions:
   contents: read
 
+# A run in progress is never cancelled: the image build writes the layer cache that pull requests
+# read only when it finishes, so cancelling it on the next merge meant the cache was never
+# written while merges came faster than a build. A newer run waits (and replaces any older one
+# that is still waiting), so main always ends with a finished build of its latest commit.
 concurrency:
   group: publish-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  cancel-in-progress: false
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
