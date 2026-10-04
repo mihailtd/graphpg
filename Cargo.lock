@@ -845,7 +845,7 @@ version = "1.0.1"
 dependencies = [
  "apollo-compiler",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "deadpool-postgres",
  "dotenvy",
