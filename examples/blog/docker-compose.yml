@@ -1,0 +1,28 @@
+# PostgreSQL 18 with the blog schema loaded, and graphpg in front of it.
+#   docker compose up --build
+# GraphiQL: http://localhost:4000/graphiql
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: blog
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d blog"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  graphpg:
+    build: ../..          # or: image: ghcr.io/mihailtd/graphpg:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/blog
+    volumes:
+      - ./engine.config.yaml:/app/engine.config.yaml:ro
+    ports:
+      - "4000:4000"

@@ -1,0 +1,8 @@
+graphpg
+Copyright (c) 2026 Mihai Farcas. Licensed under MIT OR Apache-2.0.
+
+Test material adapted from Graphile (https://github.com/graphile/crystal), MIT License,
+Copyright (c) Benjie Gillam and contributors:
+  - crates/graphpg/tests/fixtures/forum.sql
+  - crates/graphpg/tests/fixtures/interfaces_and_unions.sql
+  - queries and expected results referenced in crates/graphpg/tests/phase2..4 and forum_schema.rs

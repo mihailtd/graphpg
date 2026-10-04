@@ -1,0 +1,53 @@
+[package]
+name = "graphpg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+apollo-compiler = "1.0"
+tokio = { version = "1.45", features = ["full"] }
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-uuid-1", "with-chrono-0_4"] }
+deadpool-postgres = "0.14"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+sqlformat = "0.5"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.16", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+dotenvy = "0.15"
+serde_yaml = "0.9"
+futures = "0.3"
+# OAuth 2.0 access tokens (JWTs) and the authorization server's signing keys (JWKS)
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# OpenTelemetry export of the engine's tracing spans (feature `otel`)
+opentelemetry = { version = "0.33", optional = true }
+opentelemetry_sdk = { version = "0.33", optional = true, features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["http-proto", "reqwest-client", "trace"] }
+tracing-opentelemetry = { version = "0.34", optional = true }
+
+[features]
+# Export spans (graphql.parse / plan / compile / execute) over OTLP when
+# OTEL_EXPORTER_OTLP_ENDPOINT is set.
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
+
+[dev-dependencies]
+insta = { version = "1.48", features = ["json", "yaml"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[[bin]]
+name = "graphpg"
+path = "src/main.rs"
+test = false
+
+[lib]
+name = "graphpg"
+path = "src/lib.rs"
+doctest = false

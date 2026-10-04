@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/graphpg_test
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: graphpg_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d graphpg_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Create extensions
+        run: psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f docker/init.sql
+      - name: Build
+        run: cargo build --workspace --locked
+      - name: Test
+        run: cargo test --workspace --locked
+
+  example:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: blog
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d blog"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Load the blog example
+        run: psql postgres://postgres:postgres@localhost:5432/blog -v ON_ERROR_STOP=1 -f examples/blog/schema.sql
+      - name: Serve it and run a query
+        working-directory: examples/blog
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/blog
+          PORT: "4000"
+        run: |
+          cargo run --locked --manifest-path ../../Cargo.toml --bin graphpg &
+          for i in $(seq 1 120); do curl -sf localhost:4000/health && break; sleep 1; done
+          curl -sf localhost:4000/graphql -H 'content-type: application/json' \
+            -d '{"query":"{ authors { username postsConnection { totalCount } } }"}' | tee /dev/stderr | grep -q '"username":"ada"'

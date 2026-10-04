@@ -1,0 +1,88 @@
+# Authentication and Row-Level Security
+
+graphpg is an **OAuth 2.0 resource server**. It does not issue tokens or log users in. Your authorization server does that (Keycloak, Auth0, Entra ID, Okta, Cognito, Supabase Auth, ...). graphpg verifies the access token on each request and makes its claims available as session settings. **PostgreSQL Row-Level Security policies then decide what the request can read and write**, by comparing those claims (user id, email, application roles, tenant, ...) with your data.
+
+graphpg gives claims no meaning. An application `role: editor` claim is data your policies compare, not a PostgreSQL role. Checking claims against the right columns is the schema author's job. The PostgreSQL role a request runs as is fixed by configuration, and tokens never choose it.
+
+Authentication is **off by default**. Every request then runs as graphpg's database user.
+
+## Standards followed
+
+| Concern | Behaviour | Standard |
+| :--- | :--- | :--- |
+| Token transport | `Authorization: Bearer <token>` only (no query string, no custom headers) | RFC 6750 |
+| Token format | JWT access tokens | RFC 7519, RFC 9068 |
+| Verification | Signature with an allowed algorithm (never `none`), `iss`, `aud`, `exp`, `nbf` | RFC 8725 |
+| Keys | The issuer's JSON Web Key Set, found through OpenID Connect discovery or RFC 8414 metadata, cached and re-fetched when a token names an unknown `kid` (key rotation) | RFC 7517, RFC 8414 |
+| Errors | `401` + `WWW-Authenticate: Bearer error="invalid_token"`; `401` + `WWW-Authenticate: Bearer` when a token is required but missing; `400` `invalid_request` for a malformed `Authorization` header | RFC 6750 §3 |
+
+## Configuration
+
+In `engine.config.yaml` (the editor validates it against `.engine/schema.config.json`):
+
+```yaml
+auth:
+  enabled: true
+  issuer: https://idp.example.com/realms/acme   # tokens' `iss`; keys discovered from it
+  audience: acme-api                            # tokens' `aud` must contain it (a list is fine)
+  # jwks_uri: https://idp.example.com/keys        # only when discovery is not available
+  # algorithms: [RS256, ES256]                    # default: RS*, PS*, ES256, ES384, EdDSA
+  # token_type: at+jwt                            # require RFC 9068's `typ` (many servers send `JWT`)
+  # leeway_seconds: 30
+  roles:                        # PostgreSQL roles, fixed by deployment (tokens never choose one)
+    authenticated: authenticated  # requests with a valid token; omit to run as graphpg's login
+    anonymous: anon               # requests without a token; omit to reject them (401)
+  session_variables:
+    claims_setting: request.jwt.claims   # every claim, as JSON
+    prefix: request.jwt.claim.           # one setting per top-level claim (request.jwt.claim.sub)
+    mappings:
+      org_id: app.current_org_id         # further settings, from a claim name or dot path
+```
+
+For HMAC-signed tokens (a shared secret instead of a key set), set `secret: env:JWT_SECRET` (at least 32 bytes) in place of discovery. Asymmetric keys are preferable.
+
+Environment variables override the file. Empty values are ignored.
+
+| Variable | Overrides |
+| :--- | :--- |
+| `AUTH_ENABLED` (`true`/`false`), or the flags `--auth` / `--no-auth` | `auth.enabled` |
+| `AUTH_ISSUER` | `auth.issuer` |
+| `AUTH_AUDIENCE` (comma-separated) | `auth.audience` |
+| `AUTH_JWKS_URI` | `auth.jwks_uri` |
+| `AUTH_JWT_SECRET` | `auth.secret` |
+
+graphpg checks the configuration at startup and refuses to start if it is invalid, listing every problem. Metadata and keys must be served over `https`, except from `localhost`.
+
+## What the database needs
+
+The database needs no functions, extensions or engine-owned objects. Your migrations create the roles and policies; graphpg only calls PostgreSQL's built-in `set_config`.
+
+```sql
+-- graphpg logs in as `authenticator`, which holds no privileges of its own
+CREATE ROLE authenticator LOGIN NOINHERIT PASSWORD '...';
+CREATE ROLE anon NOLOGIN;
+CREATE ROLE authenticated NOLOGIN;
+GRANT anon, authenticated TO authenticator;
+
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+CREATE POLICY own_document ON documents FOR ALL TO authenticated
+  USING (owner_id = current_setting('request.jwt.claims', true)::jsonb ->> 'sub');
+
+-- An application role from the token is data like any other claim
+CREATE POLICY editors_see_their_department ON documents FOR SELECT TO authenticated
+  USING (current_setting('request.jwt.claim.role', true) = 'editor'
+         AND department = current_setting('request.jwt.claim.department', true));
+```
+
+If `roles.authenticated` is unset, requests run as graphpg's login role. RLS does not apply to superusers or `BYPASSRLS` roles, and only applies to table owners with `FORCE ROW LEVEL SECURITY`. graphpg warns at startup when the login role bypasses RLS.
+
+Each request runs in a transaction that starts with one statement setting `role` and the claim settings with `set_config(..., true)`. PostgreSQL discards them when the transaction ends, so a pooled connection never carries one request's identity into the next. This covers `/graphql`, `@defer`/`@stream` responses, `/export` and `/import`.
+
+## GraphiQL
+
+The GraphiQL IDE at `/graphiql` is for development and pre-production. It is off by default. Turn it on with `graphiql: true` in the config, `GRAPHIQL=true` or `--graphiql`. When it is off, `/graphiql` returns 404.
+
+## Bulk endpoints
+
+- `POST /export`: a query whose single root field is a connection, streamed as NDJSON (or CSV with `"format": "csv"`). It is read as the token's role, so RLS applies.
+- `POST /import/{Type}`: NDJSON rows of `Create<Type>Input`, inserted all-or-nothing as the token's role, so `WITH CHECK` policies apply.

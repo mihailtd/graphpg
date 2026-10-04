@@ -1,0 +1,1402 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Engine configuration",
+  "description": "Changes to the generated GraphQL schema, keyed by database object name",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ],
+      "description": "Configuration format version"
+    },
+    "entities": {
+      "type": "object",
+      "description": "Tables, views, materialized views and foreign tables",
+      "properties": {
+        "authors": {
+          "$ref": "#/$defs/entity_authors"
+        },
+        "comments": {
+          "$ref": "#/$defs/entity_comments"
+        },
+        "post_tags": {
+          "$ref": "#/$defs/entity_post_tags"
+        },
+        "posts": {
+          "$ref": "#/$defs/entity_posts"
+        },
+        "tags": {
+          "$ref": "#/$defs/entity_tags"
+        }
+      },
+      "additionalProperties": false
+    },
+    "functions": {
+      "type": "object",
+      "description": "Table-valued and computed-column functions",
+      "properties": {
+        "popular_tags": {
+          "type": "object",
+          "description": "Function `popular_tags`",
+          "properties": {
+            "field_name": {
+              "type": "string",
+              "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+              "description": "Root Query field name"
+            },
+            "description": {
+              "type": "string",
+              "description": "Field description"
+            },
+            "deprecated": {
+              "type": "string",
+              "description": "Deprecate the function's fields, with this reason"
+            },
+            "omit": {
+              "type": "boolean",
+              "description": "Remove the root field"
+            }
+          },
+          "additionalProperties": false
+        },
+        "posts_excerpt": {
+          "type": "object",
+          "description": "Computed column `posts_excerpt` of `posts`",
+          "properties": {
+            "field_name": {
+              "type": "string",
+              "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+              "description": "Field name on the table's type"
+            },
+            "description": {
+              "type": "string",
+              "description": "Field description"
+            },
+            "omit": {
+              "type": "boolean",
+              "description": "Remove the field"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "types": {
+      "type": "object",
+      "description": "Enum and composite types (CHECK-closed text columns as <table>.<column>)",
+      "properties": {
+        "post_status": {
+          "type": "object",
+          "description": "Enum type `post_status`",
+          "properties": {
+            "type_name": {
+              "type": "string",
+              "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+              "description": "GraphQL enum type name"
+            },
+            "description": {
+              "type": "string"
+            },
+            "values": {
+              "type": "object",
+              "properties": {
+                "draft": {
+                  "type": "string",
+                  "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                  "description": "GraphQL value for `draft`"
+                },
+                "published": {
+                  "type": "string",
+                  "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                  "description": "GraphQL value for `published`"
+                },
+                "archived": {
+                  "type": "string",
+                  "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                  "description": "GraphQL value for `archived`"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Objects owned by extensions are hidden unless their extension is exposed",
+      "properties": {
+        "expose": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "*",
+              "pg_trgm",
+              "plpgsql"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Extensions whose tables, views and functions are exposed (\"*\": all)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "search": {
+      "type": "object",
+      "description": "Search root fields return the best matches, without pagination",
+      "properties": {
+        "default_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hits returned without `first` (default 10)"
+        },
+        "max_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Largest accepted `first` (default 50)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "schemas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "description": "Database schemas to inspect, the first being the default (DATABASE_SCHEMAS overrides; else DATABASE_SCHEMA, else app_public)"
+    },
+    "federation": {
+      "type": "object",
+      "description": "Apollo Federation subgraph mode",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "string",
+          "description": "Federation spec version (default v2.3)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rbac": {
+      "type": "object",
+      "description": "Prune the GraphQL schema to what a PostgreSQL role may access",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "description": "Role whose privileges are inspected (default: the connected user)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "auth": {
+      "type": "object",
+      "description": "Authentication with OAuth 2.0 access tokens (`Authorization: Bearer <token>`), whose claims set the PostgreSQL role and the settings Row-Level Security policies read. Off by default. Environment: AUTH_ENABLED, AUTH_ISSUER, AUTH_AUDIENCE, AUTH_JWKS_URI, AUTH_JWT_SECRET",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether requests are authenticated (AUTH_ENABLED)"
+        },
+        "issuer": {
+          "type": "string",
+          "format": "uri",
+          "description": "Authorization server issuer: tokens' `iss` must equal it; signing keys are discovered from its metadata (AUTH_ISSUER)"
+        },
+        "audience": {
+          "description": "This API's identifier(s): tokens' `aud` must contain one (AUTH_AUDIENCE)",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "jwks_uri": {
+          "type": "string",
+          "format": "uri",
+          "description": "JSON Web Key Set URL, when not discovered from the issuer (AUTH_JWKS_URI)"
+        },
+        "secret": {
+          "type": "string",
+          "description": "Shared secret for HMAC-signed tokens instead of a key set; `env:NAME` reads it from the environment; at least 32 bytes (AUTH_JWT_SECRET)"
+        },
+        "algorithms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "RS256",
+              "RS384",
+              "RS512",
+              "PS256",
+              "PS384",
+              "PS512",
+              "ES256",
+              "ES384",
+              "EdDSA",
+              "HS256",
+              "HS384",
+              "HS512"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Accepted signature algorithms (default: the asymmetric ones, or HS256 with `secret`)"
+        },
+        "token_type": {
+          "type": "string",
+          "description": "Required `typ` header, e.g. `at+jwt` (RFC 9068); unchecked when unset"
+        },
+        "leeway_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Clock skew tolerated for `exp` and `nbf` (default 30)"
+        },
+        "roles": {
+          "type": "object",
+          "description": "The PostgreSQL roles requests run as; tokens never choose one (their claims are data for RLS policies)",
+          "properties": {
+            "authenticated": {
+              "type": "string",
+              "description": "Role of requests with a valid token; unset, the engine's database user"
+            },
+            "anonymous": {
+              "type": "string",
+              "description": "Role of requests without a token; unset, they are rejected (401)"
+            }
+          },
+          "additionalProperties": false
+        },
+        "session_variables": {
+          "type": "object",
+          "description": "Settings a request's claims are written to",
+          "properties": {
+            "claims_setting": {
+              "allOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+                }
+              ],
+              "description": "Setting holding every claim as JSON (default `request.jwt.claims`)"
+            },
+            "prefix": {
+              "type": "string",
+              "description": "Prefix of a setting per top-level claim (default `request.jwt.claim.`; empty: none)"
+            },
+            "mappings": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+              },
+              "description": "Claim (name or dot-separated path) -> setting name"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "graphiql": {
+      "type": "boolean",
+      "description": "Serve the GraphiQL IDE at /graphiql, for development and pre-production (default false; GRAPHIQL overrides)"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "relation": {
+      "type": "string",
+      "enum": [
+        "authors",
+        "comments",
+        "post_tags",
+        "posts",
+        "tags"
+      ],
+      "description": "A table, view, materialized view or foreign table"
+    },
+    "column": {
+      "type": "object",
+      "properties": {
+        "field_name": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "GraphQL field name (also used in inputs, filters and orderBy values)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Field description"
+        },
+        "deprecated": {
+          "type": "string",
+          "description": "Deprecate the field, with this reason"
+        },
+        "omit": {
+          "type": "boolean",
+          "description": "Hide the column from every type, input, filter and ordering"
+        }
+      },
+      "additionalProperties": false
+    },
+    "foreign_key": {
+      "type": "object",
+      "properties": {
+        "field_name": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the to-one relation field on this type"
+        },
+        "reverse_field_name": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the to-many relation field on the referenced type (its connection is <name>Connection)"
+        },
+        "omit": {
+          "type": "boolean",
+          "description": "Hide both relation fields"
+        },
+        "omit_reverse": {
+          "type": "boolean",
+          "description": "Hide the to-many relation fields on the referenced type"
+        }
+      },
+      "additionalProperties": false
+    },
+    "entity_authors": {
+      "type": "object",
+      "description": "Table `authors`",
+      "properties": {
+        "type_name": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "GraphQL type name (derived names such as <Type>Filter follow it)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Type description"
+        },
+        "deprecated": {
+          "type": "string",
+          "description": "Deprecate the type's root fields and the relation fields leading to it, with this reason"
+        },
+        "omit": {
+          "type": "boolean",
+          "description": "Remove the type, its root fields and the relation fields pointing at it"
+        },
+        "omit_operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "read",
+              "list",
+              "connection",
+              "create",
+              "update",
+              "delete",
+              "create_many",
+              "update_many",
+              "delete_many",
+              "upsert"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Root fields not to generate"
+        },
+        "list_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the list root field"
+        },
+        "single_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the single-row root field"
+        },
+        "connection_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the connection root field"
+        },
+        "primary_key": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "id",
+              "username",
+              "display_name",
+              "created_at"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Key columns of a relation without a primary key (views, materialized views)"
+        },
+        "version_column": {
+          "type": "string",
+          "enum": [
+            "id",
+            "username",
+            "display_name",
+            "created_at"
+          ],
+          "description": "Column a trigger maintains as the row version (`rowVersion`, `expectedVersion`); rows are versioned by `xmin` without one"
+        },
+        "columns": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "description": "Column `id`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "username": {
+              "description": "Column `username`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "display_name": {
+              "description": "Column `display_name`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "created_at": {
+              "description": "Column `created_at`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "foreign_keys": {
+          "type": "object",
+          "description": "Relation fields by constraint name; other names declare virtual foreign keys",
+          "properties": {},
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-one relation field on this type"
+              },
+              "reverse_field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-many relation field on the referenced type (its connection is <name>Connection)"
+              },
+              "omit": {
+                "type": "boolean",
+                "description": "Hide both relation fields"
+              },
+              "omit_reverse": {
+                "type": "boolean",
+                "description": "Hide the to-many relation fields on the referenced type"
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "username",
+                    "display_name",
+                    "created_at"
+                  ]
+                },
+                "minItems": 1,
+                "description": "Referencing columns"
+              },
+              "references": {
+                "type": "object",
+                "properties": {
+                  "table": {
+                    "description": "Referenced relation",
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/relation"
+                      }
+                    ]
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Referenced columns (default: its primary key)"
+                  }
+                },
+                "required": [
+                  "table"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "columns",
+              "references"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "entity_comments": {
+      "type": "object",
+      "description": "Table `comments`",
+      "properties": {
+        "type_name": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "GraphQL type name (derived names such as <Type>Filter follow it)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Type description"
+        },
+        "deprecated": {
+          "type": "string",
+          "description": "Deprecate the type's root fields and the relation fields leading to it, with this reason"
+        },
+        "omit": {
+          "type": "boolean",
+          "description": "Remove the type, its root fields and the relation fields pointing at it"
+        },
+        "omit_operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "read",
+              "list",
+              "connection",
+              "create",
+              "update",
+              "delete",
+              "create_many",
+              "update_many",
+              "delete_many",
+              "upsert"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Root fields not to generate"
+        },
+        "list_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the list root field"
+        },
+        "single_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the single-row root field"
+        },
+        "connection_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the connection root field"
+        },
+        "primary_key": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "id",
+              "post_id",
+              "author_id",
+              "body",
+              "created_at"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Key columns of a relation without a primary key (views, materialized views)"
+        },
+        "version_column": {
+          "type": "string",
+          "enum": [
+            "id",
+            "post_id",
+            "author_id",
+            "body",
+            "created_at"
+          ],
+          "description": "Column a trigger maintains as the row version (`rowVersion`, `expectedVersion`); rows are versioned by `xmin` without one"
+        },
+        "columns": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "description": "Column `id`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "post_id": {
+              "description": "Column `post_id`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "author_id": {
+              "description": "Column `author_id`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "body": {
+              "description": "Column `body`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "created_at": {
+              "description": "Column `created_at`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "foreign_keys": {
+          "type": "object",
+          "description": "Relation fields by constraint name; other names declare virtual foreign keys",
+          "properties": {
+            "comments_post_id_fkey": {
+              "description": "Foreign key (post_id) → posts (id)",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/foreign_key"
+                }
+              ]
+            },
+            "comments_author_id_fkey": {
+              "description": "Foreign key (author_id) → authors (id)",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/foreign_key"
+                }
+              ]
+            }
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-one relation field on this type"
+              },
+              "reverse_field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-many relation field on the referenced type (its connection is <name>Connection)"
+              },
+              "omit": {
+                "type": "boolean",
+                "description": "Hide both relation fields"
+              },
+              "omit_reverse": {
+                "type": "boolean",
+                "description": "Hide the to-many relation fields on the referenced type"
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "post_id",
+                    "author_id",
+                    "body",
+                    "created_at"
+                  ]
+                },
+                "minItems": 1,
+                "description": "Referencing columns"
+              },
+              "references": {
+                "type": "object",
+                "properties": {
+                  "table": {
+                    "description": "Referenced relation",
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/relation"
+                      }
+                    ]
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Referenced columns (default: its primary key)"
+                  }
+                },
+                "required": [
+                  "table"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "columns",
+              "references"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "entity_post_tags": {
+      "type": "object",
+      "description": "Table `post_tags`",
+      "properties": {
+        "type_name": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "GraphQL type name (derived names such as <Type>Filter follow it)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Type description"
+        },
+        "deprecated": {
+          "type": "string",
+          "description": "Deprecate the type's root fields and the relation fields leading to it, with this reason"
+        },
+        "omit": {
+          "type": "boolean",
+          "description": "Remove the type, its root fields and the relation fields pointing at it"
+        },
+        "omit_operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "read",
+              "list",
+              "connection",
+              "create",
+              "update",
+              "delete",
+              "create_many",
+              "update_many",
+              "delete_many",
+              "upsert"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Root fields not to generate"
+        },
+        "list_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the list root field"
+        },
+        "single_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the single-row root field"
+        },
+        "connection_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the connection root field"
+        },
+        "primary_key": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "post_id",
+              "tag_id"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Key columns of a relation without a primary key (views, materialized views)"
+        },
+        "version_column": {
+          "type": "string",
+          "enum": [
+            "post_id",
+            "tag_id"
+          ],
+          "description": "Column a trigger maintains as the row version (`rowVersion`, `expectedVersion`); rows are versioned by `xmin` without one"
+        },
+        "columns": {
+          "type": "object",
+          "properties": {
+            "post_id": {
+              "description": "Column `post_id`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "tag_id": {
+              "description": "Column `tag_id`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "foreign_keys": {
+          "type": "object",
+          "description": "Relation fields by constraint name; other names declare virtual foreign keys",
+          "properties": {
+            "post_tags_post_id_fkey": {
+              "description": "Foreign key (post_id) → posts (id)",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/foreign_key"
+                }
+              ]
+            },
+            "post_tags_tag_id_fkey": {
+              "description": "Foreign key (tag_id) → tags (id)",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/foreign_key"
+                }
+              ]
+            }
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-one relation field on this type"
+              },
+              "reverse_field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-many relation field on the referenced type (its connection is <name>Connection)"
+              },
+              "omit": {
+                "type": "boolean",
+                "description": "Hide both relation fields"
+              },
+              "omit_reverse": {
+                "type": "boolean",
+                "description": "Hide the to-many relation fields on the referenced type"
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "post_id",
+                    "tag_id"
+                  ]
+                },
+                "minItems": 1,
+                "description": "Referencing columns"
+              },
+              "references": {
+                "type": "object",
+                "properties": {
+                  "table": {
+                    "description": "Referenced relation",
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/relation"
+                      }
+                    ]
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Referenced columns (default: its primary key)"
+                  }
+                },
+                "required": [
+                  "table"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "columns",
+              "references"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "entity_posts": {
+      "type": "object",
+      "description": "A blog post. Only published posts are visible to readers.\n\nTable `posts`",
+      "properties": {
+        "type_name": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "GraphQL type name (derived names such as <Type>Filter follow it)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Type description"
+        },
+        "deprecated": {
+          "type": "string",
+          "description": "Deprecate the type's root fields and the relation fields leading to it, with this reason"
+        },
+        "omit": {
+          "type": "boolean",
+          "description": "Remove the type, its root fields and the relation fields pointing at it"
+        },
+        "omit_operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "read",
+              "list",
+              "connection",
+              "create",
+              "update",
+              "delete",
+              "create_many",
+              "update_many",
+              "delete_many",
+              "upsert"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Root fields not to generate"
+        },
+        "list_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the list root field"
+        },
+        "single_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the single-row root field"
+        },
+        "connection_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the connection root field"
+        },
+        "primary_key": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "id",
+              "author_id",
+              "title",
+              "body",
+              "status",
+              "word_count",
+              "published_at",
+              "created_at"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Key columns of a relation without a primary key (views, materialized views)"
+        },
+        "version_column": {
+          "type": "string",
+          "enum": [
+            "id",
+            "author_id",
+            "title",
+            "body",
+            "status",
+            "word_count",
+            "published_at",
+            "created_at"
+          ],
+          "description": "Column a trigger maintains as the row version (`rowVersion`, `expectedVersion`); rows are versioned by `xmin` without one"
+        },
+        "columns": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "description": "Column `id`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "author_id": {
+              "description": "Column `author_id`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "title": {
+              "description": "Column `title`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "body": {
+              "description": "Column `body`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "status": {
+              "description": "Column `status`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "word_count": {
+              "description": "Computed by PostgreSQL; read-only in GraphQL.\n\nColumn `word_count`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "published_at": {
+              "description": "Column `published_at`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "created_at": {
+              "description": "Column `created_at`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "foreign_keys": {
+          "type": "object",
+          "description": "Relation fields by constraint name; other names declare virtual foreign keys",
+          "properties": {
+            "posts_author_id_fkey": {
+              "description": "Foreign key (author_id) → authors (id)",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/foreign_key"
+                }
+              ]
+            }
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-one relation field on this type"
+              },
+              "reverse_field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-many relation field on the referenced type (its connection is <name>Connection)"
+              },
+              "omit": {
+                "type": "boolean",
+                "description": "Hide both relation fields"
+              },
+              "omit_reverse": {
+                "type": "boolean",
+                "description": "Hide the to-many relation fields on the referenced type"
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "author_id",
+                    "title",
+                    "body",
+                    "status",
+                    "word_count",
+                    "published_at",
+                    "created_at"
+                  ]
+                },
+                "minItems": 1,
+                "description": "Referencing columns"
+              },
+              "references": {
+                "type": "object",
+                "properties": {
+                  "table": {
+                    "description": "Referenced relation",
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/relation"
+                      }
+                    ]
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Referenced columns (default: its primary key)"
+                  }
+                },
+                "required": [
+                  "table"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "columns",
+              "references"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "entity_tags": {
+      "type": "object",
+      "description": "Table `tags`",
+      "properties": {
+        "type_name": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "GraphQL type name (derived names such as <Type>Filter follow it)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Type description"
+        },
+        "deprecated": {
+          "type": "string",
+          "description": "Deprecate the type's root fields and the relation fields leading to it, with this reason"
+        },
+        "omit": {
+          "type": "boolean",
+          "description": "Remove the type, its root fields and the relation fields pointing at it"
+        },
+        "omit_operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "read",
+              "list",
+              "connection",
+              "create",
+              "update",
+              "delete",
+              "create_many",
+              "update_many",
+              "delete_many",
+              "upsert"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Root fields not to generate"
+        },
+        "list_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the list root field"
+        },
+        "single_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the single-row root field"
+        },
+        "connection_field": {
+          "type": "string",
+          "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+          "description": "Name of the connection root field"
+        },
+        "primary_key": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "id",
+              "name"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Key columns of a relation without a primary key (views, materialized views)"
+        },
+        "version_column": {
+          "type": "string",
+          "enum": [
+            "id",
+            "name"
+          ],
+          "description": "Column a trigger maintains as the row version (`rowVersion`, `expectedVersion`); rows are versioned by `xmin` without one"
+        },
+        "columns": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "description": "Column `id`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            },
+            "name": {
+              "description": "Column `name`",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/column"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "foreign_keys": {
+          "type": "object",
+          "description": "Relation fields by constraint name; other names declare virtual foreign keys",
+          "properties": {},
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-one relation field on this type"
+              },
+              "reverse_field_name": {
+                "type": "string",
+                "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                "description": "Name of the to-many relation field on the referenced type (its connection is <name>Connection)"
+              },
+              "omit": {
+                "type": "boolean",
+                "description": "Hide both relation fields"
+              },
+              "omit_reverse": {
+                "type": "boolean",
+                "description": "Hide the to-many relation fields on the referenced type"
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "name"
+                  ]
+                },
+                "minItems": 1,
+                "description": "Referencing columns"
+              },
+              "references": {
+                "type": "object",
+                "properties": {
+                  "table": {
+                    "description": "Referenced relation",
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/relation"
+                      }
+                    ]
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Referenced columns (default: its primary key)"
+                  }
+                },
+                "required": [
+                  "table"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "columns",
+              "references"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

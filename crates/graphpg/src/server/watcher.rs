@@ -1,0 +1,238 @@
+use crate::catalog::{finalize, CatalogError, CatalogInspector};
+use crate::config::{ConfigOverrides, ConfigSchemaGenerator, EngineConfig};
+use crate::schema::SchemaBuilder;
+use crate::server::ServerState;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
+use tokio_postgres::NoTls;
+
+pub struct WatcherOptions {
+    pub database_url: String,
+    /// Environment and flag overrides, applied over the config file on every reload as at
+    /// startup.
+    pub overrides: ConfigOverrides,
+    pub graphql_out: String,
+    pub config_schema_out: String,
+    /// Engine config re-read on every reload (and watched for changes), if any.
+    pub config_path: Option<std::path::PathBuf>,
+}
+
+pub fn start_schema_watcher(options: WatcherOptions, state: Arc<ServerState>) {
+    tokio::spawn(async move {
+        if let Err(err) = run_watcher_loop(options, state).await {
+            tracing::error!("Dev mode schema watcher encountered error: {}", err);
+        }
+    });
+}
+
+async fn run_watcher_loop(
+    options: WatcherOptions,
+    state: Arc<ServerState>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    println!("⚡ [dev mode] Starting PostgreSQL schema watcher (LISTEN graphpg_watch)...");
+
+    // 1. Establish dedicated client connection for LISTEN
+    let (client, mut connection) = tokio_postgres::connect(&options.database_url, NoTls).await?;
+
+    // Channel for notifications
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(100);
+
+    // Spawn connection poller that receives notifications
+    tokio::spawn(async move {
+        let mut stream = futures::stream::poll_fn(move |cx| connection.poll_message(cx));
+        use futures::StreamExt;
+        while let Some(msg_result) = stream.next().await {
+            match msg_result {
+                Ok(tokio_postgres::AsyncMessage::Notification(n)) => {
+                    if n.channel() == "graphpg_watch" {
+                        let _ = tx.send(()).await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Watch connection error: {}", e);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // 2. Install PostgreSQL Event Trigger on DDL (ddl_command_end and sql_drop)
+    let setup_sql = r#"
+        CREATE OR REPLACE FUNCTION _graphpg_watch_notify() RETURNS event_trigger AS $$
+        BEGIN
+            PERFORM pg_notify('graphpg_watch', 'ddl');
+        END;
+        $$ LANGUAGE plpgsql;
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_event_trigger WHERE evtname = '_graphpg_watch_ddl') THEN
+                CREATE EVENT TRIGGER _graphpg_watch_ddl ON ddl_command_end
+                EXECUTE FUNCTION _graphpg_watch_notify();
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_event_trigger WHERE evtname = '_graphpg_watch_drop') THEN
+                CREATE EVENT TRIGGER _graphpg_watch_drop ON sql_drop
+                EXECUTE FUNCTION _graphpg_watch_notify();
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END $$;
+
+        LISTEN graphpg_watch;
+    "#;
+
+    if let Err(e) = client.batch_execute(setup_sql).await {
+        tracing::warn!("Could not create event triggers (may lack superuser): {}. Falling back to active catalog polling.", e);
+        let _ = client.batch_execute("LISTEN graphpg_watch;").await;
+    } else {
+        println!("✓ [dev mode] PostgreSQL event trigger installed on ddl_command_end and sql_drop");
+    }
+
+    // 3. Watch loop: listens for notifications AND periodically polls catalog state and the
+    // config file
+    let fingerprint = |state: Arc<ServerState>, schemas: Vec<String>, config: Option<std::path::PathBuf>| async move {
+        let modified = config
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok())
+            .map(|t| format!("{t:?}"))
+            .unwrap_or_default();
+        format!("{}|{modified}", query_catalog_fingerprint(&state, &schemas).await)
+    };
+    // The schemas the last load inspected (the config file may change them)
+    let mut schemas = load_config(&options).map(|c| c.schemas).unwrap_or_default();
+    let current = |schemas: &Vec<String>| fingerprint(state.clone(), schemas.clone(), options.config_path.clone());
+    let mut last_class_fingerprint = current(&schemas).await;
+
+    loop {
+        tokio::select! {
+            _ = rx.recv() => {
+                // Debounce multi-statement DDL migrations
+                sleep(Duration::from_millis(200)).await;
+                // Drain any pending notifications in channel
+                while rx.try_recv().is_ok() {}
+
+                match reload_and_regenerate(&options, &state).await {
+                    Ok(reloaded) => {
+                        schemas = reloaded;
+                        last_class_fingerprint = current(&schemas).await;
+                    }
+                    Err(e) => tracing::error!("Error reloading schema on DDL notification: {}", e),
+                }
+            }
+            _ = sleep(Duration::from_secs(2)) => {
+                // Secondary fallback: poll catalog fingerprint
+                let current_fingerprint = current(&schemas).await;
+                if current_fingerprint != last_class_fingerprint {
+                    last_class_fingerprint = current_fingerprint;
+                    println!("⚡ [dev mode] Catalog or config modification detected via polling...");
+                    match reload_and_regenerate(&options, &state).await {
+                        Ok(reloaded) if reloaded != schemas => {
+                            schemas = reloaded;
+                            last_class_fingerprint = current(&schemas).await;
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::error!("Error reloading schema on catalog poll: {}", e),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Compute a quick fingerprint of the catalog (relcount, max_oid, routine_count) across `schemas`
+async fn query_catalog_fingerprint(state: &ServerState, schemas: &[String]) -> String {
+    let client = match state.pool.get().await {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+
+    let query = "
+        SELECT concat(
+            (SELECT count(*)::text || ':' || coalesce(max(oid)::text, '0') FROM pg_class WHERE relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname = ANY($1))),
+            '|',
+            (SELECT count(*)::text || ':' || coalesce(max(oid)::text, '0') FROM pg_proc WHERE pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname = ANY($1)))
+        );
+    ";
+    match client.query_one(query, &[&schemas]).await {
+        Ok(row) => row.get::<_, Option<String>>(0).unwrap_or_default(),
+        Err(_) => String::new(),
+    }
+}
+
+/// The config file (if any) with the environment and flag overrides applied, as at startup.
+fn load_config(options: &WatcherOptions) -> Result<EngineConfig, Box<dyn std::error::Error + Send + Sync>> {
+    let mut config = match &options.config_path {
+        Some(path) => EngineConfig::load_from_file(path)?,
+        None => EngineConfig::default(),
+    };
+    options.overrides.apply(&mut config);
+    Ok(config)
+}
+
+/// Reloads the schema; returns the schemas it inspected.
+async fn reload_and_regenerate(
+    options: &WatcherOptions,
+    state: &ServerState,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let start = std::time::Instant::now();
+    let client = state.pool.get().await?;
+
+    // 1. Re-read the config and re-inspect the catalog
+    let config = load_config(options)?;
+    if config.schemas.first() != Some(&state.default_schema) {
+        tracing::warn!(
+            default_schema = %state.default_schema,
+            schemas = %config.schemas.join(","),
+            "the config's first schema changed: the default schema changes on restart"
+        );
+    }
+    let inspector = CatalogInspector::new(&client);
+    let schemas: Vec<&str> = config.schemas.iter().map(String::as_str).collect();
+    let (base, config_json) = match inspector.inspect_base(&schemas, &config).await {
+        Ok(base) => {
+            let json = ConfigSchemaGenerator::generate(&base);
+            (Ok(base), json)
+        }
+        // Keep the config's JSON Schema current so the config can be fixed in the editor
+        Err(err @ CatalogError::Config(_)) => {
+            let plain = inspector.inspect_base(&schemas, &EngineConfig::default()).await?;
+            (Err(err), ConfigSchemaGenerator::generate(&plain))
+        }
+        Err(err) => return Err(err.into()),
+    };
+    write_file(&options.config_schema_out, &serde_json::to_string_pretty(&config_json)?)?;
+    let new_catalog = finalize(base?, &config)?;
+
+    // 2. Re-build GraphQL Schema
+    let new_schema = SchemaBuilder::build(&new_catalog)?;
+    let sdl = SchemaBuilder::generate_sdl(&new_catalog);
+
+    // 3. Update in-memory ServerState atomically
+    state.reload(new_schema, new_catalog);
+
+    // 4. Write the SDL to disk
+    write_file(&options.graphql_out, &sdl)?;
+
+    let elapsed = start.elapsed();
+    println!(
+        "⚡ [dev mode] Schema hot-reloaded and re-exported (GraphQL SDL + YAML JSON Schema) in {:?}",
+        elapsed
+    );
+    tracing::info!(
+        elapsed = ?elapsed,
+        "Hot-reloaded GraphQL schema and re-exported schema artifacts"
+    );
+
+    Ok(config.schemas)
+}
+
+fn write_file(path: &str, content: &str) -> std::io::Result<()> {
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(path, content)
+}

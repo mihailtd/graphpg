@@ -1,0 +1,1425 @@
+---
+source: crates/graphpg/tests/forum_schema.rs
+expression: sdl
+---
+"""Any JSON value."""
+scalar JSON
+
+"""A 64-bit integer, as a string (JSON numbers are only exact up to 2^53). Input also takes an integer number."""
+scalar BigInt
+
+"""An arbitrary-precision decimal number, as a string, e.g. `12.50`. Input also takes a number."""
+scalar Decimal
+
+"""A point in time in ISO 8601 format with a UTC offset, e.g. `2024-05-01T12:30:00+00:00`. Input without an offset is in the server's time zone."""
+scalar Datetime
+
+"""A date and time of day without a time zone, in ISO 8601 format, e.g. `2024-05-01T12:30:00`."""
+scalar LocalDatetime
+
+"""A calendar date in ISO 8601 format, e.g. `2024-05-01`."""
+scalar Date
+
+"""A time of day in ISO 8601 format, e.g. `12:30:00`."""
+scalar Time
+
+"""A time of day with a UTC offset, e.g. `12:30:00+02`."""
+scalar TimeTz
+
+"""A duration in ISO 8601 format, e.g. `P1DT2H30M` (1 day, 2 hours and 30 minutes)."""
+scalar Interval
+
+"""A universally unique identifier, e.g. `a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11`."""
+scalar UUID
+
+"""Binary data, base64-encoded (RFC 4648, with padding)."""
+scalar Base64
+
+"""An IPv4 or IPv6 host address, optionally with a network prefix length, e.g. `192.168.0.1/24`."""
+scalar InternetAddress
+
+"""An IPv4 or IPv6 network, e.g. `192.168.0.0/24` (no bits set after the prefix)."""
+scalar CidrAddress
+
+"""A MAC address of 6 (or, for `macaddr8`, 8) bytes, e.g. `08:00:2b:01:02:03`."""
+scalar MacAddress
+
+"""A geometry as a GeoJSON geometry object (RFC 7946), e.g. `{"type": "Point", "coordinates": [2.35, 48.85]}`: longitude, then latitude, in WGS 84 unless the column says otherwise."""
+scalar GeoJSON
+
+interface Node {
+  id: ID!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+directive @defer(label: String, if: Boolean = true) on FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+directive @stream(label: String, initialCount: Int = 0, if: Boolean = true) on FIELD
+
+input StringFilter {
+  isNull: Boolean
+  equalTo: String
+  notEqualTo: String
+  in: [String!]
+  notIn: [String!]
+  lessThan: String
+  lessThanOrEqualTo: String
+  greaterThan: String
+  greaterThanOrEqualTo: String
+  """Contains the substring (`%` and `_` match literally)."""
+  contains: String
+  notContains: String
+  startsWith: String
+  notStartsWith: String
+  endsWith: String
+  notEndsWith: String
+  """SQL `LIKE` pattern (`%` and `_` are wildcards)."""
+  like: String
+  notLike: String
+  ilike: String
+  notIlike: String
+}
+
+input UUIDFilter {
+  isNull: Boolean
+  equalTo: UUID
+  notEqualTo: UUID
+  in: [UUID!]
+  notIn: [UUID!]
+}
+
+input IntFilter {
+  isNull: Boolean
+  equalTo: Int
+  notEqualTo: Int
+  in: [Int!]
+  notIn: [Int!]
+  lessThan: Int
+  lessThanOrEqualTo: Int
+  greaterThan: Int
+  greaterThanOrEqualTo: Int
+}
+
+input BigIntFilter {
+  isNull: Boolean
+  equalTo: BigInt
+  notEqualTo: BigInt
+  in: [BigInt!]
+  notIn: [BigInt!]
+  lessThan: BigInt
+  lessThanOrEqualTo: BigInt
+  greaterThan: BigInt
+  greaterThanOrEqualTo: BigInt
+}
+
+input FloatFilter {
+  isNull: Boolean
+  equalTo: Float
+  notEqualTo: Float
+  in: [Float!]
+  notIn: [Float!]
+  lessThan: Float
+  lessThanOrEqualTo: Float
+  greaterThan: Float
+  greaterThanOrEqualTo: Float
+}
+
+input DecimalFilter {
+  isNull: Boolean
+  equalTo: Decimal
+  notEqualTo: Decimal
+  in: [Decimal!]
+  notIn: [Decimal!]
+  lessThan: Decimal
+  lessThanOrEqualTo: Decimal
+  greaterThan: Decimal
+  greaterThanOrEqualTo: Decimal
+}
+
+input BooleanFilter {
+  isNull: Boolean
+  equalTo: Boolean
+  notEqualTo: Boolean
+}
+
+input DatetimeFilter {
+  isNull: Boolean
+  equalTo: Datetime
+  notEqualTo: Datetime
+  in: [Datetime!]
+  notIn: [Datetime!]
+  lessThan: Datetime
+  lessThanOrEqualTo: Datetime
+  greaterThan: Datetime
+  greaterThanOrEqualTo: Datetime
+}
+
+input DateFilter {
+  isNull: Boolean
+  equalTo: Date
+  notEqualTo: Date
+  in: [Date!]
+  notIn: [Date!]
+  lessThan: Date
+  lessThanOrEqualTo: Date
+  greaterThan: Date
+  greaterThanOrEqualTo: Date
+}
+
+input TimeFilter {
+  isNull: Boolean
+  equalTo: Time
+  notEqualTo: Time
+  in: [Time!]
+  notIn: [Time!]
+  lessThan: Time
+  lessThanOrEqualTo: Time
+  greaterThan: Time
+  greaterThanOrEqualTo: Time
+}
+
+input LocalDatetimeFilter {
+  isNull: Boolean
+  equalTo: LocalDatetime
+  notEqualTo: LocalDatetime
+  in: [LocalDatetime!]
+  notIn: [LocalDatetime!]
+  lessThan: LocalDatetime
+  lessThanOrEqualTo: LocalDatetime
+  greaterThan: LocalDatetime
+  greaterThanOrEqualTo: LocalDatetime
+}
+
+input TimeTzFilter {
+  isNull: Boolean
+  equalTo: TimeTz
+  notEqualTo: TimeTz
+  in: [TimeTz!]
+  notIn: [TimeTz!]
+  lessThan: TimeTz
+  lessThanOrEqualTo: TimeTz
+  greaterThan: TimeTz
+  greaterThanOrEqualTo: TimeTz
+}
+
+input IntervalFilter {
+  isNull: Boolean
+  equalTo: Interval
+  notEqualTo: Interval
+  in: [Interval!]
+  notIn: [Interval!]
+  lessThan: Interval
+  lessThanOrEqualTo: Interval
+  greaterThan: Interval
+  greaterThanOrEqualTo: Interval
+}
+
+input InternetAddressFilter {
+  isNull: Boolean
+  equalTo: InternetAddress
+  notEqualTo: InternetAddress
+  in: [InternetAddress!]
+  notIn: [InternetAddress!]
+  lessThan: InternetAddress
+  lessThanOrEqualTo: InternetAddress
+  greaterThan: InternetAddress
+  greaterThanOrEqualTo: InternetAddress
+}
+
+input CidrAddressFilter {
+  isNull: Boolean
+  equalTo: CidrAddress
+  notEqualTo: CidrAddress
+  in: [CidrAddress!]
+  notIn: [CidrAddress!]
+  lessThan: CidrAddress
+  lessThanOrEqualTo: CidrAddress
+  greaterThan: CidrAddress
+  greaterThanOrEqualTo: CidrAddress
+}
+
+input MacAddressFilter {
+  isNull: Boolean
+  equalTo: MacAddress
+  notEqualTo: MacAddress
+  in: [MacAddress!]
+  notIn: [MacAddress!]
+  lessThan: MacAddress
+  lessThanOrEqualTo: MacAddress
+  greaterThan: MacAddress
+  greaterThanOrEqualTo: MacAddress
+}
+
+input JSONFilter {
+  isNull: Boolean
+  equalTo: JSON
+  notEqualTo: JSON
+  contains: JSON
+  containedBy: JSON
+  """A JSON path predicate holds, e.g. `$.age > 21` (`@@`)."""
+  matchesPath: String
+  """A JSON path selects some item, e.g. `$.tags[*] ? (@ == \"urgent\")` (`@?`)."""
+  existsPath: String
+  """Has this top-level key (or array string element)."""
+  hasKey: String
+  hasAnyKeys: [String!]
+  hasAllKeys: [String!]
+}
+
+"""A range of `Int` values. A missing bound is unbounded."""
+type IntRange {
+  start: IntRangeBound
+  end: IntRangeBound
+  """Contains no value (both bounds are then null)."""
+  isEmpty: Boolean!
+}
+
+type IntRangeBound {
+  value: Int!
+  inclusive: Boolean!
+}
+
+"""A range of `Int` values: a missing bound is unbounded; `start` is inclusive and `end` exclusive unless `inclusive` says otherwise."""
+input IntRangeInput {
+  start: IntRangeBoundInput
+  end: IntRangeBoundInput
+}
+
+input IntRangeBoundInput {
+  value: Int!
+  inclusive: Boolean
+}
+
+input IntRangeFilter {
+  isNull: Boolean
+  equalTo: IntRangeInput
+  notEqualTo: IntRangeInput
+  """Contains this value."""
+  contains: Int
+  """Lies within this range."""
+  containedBy: IntRangeInput
+  overlaps: IntRangeInput
+  strictlyLeftOf: IntRangeInput
+  strictlyRightOf: IntRangeInput
+  adjacentTo: IntRangeInput
+}
+
+"""A range of `BigInt` values. A missing bound is unbounded."""
+type BigIntRange {
+  start: BigIntRangeBound
+  end: BigIntRangeBound
+  """Contains no value (both bounds are then null)."""
+  isEmpty: Boolean!
+}
+
+type BigIntRangeBound {
+  value: BigInt!
+  inclusive: Boolean!
+}
+
+"""A range of `BigInt` values: a missing bound is unbounded; `start` is inclusive and `end` exclusive unless `inclusive` says otherwise."""
+input BigIntRangeInput {
+  start: BigIntRangeBoundInput
+  end: BigIntRangeBoundInput
+}
+
+input BigIntRangeBoundInput {
+  value: BigInt!
+  inclusive: Boolean
+}
+
+input BigIntRangeFilter {
+  isNull: Boolean
+  equalTo: BigIntRangeInput
+  notEqualTo: BigIntRangeInput
+  """Contains this value."""
+  contains: BigInt
+  """Lies within this range."""
+  containedBy: BigIntRangeInput
+  overlaps: BigIntRangeInput
+  strictlyLeftOf: BigIntRangeInput
+  strictlyRightOf: BigIntRangeInput
+  adjacentTo: BigIntRangeInput
+}
+
+"""A range of `Decimal` values. A missing bound is unbounded."""
+type DecimalRange {
+  start: DecimalRangeBound
+  end: DecimalRangeBound
+  """Contains no value (both bounds are then null)."""
+  isEmpty: Boolean!
+}
+
+type DecimalRangeBound {
+  value: Decimal!
+  inclusive: Boolean!
+}
+
+"""A range of `Decimal` values: a missing bound is unbounded; `start` is inclusive and `end` exclusive unless `inclusive` says otherwise."""
+input DecimalRangeInput {
+  start: DecimalRangeBoundInput
+  end: DecimalRangeBoundInput
+}
+
+input DecimalRangeBoundInput {
+  value: Decimal!
+  inclusive: Boolean
+}
+
+input DecimalRangeFilter {
+  isNull: Boolean
+  equalTo: DecimalRangeInput
+  notEqualTo: DecimalRangeInput
+  """Contains this value."""
+  contains: Decimal
+  """Lies within this range."""
+  containedBy: DecimalRangeInput
+  overlaps: DecimalRangeInput
+  strictlyLeftOf: DecimalRangeInput
+  strictlyRightOf: DecimalRangeInput
+  adjacentTo: DecimalRangeInput
+}
+
+"""A range of `Date` values. A missing bound is unbounded."""
+type DateRange {
+  start: DateRangeBound
+  end: DateRangeBound
+  """Contains no value (both bounds are then null)."""
+  isEmpty: Boolean!
+}
+
+type DateRangeBound {
+  value: Date!
+  inclusive: Boolean!
+}
+
+"""A range of `Date` values: a missing bound is unbounded; `start` is inclusive and `end` exclusive unless `inclusive` says otherwise."""
+input DateRangeInput {
+  start: DateRangeBoundInput
+  end: DateRangeBoundInput
+}
+
+input DateRangeBoundInput {
+  value: Date!
+  inclusive: Boolean
+}
+
+input DateRangeFilter {
+  isNull: Boolean
+  equalTo: DateRangeInput
+  notEqualTo: DateRangeInput
+  """Contains this value."""
+  contains: Date
+  """Lies within this range."""
+  containedBy: DateRangeInput
+  overlaps: DateRangeInput
+  strictlyLeftOf: DateRangeInput
+  strictlyRightOf: DateRangeInput
+  adjacentTo: DateRangeInput
+}
+
+"""A range of `Datetime` values. A missing bound is unbounded."""
+type DatetimeRange {
+  start: DatetimeRangeBound
+  end: DatetimeRangeBound
+  """Contains no value (both bounds are then null)."""
+  isEmpty: Boolean!
+}
+
+type DatetimeRangeBound {
+  value: Datetime!
+  inclusive: Boolean!
+}
+
+"""A range of `Datetime` values: a missing bound is unbounded; `start` is inclusive and `end` exclusive unless `inclusive` says otherwise."""
+input DatetimeRangeInput {
+  start: DatetimeRangeBoundInput
+  end: DatetimeRangeBoundInput
+}
+
+input DatetimeRangeBoundInput {
+  value: Datetime!
+  inclusive: Boolean
+}
+
+input DatetimeRangeFilter {
+  isNull: Boolean
+  equalTo: DatetimeRangeInput
+  notEqualTo: DatetimeRangeInput
+  """Contains this value."""
+  contains: Datetime
+  """Lies within this range."""
+  containedBy: DatetimeRangeInput
+  overlaps: DatetimeRangeInput
+  strictlyLeftOf: DatetimeRangeInput
+  strictlyRightOf: DatetimeRangeInput
+  adjacentTo: DatetimeRangeInput
+}
+
+type Forum implements Node {
+  """The globally unique identifier across all types for Relay compatibility."""
+  id: ID!
+  """The raw underlying database primary key value."""
+  databaseId: UUID!
+  name: String!
+  archivedAt: Datetime
+  """Version of the row, changed by every write of it: pass it as `expectedVersion` to update or delete the row only if it did not change since. Null for a row that is not stored in the table (e.g. one a function built)."""
+  rowVersion: String
+  messages: [Message!]!
+  messagesConnection(first: Int, after: String, last: Int, before: String, offset: Int, condition: MessageCondition, filter: MessageFilter, orderBy: [MessageOrderBy!]): MessageConnection!
+  featuredMessages(first: Int, after: String, last: Int, before: String, offset: Int, condition: MessageCondition, filter: MessageFilter, orderBy: [MessageOrderBy!]): MessageConnection!
+  randomUser: User
+  uniqueAuthorCount(featured: Boolean): Int
+}
+
+type Message implements Node {
+  """The globally unique identifier across all types for Relay compatibility."""
+  id: ID!
+  """The raw underlying database primary key value."""
+  databaseId: UUID!
+  forumId: UUID!
+  authorId: UUID!
+  body: String!
+  featured: Boolean!
+  createdAt: Datetime!
+  archivedAt: Datetime
+  """Version of the row, changed by every write of it: pass it as `expectedVersion` to update or delete the row only if it did not change since. Null for a row that is not stored in the table (e.g. one a function built)."""
+  rowVersion: String
+  author: User
+  user: User
+  forum: Forum
+}
+
+type User implements Node {
+  """The globally unique identifier across all types for Relay compatibility."""
+  id: ID!
+  """The raw underlying database primary key value."""
+  databaseId: UUID!
+  username: String!
+  gravatarUrl: String
+  createdAt: Datetime!
+  """Version of the row, changed by every write of it: pass it as `expectedVersion` to update or delete the row only if it did not change since. Null for a row that is not stored in the table (e.g. one a function built)."""
+  rowVersion: String
+  messages: [Message!]!
+  messagesConnection(first: Int, after: String, last: Int, before: String, offset: Int, condition: MessageCondition, filter: MessageFilter, orderBy: [MessageOrderBy!]): MessageConnection!
+  mostRecentForum: Forum
+}
+
+input ForumCondition {
+  id: UUID
+  name: String
+  archivedAt: Datetime
+}
+
+input ForumFilter {
+  and: [ForumFilter!]
+  or: [ForumFilter!]
+  not: ForumFilter
+  id: UUIDFilter
+  name: StringFilter
+  archivedAt: DatetimeFilter
+  messages: MessageToManyFilter
+}
+
+enum ForumOrderBy {
+  NATURAL
+  PRIMARY_KEY_ASC
+  PRIMARY_KEY_DESC
+  ID_ASC
+  ID_DESC
+  NAME_ASC
+  NAME_DESC
+  ARCHIVED_AT_ASC
+  ARCHIVED_AT_DESC
+  """By the number of related `Message` rows."""
+  MESSAGES_COUNT_ASC
+  """By the number of related `Message` rows."""
+  MESSAGES_COUNT_DESC
+  """By the value of the computed field `uniqueAuthorCount`."""
+  UNIQUE_AUTHOR_COUNT_ASC
+  """By the value of the computed field `uniqueAuthorCount`."""
+  UNIQUE_AUTHOR_COUNT_DESC
+}
+
+type ForumMinAggregate {
+  id: UUID
+  name: String
+  archivedAt: Datetime
+}
+
+type ForumMaxAggregate {
+  id: UUID
+  name: String
+  archivedAt: Datetime
+}
+
+type ForumDistinctCountAggregate {
+  id: Int
+  name: Int
+  archivedAt: Int
+}
+
+type ForumAggregates {
+  min: ForumMinAggregate
+  max: ForumMaxAggregate
+  """Number of distinct non-null values."""
+  distinctCount: ForumDistinctCountAggregate
+}
+
+"""What `Forum` rows are grouped by: a column, or a date or timestamp truncated to a unit of time."""
+enum ForumGroupBy {
+  ID
+  NAME
+  ARCHIVED_AT
+  ARCHIVED_AT_TRUNCATED_TO_MINUTE
+  ARCHIVED_AT_TRUNCATED_TO_HOUR
+  ARCHIVED_AT_TRUNCATED_TO_DAY
+  ARCHIVED_AT_TRUNCATED_TO_WEEK
+  ARCHIVED_AT_TRUNCATED_TO_MONTH
+  ARCHIVED_AT_TRUNCATED_TO_QUARTER
+  ARCHIVED_AT_TRUNCATED_TO_YEAR
+  ARCHIVED_AT_BINNED
+}
+
+"""Aggregates of the `Forum` rows sharing the same `groupBy` values."""
+type ForumAggregateGroup {
+  """The group's values, in `groupBy` order."""
+  keys: [JSON]!
+  count: Int!
+  min: ForumMinAggregate
+  max: ForumMaxAggregate
+  """Number of distinct non-null values."""
+  distinctCount: ForumDistinctCountAggregate
+}
+
+"""Conditions groups must meet, all of them."""
+input ForumHavingInput {
+  count: IntFilter
+}
+
+type ForumEdge {
+  cursor: String!
+  node: Forum!
+  """Position of the row among all matching rows in the connection's order (1 for the first), counting those before this page."""
+  rowNumber("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [ForumGroupBy!]): Int!
+  """Rank of the row in the connection's order (rows with equal sort values share it, leaving gaps)."""
+  rank("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [ForumGroupBy!]): Int!
+  denseRank("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [ForumGroupBy!]): Int!
+  """Relative rank, from 0 (first) to 1 (last)."""
+  percentRank("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [ForumGroupBy!]): Float!
+}
+
+type ForumConnection {
+  edges: [ForumEdge!]!
+  nodes: [Forum!]!
+  pageInfo: PageInfo!
+  """Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly)."""
+  totalCount(estimate: Boolean = false): Int!
+  aggregates("""Only rows matching it are aggregated (the connection's own filter applies too).""" filter: ForumFilter): ForumAggregates
+  """Aggregates of each group of the rows (before paging), ordered by its keys."""
+  groupedAggregates(groupBy: [ForumGroupBy!]!, having: ForumHavingInput, """Time zone dates and times are truncated in (e.g. `Europe/Paris`); the session's by default.""" timeZone: String, """Width of `_BINNED` groups, e.g. `PT15M`.""" binWidth: Interval, """Where `_BINNED` groups start (2000-01-01 by default).""" binOrigin: Datetime, """Include the empty groups between the first and the last (one truncated or binned key).""" fillGaps: Boolean = false): [ForumAggregateGroup!]!
+}
+
+input MessageCondition {
+  id: UUID
+  forumId: UUID
+  authorId: UUID
+  body: String
+  featured: Boolean
+  createdAt: Datetime
+  archivedAt: Datetime
+}
+
+input MessageFilter {
+  and: [MessageFilter!]
+  or: [MessageFilter!]
+  not: MessageFilter
+  id: UUIDFilter
+  forumId: UUIDFilter
+  authorId: UUIDFilter
+  body: StringFilter
+  featured: BooleanFilter
+  createdAt: DatetimeFilter
+  archivedAt: DatetimeFilter
+  author: UserFilter
+  user: UserFilter
+  forum: ForumFilter
+}
+
+enum MessageOrderBy {
+  NATURAL
+  PRIMARY_KEY_ASC
+  PRIMARY_KEY_DESC
+  ID_ASC
+  ID_DESC
+  FORUM_ID_ASC
+  FORUM_ID_DESC
+  AUTHOR_ID_ASC
+  AUTHOR_ID_DESC
+  BODY_ASC
+  BODY_DESC
+  FEATURED_ASC
+  FEATURED_DESC
+  CREATED_AT_ASC
+  CREATED_AT_DESC
+  ARCHIVED_AT_ASC
+  ARCHIVED_AT_DESC
+  """By the `username` of the related `User` (rows without one last ascending)."""
+  AUTHOR_USERNAME_ASC
+  """By the `username` of the related `User` (rows without one last ascending)."""
+  AUTHOR_USERNAME_DESC
+  """By the `gravatarUrl` of the related `User` (rows without one last ascending)."""
+  AUTHOR_GRAVATAR_URL_ASC
+  """By the `gravatarUrl` of the related `User` (rows without one last ascending)."""
+  AUTHOR_GRAVATAR_URL_DESC
+  """By the `createdAt` of the related `User` (rows without one last ascending)."""
+  AUTHOR_CREATED_AT_ASC
+  """By the `createdAt` of the related `User` (rows without one last ascending)."""
+  AUTHOR_CREATED_AT_DESC
+  """By the `name` of the related `Forum` (rows without one last ascending)."""
+  FORUM_NAME_ASC
+  """By the `name` of the related `Forum` (rows without one last ascending)."""
+  FORUM_NAME_DESC
+  """By the `archivedAt` of the related `Forum` (rows without one last ascending)."""
+  FORUM_ARCHIVED_AT_ASC
+  """By the `archivedAt` of the related `Forum` (rows without one last ascending)."""
+  FORUM_ARCHIVED_AT_DESC
+}
+
+type MessageMinAggregate {
+  id: UUID
+  forumId: UUID
+  authorId: UUID
+  body: String
+  featured: Boolean
+  createdAt: Datetime
+  archivedAt: Datetime
+}
+
+type MessageMaxAggregate {
+  id: UUID
+  forumId: UUID
+  authorId: UUID
+  body: String
+  featured: Boolean
+  createdAt: Datetime
+  archivedAt: Datetime
+}
+
+type MessageDistinctCountAggregate {
+  id: Int
+  forumId: Int
+  authorId: Int
+  body: Int
+  featured: Int
+  createdAt: Int
+  archivedAt: Int
+}
+
+type MessageAggregates {
+  min: MessageMinAggregate
+  max: MessageMaxAggregate
+  """Number of distinct non-null values."""
+  distinctCount: MessageDistinctCountAggregate
+}
+
+"""What `Message` rows are grouped by: a column, or a date or timestamp truncated to a unit of time."""
+enum MessageGroupBy {
+  ID
+  FORUM_ID
+  AUTHOR_ID
+  BODY
+  FEATURED
+  CREATED_AT
+  CREATED_AT_TRUNCATED_TO_MINUTE
+  CREATED_AT_TRUNCATED_TO_HOUR
+  CREATED_AT_TRUNCATED_TO_DAY
+  CREATED_AT_TRUNCATED_TO_WEEK
+  CREATED_AT_TRUNCATED_TO_MONTH
+  CREATED_AT_TRUNCATED_TO_QUARTER
+  CREATED_AT_TRUNCATED_TO_YEAR
+  CREATED_AT_BINNED
+  ARCHIVED_AT
+  ARCHIVED_AT_TRUNCATED_TO_MINUTE
+  ARCHIVED_AT_TRUNCATED_TO_HOUR
+  ARCHIVED_AT_TRUNCATED_TO_DAY
+  ARCHIVED_AT_TRUNCATED_TO_WEEK
+  ARCHIVED_AT_TRUNCATED_TO_MONTH
+  ARCHIVED_AT_TRUNCATED_TO_QUARTER
+  ARCHIVED_AT_TRUNCATED_TO_YEAR
+  ARCHIVED_AT_BINNED
+}
+
+"""Aggregates of the `Message` rows sharing the same `groupBy` values."""
+type MessageAggregateGroup {
+  """The group's values, in `groupBy` order."""
+  keys: [JSON]!
+  count: Int!
+  min: MessageMinAggregate
+  max: MessageMaxAggregate
+  """Number of distinct non-null values."""
+  distinctCount: MessageDistinctCountAggregate
+}
+
+"""Conditions groups must meet, all of them."""
+input MessageHavingInput {
+  count: IntFilter
+}
+
+type MessageEdge {
+  cursor: String!
+  node: Message!
+  """Position of the row among all matching rows in the connection's order (1 for the first), counting those before this page."""
+  rowNumber("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [MessageGroupBy!]): Int!
+  """Rank of the row in the connection's order (rows with equal sort values share it, leaving gaps)."""
+  rank("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [MessageGroupBy!]): Int!
+  denseRank("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [MessageGroupBy!]): Int!
+  """Relative rank, from 0 (first) to 1 (last)."""
+  percentRank("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [MessageGroupBy!]): Float!
+}
+
+type MessageConnection {
+  edges: [MessageEdge!]!
+  nodes: [Message!]!
+  pageInfo: PageInfo!
+  """Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly)."""
+  totalCount(estimate: Boolean = false): Int!
+  aggregates("""Only rows matching it are aggregated (the connection's own filter applies too).""" filter: MessageFilter): MessageAggregates
+  """Aggregates of each group of the rows (before paging), ordered by its keys."""
+  groupedAggregates(groupBy: [MessageGroupBy!]!, having: MessageHavingInput, """Time zone dates and times are truncated in (e.g. `Europe/Paris`); the session's by default.""" timeZone: String, """Width of `_BINNED` groups, e.g. `PT15M`.""" binWidth: Interval, """Where `_BINNED` groups start (2000-01-01 by default).""" binOrigin: Datetime, """Include the empty groups between the first and the last (one truncated or binned key).""" fillGaps: Boolean = false): [MessageAggregateGroup!]!
+}
+
+input UserCondition {
+  id: UUID
+  username: String
+  gravatarUrl: String
+  createdAt: Datetime
+}
+
+input UserFilter {
+  and: [UserFilter!]
+  or: [UserFilter!]
+  not: UserFilter
+  id: UUIDFilter
+  username: StringFilter
+  gravatarUrl: StringFilter
+  createdAt: DatetimeFilter
+  messages: MessageToManyFilter
+}
+
+enum UserOrderBy {
+  NATURAL
+  PRIMARY_KEY_ASC
+  PRIMARY_KEY_DESC
+  ID_ASC
+  ID_DESC
+  USERNAME_ASC
+  USERNAME_DESC
+  GRAVATAR_URL_ASC
+  GRAVATAR_URL_DESC
+  CREATED_AT_ASC
+  CREATED_AT_DESC
+  """By the number of related `Message` rows."""
+  MESSAGES_COUNT_ASC
+  """By the number of related `Message` rows."""
+  MESSAGES_COUNT_DESC
+}
+
+type UserMinAggregate {
+  id: UUID
+  username: String
+  gravatarUrl: String
+  createdAt: Datetime
+}
+
+type UserMaxAggregate {
+  id: UUID
+  username: String
+  gravatarUrl: String
+  createdAt: Datetime
+}
+
+type UserDistinctCountAggregate {
+  id: Int
+  username: Int
+  gravatarUrl: Int
+  createdAt: Int
+}
+
+type UserAggregates {
+  min: UserMinAggregate
+  max: UserMaxAggregate
+  """Number of distinct non-null values."""
+  distinctCount: UserDistinctCountAggregate
+}
+
+"""What `User` rows are grouped by: a column, or a date or timestamp truncated to a unit of time."""
+enum UserGroupBy {
+  ID
+  USERNAME
+  GRAVATAR_URL
+  CREATED_AT
+  CREATED_AT_TRUNCATED_TO_MINUTE
+  CREATED_AT_TRUNCATED_TO_HOUR
+  CREATED_AT_TRUNCATED_TO_DAY
+  CREATED_AT_TRUNCATED_TO_WEEK
+  CREATED_AT_TRUNCATED_TO_MONTH
+  CREATED_AT_TRUNCATED_TO_QUARTER
+  CREATED_AT_TRUNCATED_TO_YEAR
+  CREATED_AT_BINNED
+}
+
+"""Aggregates of the `User` rows sharing the same `groupBy` values."""
+type UserAggregateGroup {
+  """The group's values, in `groupBy` order."""
+  keys: [JSON]!
+  count: Int!
+  min: UserMinAggregate
+  max: UserMaxAggregate
+  """Number of distinct non-null values."""
+  distinctCount: UserDistinctCountAggregate
+}
+
+"""Conditions groups must meet, all of them."""
+input UserHavingInput {
+  count: IntFilter
+}
+
+type UserEdge {
+  cursor: String!
+  node: User!
+  """Position of the row among all matching rows in the connection's order (1 for the first), counting those before this page."""
+  rowNumber("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [UserGroupBy!]): Int!
+  """Rank of the row in the connection's order (rows with equal sort values share it, leaving gaps)."""
+  rank("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [UserGroupBy!]): Int!
+  denseRank("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [UserGroupBy!]): Int!
+  """Relative rank, from 0 (first) to 1 (last)."""
+  percentRank("""Numbered (or summed) within groups of rows sharing these values.""" partitionBy: [UserGroupBy!]): Float!
+}
+
+type UserConnection {
+  edges: [UserEdge!]!
+  nodes: [User!]!
+  pageInfo: PageInfo!
+  """Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly)."""
+  totalCount(estimate: Boolean = false): Int!
+  aggregates("""Only rows matching it are aggregated (the connection's own filter applies too).""" filter: UserFilter): UserAggregates
+  """Aggregates of each group of the rows (before paging), ordered by its keys."""
+  groupedAggregates(groupBy: [UserGroupBy!]!, having: UserHavingInput, """Time zone dates and times are truncated in (e.g. `Europe/Paris`); the session's by default.""" timeZone: String, """Width of `_BINNED` groups, e.g. `PT15M`.""" binWidth: Interval, """Where `_BINNED` groups start (2000-01-01 by default).""" binOrigin: Datetime, """Include the empty groups between the first and the last (one truncated or binned key).""" fillGaps: Boolean = false): [UserAggregateGroup!]!
+}
+
+"""Conditions on the `Message` rows related to a row: all of them must hold."""
+input MessageToManyFilter {
+  """Some related row matches."""
+  some: MessageFilter
+  """Every related row matches (also true without related rows)."""
+  every: MessageFilter
+  """No related row matches."""
+  none: MessageFilter
+  """Number of related rows."""
+  count: IntFilter
+}
+
+"""What an insert does when a row conflicts with an existing one on a unique key."""
+enum ConflictAction {
+  """Update the existing row from the proposed one."""
+  UPDATE
+  """Leave the existing row as it is."""
+  NOTHING
+}
+
+"""Why a write of `Forum` rows was rejected: the `extensions.code` of the error, whose `extensions.fields` name the input fields holding the offending values."""
+enum ForumErrorCode {
+  """`id` is required (it cannot be null)."""
+  ID_REQUIRED
+  """`name` is required (it cannot be null)."""
+  NAME_REQUIRED
+  """`expectedVersion` is not the row's `rowVersion`: the row changed since that version was read."""
+  STALE_VERSION
+  """A row with this primary key (`id`) already exists."""
+  ID_TAKEN
+  """`Message` rows still refer to it (`messages_forum_id_fkey`)."""
+  REFERENCED_BY_MESSAGES
+}
+
+input CreateForumInput {
+  id: UUID
+  name: String!
+  archivedAt: Datetime
+  """`Message` rows to create with, or move to, this row."""
+  messages: MessageToManyInput
+}
+
+input UpdateForumInput {
+  id: UUID
+  name: String
+  archivedAt: Datetime
+  """`Message` rows to relate to, or detach from, this row (single-row updates only)."""
+  messages: MessageToManyUpdateInput
+}
+
+"""Unique keys of `Forum` an insert can conflict on."""
+enum ForumConflictKey {
+  """`id`"""
+  PRIMARY_KEY
+}
+
+"""Fields of `Forum` an insert can update on conflict."""
+enum ForumUpdateColumn {
+  ID
+  NAME
+  ARCHIVED_AT
+}
+
+"""What an insert does when a row has the same unique key as an existing `Forum`."""
+input ForumOnConflict {
+  """The unique key rows are matched by; every inserted row must set its fields."""
+  key: ForumConflictKey! = PRIMARY_KEY
+  action: ConflictAction! = UPDATE
+  """Fields updated from the proposed row. Default: the fields it sets, apart from the key and the primary key."""
+  update: [ForumUpdateColumn!]
+}
+
+type CreateForumPayload {
+  forum: Forum!
+  """The row as it was before an upsert updated it; null when it was inserted. Its relations are read as they are now."""
+  previousForum: Forum
+}
+
+type CreateForumsPayload {
+  """The affected rows."""
+  forums: [Forum!]!
+  """Number of rows inserted, updated or deleted."""
+  affectedCount: Int!
+  """The rows as they were before an upsert updated them, in the order of `forums`; null for rows it inserted. Its relations are read as they are now."""
+  previousForums: [Forum]!
+}
+
+type UpdateForumPayload {
+  forum: Forum
+  """The row as it was before the update. Its relations are read as they are now."""
+  previousForum: Forum
+}
+
+type UpdateForumsPayload {
+  """The affected rows."""
+  forums: [Forum!]!
+  """Number of rows inserted, updated or deleted."""
+  affectedCount: Int!
+  """The rows as they were before the update, in the order of `forums`. Its relations are read as they are now."""
+  previousForums: [Forum!]!
+}
+
+type DeleteForumPayload {
+  forum: Forum
+}
+
+type DeleteForumsPayload {
+  """The affected rows."""
+  forums: [Forum!]!
+  """Number of rows inserted, updated or deleted."""
+  affectedCount: Int!
+}
+
+"""Why a write of `Message` rows was rejected: the `extensions.code` of the error, whose `extensions.fields` name the input fields holding the offending values."""
+enum MessageErrorCode {
+  """`id` is required (it cannot be null)."""
+  ID_REQUIRED
+  """`forumId` is required (it cannot be null)."""
+  FORUM_ID_REQUIRED
+  """`authorId` is required (it cannot be null)."""
+  AUTHOR_ID_REQUIRED
+  """`body` is required (it cannot be null)."""
+  BODY_REQUIRED
+  """`featured` is required (it cannot be null)."""
+  FEATURED_REQUIRED
+  """`createdAt` is required (it cannot be null)."""
+  CREATED_AT_REQUIRED
+  """`expectedVersion` is not the row's `rowVersion`: the row changed since that version was read."""
+  STALE_VERSION
+  """A row with this primary key (`id`) already exists."""
+  ID_TAKEN
+  """`authorId` refers to a `User` that does not exist (`messages_author_id_fkey`)."""
+  AUTHOR_NOT_FOUND
+  """`forumId` refers to a `Forum` that does not exist (`messages_forum_id_fkey`)."""
+  FORUM_NOT_FOUND
+}
+
+input CreateMessageInput {
+  id: UUID
+  forumId: UUID
+  authorId: UUID
+  body: String!
+  featured: Boolean
+  createdAt: Datetime
+  archivedAt: Datetime
+  """The `User` this row refers to: an existing one, or a new one."""
+  author: UserToOneInput
+  """The `Forum` this row refers to: an existing one, or a new one."""
+  forum: ForumToOneInput
+}
+
+input UpdateMessageInput {
+  id: UUID
+  forumId: UUID
+  authorId: UUID
+  body: String
+  featured: Boolean
+  createdAt: Datetime
+  archivedAt: Datetime
+  """The `User` this row refers to: another existing one, a new one, or none (single-row updates only)."""
+  author: UserToOneUpdateInput
+  """The `Forum` this row refers to: another existing one, a new one, or none (single-row updates only)."""
+  forum: ForumToOneUpdateInput
+}
+
+"""Unique keys of `Message` an insert can conflict on."""
+enum MessageConflictKey {
+  """`id`"""
+  PRIMARY_KEY
+}
+
+"""Fields of `Message` an insert can update on conflict."""
+enum MessageUpdateColumn {
+  ID
+  FORUM_ID
+  AUTHOR_ID
+  BODY
+  FEATURED
+  CREATED_AT
+  ARCHIVED_AT
+}
+
+"""What an insert does when a row has the same unique key as an existing `Message`."""
+input MessageOnConflict {
+  """The unique key rows are matched by; every inserted row must set its fields."""
+  key: MessageConflictKey! = PRIMARY_KEY
+  action: ConflictAction! = UPDATE
+  """Fields updated from the proposed row. Default: the fields it sets, apart from the key and the primary key."""
+  update: [MessageUpdateColumn!]
+}
+
+type CreateMessagePayload {
+  message: Message!
+  """The row as it was before an upsert updated it; null when it was inserted. Its relations are read as they are now."""
+  previousMessage: Message
+}
+
+type CreateMessagesPayload {
+  """The affected rows."""
+  messages: [Message!]!
+  """Number of rows inserted, updated or deleted."""
+  affectedCount: Int!
+  """The rows as they were before an upsert updated them, in the order of `messages`; null for rows it inserted. Its relations are read as they are now."""
+  previousMessages: [Message]!
+}
+
+type UpdateMessagePayload {
+  message: Message
+  """The row as it was before the update. Its relations are read as they are now."""
+  previousMessage: Message
+}
+
+type UpdateMessagesPayload {
+  """The affected rows."""
+  messages: [Message!]!
+  """Number of rows inserted, updated or deleted."""
+  affectedCount: Int!
+  """The rows as they were before the update, in the order of `messages`. Its relations are read as they are now."""
+  previousMessages: [Message!]!
+}
+
+type DeleteMessagePayload {
+  message: Message
+}
+
+type DeleteMessagesPayload {
+  """The affected rows."""
+  messages: [Message!]!
+  """Number of rows inserted, updated or deleted."""
+  affectedCount: Int!
+}
+
+"""Why a write of `User` rows was rejected: the `extensions.code` of the error, whose `extensions.fields` name the input fields holding the offending values."""
+enum UserErrorCode {
+  """`id` is required (it cannot be null)."""
+  ID_REQUIRED
+  """`username` is required (it cannot be null)."""
+  USERNAME_REQUIRED
+  """`createdAt` is required (it cannot be null)."""
+  CREATED_AT_REQUIRED
+  """`expectedVersion` is not the row's `rowVersion`: the row changed since that version was read."""
+  STALE_VERSION
+  """A row with this primary key (`id`) already exists."""
+  ID_TAKEN
+  """Another row already has this `username` (unique `users_username_key`)."""
+  USERNAME_TAKEN
+  """`Message` rows still refer to it (`messages_author_id_fkey`)."""
+  REFERENCED_BY_MESSAGES
+}
+
+input CreateUserInput {
+  id: UUID
+  username: String!
+  gravatarUrl: String
+  createdAt: Datetime
+  """`Message` rows to create with, or move to, this row."""
+  messages: MessageToManyInput
+}
+
+input UpdateUserInput {
+  id: UUID
+  username: String
+  gravatarUrl: String
+  createdAt: Datetime
+  """`Message` rows to relate to, or detach from, this row (single-row updates only)."""
+  messages: MessageToManyUpdateInput
+}
+
+"""Unique keys of `User` an insert can conflict on."""
+enum UserConflictKey {
+  """`id`"""
+  PRIMARY_KEY
+  """`username`"""
+  USERNAME
+}
+
+"""Fields of `User` an insert can update on conflict."""
+enum UserUpdateColumn {
+  ID
+  USERNAME
+  GRAVATAR_URL
+  CREATED_AT
+}
+
+"""What an insert does when a row has the same unique key as an existing `User`."""
+input UserOnConflict {
+  """The unique key rows are matched by; every inserted row must set its fields."""
+  key: UserConflictKey! = PRIMARY_KEY
+  action: ConflictAction! = UPDATE
+  """Fields updated from the proposed row. Default: the fields it sets, apart from the key and the primary key."""
+  update: [UserUpdateColumn!]
+}
+
+type CreateUserPayload {
+  user: User!
+  """The row as it was before an upsert updated it; null when it was inserted. Its relations are read as they are now."""
+  previousUser: User
+}
+
+type CreateUsersPayload {
+  """The affected rows."""
+  users: [User!]!
+  """Number of rows inserted, updated or deleted."""
+  affectedCount: Int!
+  """The rows as they were before an upsert updated them, in the order of `users`; null for rows it inserted. Its relations are read as they are now."""
+  previousUsers: [User]!
+}
+
+type UpdateUserPayload {
+  user: User
+  """The row as it was before the update. Its relations are read as they are now."""
+  previousUser: User
+}
+
+type UpdateUsersPayload {
+  """The affected rows."""
+  users: [User!]!
+  """Number of rows inserted, updated or deleted."""
+  affectedCount: Int!
+  """The rows as they were before the update, in the order of `users`. Its relations are read as they are now."""
+  previousUsers: [User!]!
+}
+
+type DeleteUserPayload {
+  user: User
+}
+
+type DeleteUsersPayload {
+  """The affected rows."""
+  users: [User!]!
+  """Number of rows inserted, updated or deleted."""
+  affectedCount: Int!
+}
+
+"""The `Message` with a key, created if there is none (its nested relations are not written)."""
+input MessageConnectOrCreateInput {
+  where: MessageKeyInput!
+  create: CreateMessageInput!
+}
+
+"""Changes to a related `Message`, found by key (its nested relations are not written)."""
+input MessageUpdateByKeyInput {
+  where: MessageKeyInput!
+  data: UpdateMessageInput!
+}
+
+"""Identifies a `Message` by `id`."""
+input MessageKeyInput {
+  id: ID
+}
+
+"""`Message` rows to relate to the new row."""
+input MessageToManyInput {
+  """New `Message` rows, created after it."""
+  create: [CreateMessageInput!]
+  """Existing `Message` rows."""
+  connect: [MessageKeyInput!]
+  """Existing `Message` rows, or new ones for keys no row has."""
+  connectOrCreate: [MessageConnectOrCreateInput!]
+}
+
+"""`Message` rows to relate to, or detach from, the updated row."""
+input MessageToManyUpdateInput {
+  """New `Message` rows, related to it."""
+  create: [CreateMessageInput!]
+  """Existing `Message` rows to relate to it."""
+  connect: [MessageKeyInput!]
+  """Related `Message` rows to detach (a child's foreign key becomes NULL; a link is removed)."""
+  disconnect: [MessageKeyInput!]
+  """The related `Message` rows, exactly: others are detached, these related."""
+  set: [MessageKeyInput!]
+  """Existing `Message` rows to relate to it, or new ones for keys no row has."""
+  connectOrCreate: [MessageConnectOrCreateInput!]
+  """Changes to related `Message` rows (its own children only, not linked rows)."""
+  update: [MessageUpdateByKeyInput!]
+  """Related `Message` rows to delete (its own children only)."""
+  delete: [MessageKeyInput!]
+  """The related `Message` rows, exactly (its own children only, one `MERGE`): rows whose key matches a child update it, the others are created, and children none matches are deleted. Every row sets the same fields."""
+  sync: [CreateMessageInput!]
+}
+
+"""The `User` with a key, created if there is none (its nested relations are not written)."""
+input UserConnectOrCreateInput {
+  where: UserKeyInput!
+  create: CreateUserInput!
+}
+
+"""Identifies a `User` by `id`, or by `username`."""
+input UserKeyInput {
+  id: ID
+  username: String
+}
+
+"""A `User` to refer to: set one of `connect` and `create`."""
+input UserToOneInput {
+  """An existing `User`."""
+  connect: UserKeyInput
+  """A new `User`, created first."""
+  create: CreateUserInput
+  """An existing `User`, or a new one if none has the key."""
+  connectOrCreate: UserConnectOrCreateInput
+}
+
+"""The `User` an updated row refers to: set one of `connect`, `create` and `disconnect`."""
+input UserToOneUpdateInput {
+  """An existing `User`."""
+  connect: UserKeyInput
+  """A new `User`, created first."""
+  create: CreateUserInput
+  """An existing `User`, or a new one if none has the key."""
+  connectOrCreate: UserConnectOrCreateInput
+  """Changes to the `User` it refers to (which stays the same)."""
+  update: UpdateUserInput
+  """Refer to none (the foreign key becomes NULL)."""
+  disconnect: Boolean
+}
+
+"""The `Forum` with a key, created if there is none (its nested relations are not written)."""
+input ForumConnectOrCreateInput {
+  where: ForumKeyInput!
+  create: CreateForumInput!
+}
+
+"""Identifies a `Forum` by `id`."""
+input ForumKeyInput {
+  id: ID
+}
+
+"""A `Forum` to refer to: set one of `connect` and `create`."""
+input ForumToOneInput {
+  """An existing `Forum`."""
+  connect: ForumKeyInput
+  """A new `Forum`, created first."""
+  create: CreateForumInput
+  """An existing `Forum`, or a new one if none has the key."""
+  connectOrCreate: ForumConnectOrCreateInput
+}
+
+"""The `Forum` an updated row refers to: set one of `connect`, `create` and `disconnect`."""
+input ForumToOneUpdateInput {
+  """An existing `Forum`."""
+  connect: ForumKeyInput
+  """A new `Forum`, created first."""
+  create: CreateForumInput
+  """An existing `Forum`, or a new one if none has the key."""
+  connectOrCreate: ForumConnectOrCreateInput
+  """Changes to the `Forum` it refers to (which stays the same)."""
+  update: UpdateForumInput
+  """Refer to none (the foreign key becomes NULL)."""
+  disconnect: Boolean
+}
+
+type Query {
+  node(id: ID!): Node
+  forums: [Forum!]!
+  forum(id: UUID!): Forum
+  forumsConnection(first: Int, after: String, last: Int, before: String, offset: Int, condition: ForumCondition, filter: ForumFilter, orderBy: [ForumOrderBy!]): ForumConnection!
+  allForumsConnection(first: Int, after: String, last: Int, before: String, offset: Int, condition: ForumCondition, filter: ForumFilter, orderBy: [ForumOrderBy!]): ForumConnection!
+  messages: [Message!]!
+  message(id: UUID!): Message
+  messagesConnection(first: Int, after: String, last: Int, before: String, offset: Int, condition: MessageCondition, filter: MessageFilter, orderBy: [MessageOrderBy!]): MessageConnection!
+  allMessagesConnection(first: Int, after: String, last: Int, before: String, offset: Int, condition: MessageCondition, filter: MessageFilter, orderBy: [MessageOrderBy!]): MessageConnection!
+  users: [User!]!
+  user(id: UUID!): User
+  userByUsername(username: String!): User
+  usersConnection(first: Int, after: String, last: Int, before: String, offset: Int, condition: UserCondition, filter: UserFilter, orderBy: [UserOrderBy!]): UserConnection!
+  allUsersConnection(first: Int, after: String, last: Int, before: String, offset: Int, condition: UserCondition, filter: UserFilter, orderBy: [UserOrderBy!]): UserConnection!
+  featuredMessages(first: Int, after: String, last: Int, before: String, offset: Int, condition: MessageCondition, filter: MessageFilter, orderBy: [MessageOrderBy!]): MessageConnection!
+  forumNames: [String]!
+  forumNamesArray: [String]
+  forumNamesCases: [[String]]!
+  randomUser: User
+  randomUserArray(first: Int, after: String, last: Int, before: String, offset: Int, condition: UserCondition, filter: UserFilter, orderBy: [UserOrderBy!]): UserConnection!
+  uniqueAuthorCount(featured: Boolean): Int
+}
+
+type Mutation {
+  createForum(input: CreateForumInput!, onConflict: ForumOnConflict): CreateForumPayload!
+  """Insert several `Forum` rows; the payload lists them in input order."""
+  createForums(inputs: [CreateForumInput!]!, onConflict: ForumOnConflict): CreateForumsPayload!
+  updateForum(id: ID!, input: UpdateForumInput!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): UpdateForumPayload!
+  """Update every `Forum` matching `where`."""
+  updateForums(where: ForumFilter!, set: UpdateForumInput!): UpdateForumsPayload!
+  deleteForum(id: ID!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): DeleteForumPayload!
+  """Delete every `Forum` matching `where`."""
+  deleteForums(where: ForumFilter!): DeleteForumsPayload!
+  createMessage(input: CreateMessageInput!, onConflict: MessageOnConflict): CreateMessagePayload!
+  """Insert several `Message` rows; the payload lists them in input order."""
+  createMessages(inputs: [CreateMessageInput!]!, onConflict: MessageOnConflict): CreateMessagesPayload!
+  updateMessage(id: ID!, input: UpdateMessageInput!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): UpdateMessagePayload!
+  """Update every `Message` matching `where`."""
+  updateMessages(where: MessageFilter!, set: UpdateMessageInput!): UpdateMessagesPayload!
+  deleteMessage(id: ID!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): DeleteMessagePayload!
+  """Delete every `Message` matching `where`."""
+  deleteMessages(where: MessageFilter!): DeleteMessagesPayload!
+  createUser(input: CreateUserInput!, onConflict: UserOnConflict): CreateUserPayload!
+  """Insert several `User` rows; the payload lists them in input order."""
+  createUsers(inputs: [CreateUserInput!]!, onConflict: UserOnConflict): CreateUsersPayload!
+  updateUser(id: ID!, input: UpdateUserInput!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): UpdateUserPayload!
+  """Update the `User` with the given `username`."""
+  updateUserByUsername(username: String!, input: UpdateUserInput!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): UpdateUserPayload!
+  """Update every `User` matching `where`."""
+  updateUsers(where: UserFilter!, set: UpdateUserInput!): UpdateUsersPayload!
+  deleteUser(id: ID!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): DeleteUserPayload!
+  """Delete the `User` with the given `username`."""
+  deleteUserByUsername(username: String!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): DeleteUserPayload!
+  """Delete every `User` matching `where`."""
+  deleteUsers(where: UserFilter!): DeleteUsersPayload!
+}
