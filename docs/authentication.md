@@ -80,7 +80,7 @@ Each request runs in a transaction that starts with one statement setting `role`
 
 ## GraphiQL
 
-The GraphiQL IDE at `/graphiql` is for development and pre-production. It is on in dev mode (`--dev`) and off in prod. Set `graphql.ui: true` (or `false`) in the config to choose otherwise. When it is off, `/graphiql` returns 404.
+The GraphiQL IDE at `/graphiql` is for development and pre-production. It is on in dev mode (`--dev`) and off in prod. Set `graphql.ui: true` (or `false`) in the config to choose otherwise. When it is off, `/graphiql` returns 404. Its assets are embedded in the binary, so it works offline and needs no external hosts in a Content-Security-Policy.
 
 ## Bulk endpoints
 

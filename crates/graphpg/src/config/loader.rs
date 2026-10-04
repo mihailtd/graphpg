@@ -3,7 +3,8 @@
 //! The effective config of a [`Mode`] is built in four steps, each overriding the last:
 //!
 //! 1. the built-in defaults of every field,
-//! 2. the built-in defaults of the mode (`dev` serves the GraphiQL IDE, `prod` does not),
+//! 2. the built-in defaults of the mode (`dev` serves the GraphiQL IDE and the Scalar API
+//!    reference, `prod` does not),
 //! 3. the file's own settings,
 //! 4. the file's `dev:` or `prod:` block, which holds the settings that differ between modes.
 //!
@@ -45,7 +46,7 @@ impl Mode {
     /// Settings that differ from the field defaults by mode.
     fn defaults(self) -> &'static str {
         match self {
-            Mode::Dev => "graphql:\n  ui: true\n",
+            Mode::Dev => "graphql:\n  ui: true\nopenapi:\n  ui: true\n",
             Mode::Prod => "{}",
         }
     }
@@ -319,7 +320,7 @@ mod tests {
         assert_eq!(config.database.pool_size, 10);
         assert!(config.graphql.enabled);
         assert!(!config.openapi.enabled);
-        assert!(!config.graphql.ui);
+        assert!(!config.graphql.ui && !config.openapi.ui);
         assert_eq!(config.database.resolved_schemas(), vec!["app_public"]);
     }
 
@@ -337,6 +338,8 @@ prod:
         let prod = parse(yaml, Mode::Prod).unwrap();
         // The mode's defaults, then the shared settings, then the mode's block
         assert!(dev.graphql.ui && !prod.graphql.ui);
+        // Both UIs follow the mode
+        assert!(dev.openapi.ui && !prod.openapi.ui);
         assert_eq!((dev.database.pool_size, prod.database.pool_size), (2, 20));
         // Deep merge: a block's setting does not drop its siblings
         assert!(dev.graphql.federation.enabled && prod.graphql.federation.enabled);

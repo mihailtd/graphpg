@@ -42,7 +42,8 @@ OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOIN
 | Path | Method | |
 | :--- | :--- | :--- |
 | `/graphql` | `POST` | Queries, mutations, `@defer` / `@stream` (as `multipart/mixed`) and Federation `_entities` |
-| `/graphiql` | `GET` | GraphiQL IDE, when enabled (404 otherwise) |
+| `/graphiql` | `GET` | GraphiQL IDE, when `graphql.ui` is on (404 otherwise) |
+| `/scalar` | `GET` | Scalar API reference, when `openapi.ui` is on (404 otherwise); it shows the OpenAPI document at `/openapi.json` once the REST API serves one |
 | `/export` | `POST` | A connection query streamed as NDJSON or CSV |
 | `/import/{Type}` | `POST` | NDJSON rows of `Create<Type>Input`, inserted all-or-nothing with `COPY` |
 | `/health` | `GET` | Liveness |
@@ -94,13 +95,20 @@ graphql:
   federation: { enabled: false }
 openapi:
   enabled: false                # the REST API and its OpenAPI description
+  ui: false                     # the Scalar API reference: on by default in dev mode only
 
 dev:                            # settings that differ in dev mode
   database: { pool_size: 2 }
 prod: {}                        # ... and in prod mode
 ```
 
-The effective config of a mode is built in four steps, each overriding the last: the built-in defaults, the mode's built-in defaults (`dev` turns the GraphiQL IDE on), the shared settings, then the mode's block. Mappings merge key by key; anything else, a list included, is replaced. An unknown key is an error in the shared settings and in both blocks, so a typo in `dev:` is found when starting `prod`.
+The effective config of a mode is built in four steps, each overriding the last: the built-in defaults, the mode's built-in defaults (`dev` turns the GraphiQL IDE and the Scalar API reference on), the shared settings, then the mode's block. Mappings merge key by key; anything else, a list included, is replaced. An unknown key is an error in the shared settings and in both blocks, so a typo in `dev:` is found when starting `prod`.
+
+### The UIs
+
+`graphql.ui` serves the GraphiQL IDE at `/graphiql` and `openapi.ui` the Scalar API reference at `/scalar`. Both are on in dev mode and off in prod, and either can be set explicitly. They are part of the binary (and of the container image), load nothing from other hosts, and work offline, so a strict Content-Security-Policy can allow `'self'` only. In a container, turn one on with a mounted config (`graphql: { ui: true }`) or, for GraphiQL, `GRAPHIQL=true`.
+
+The GraphiQL source is `packages/graphiql-ui`; `moon run graphiql-ui:build` builds it into `crates/graphpg-ui/assets`, which the server embeds. A build without those files still runs, and `/graphiql` says so.
 
 Strings may read the environment: `${NAME}` (an error when unset or empty) and `${NAME:-default}`. Quote them inside `[...]` and `{...}`, write `$${` for a literal `${`, and use them for numbers and switches too (`port: '${PORT}'`; switches also read `on`, `off`, `yes`, `no`, `1` and `0`).
 

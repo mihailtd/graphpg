@@ -299,7 +299,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_sql_comments(sql_comments)
             .with_replicas(replicas)
             .with_auth(authenticator)
-            .with_graphiql(config.graphql.ui),
+            .with_graphiql(config.graphql.ui)
+            .with_scalar(config.openapi.ui),
     );
     if !state.replicas.is_empty() {
         state.refresh_replicas().await;
@@ -337,6 +338,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tracing::info!("graphpg listening on http://{}/graphql", addr);
     if config.graphql.ui {
         tracing::info!("GraphiQL available at http://localhost:{}/graphiql", port);
+    }
+    if config.openapi.ui {
+        tracing::info!(
+            "Scalar API reference available at http://localhost:{}/scalar",
+            port
+        );
     }
     if debug.sql || debug.explain {
         let explain = debug.explain;

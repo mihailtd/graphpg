@@ -231,6 +231,10 @@ pub struct OpenapiConfig {
     /// Serve the REST API. Off until the REST surface exists.
     #[serde(default, deserialize_with = "switch")]
     pub enabled: bool,
+    /// Serve the Scalar API reference at `/scalar`, showing the OpenAPI document at
+    /// `/openapi.json` once the REST surface serves one. On in `dev` mode, off in `prod`.
+    #[serde(default, deserialize_with = "switch")]
+    pub ui: bool,
 }
 
 /// Apollo Federation configuration for exposing this engine as a federated subgraph.
