@@ -128,6 +128,8 @@ jobs:
   # Tag the per-platform images as one multi-arch image, and sign it
   merge:
     needs: build
+    # verify-tag is skipped on branch pushes; without this, that skip would propagate through `build` and skip the merge too
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
