@@ -31,9 +31,12 @@ pnpm fix                   # apply rustfmt and Biome fixes
 pnpm check                 # verify + all tests
 ```
 
-A pre-commit hook (installed by moon) runs typecheck, lint and format on the projects with staged changes, so the checks CI runs first fail on your machine first. Skip it in an emergency with `git commit --no-verify`.
+Two git hooks are installed by moon (defined in `.moon/workspace.yml`, no setup needed):
 
-`pnpm <script>` is shorthand for `moon run <project>:<task>`; `moon run :lint` runs a task in every project (`typecheck`, `lint`, `format`, `fix` and `test` exist in both; Rust uses cargo check, clippy and rustfmt, TypeScript uses tsc and Biome). The end-to-end suite uses `E2E_DATABASE_URL` (falling back to `TEST_DATABASE_URL`) and replaces its `blog` schema on every run.
+- **pre-commit** runs typecheck, lint and format on the projects with staged changes, and checks only the staged TypeScript files, so the checks CI runs first fail on your machine first.
+- **pre-push** runs the tests affected by the commits you are pushing (against `origin/main`), including the projects that depend on them. It needs PostgreSQL: `pnpm db:up`.
+
+Skip either in an emergency with `git commit --no-verify` / `git push --no-verify`.
 
 ## Tests
 

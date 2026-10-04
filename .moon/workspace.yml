@@ -11,3 +11,6 @@ vcs:
   hooks:
     pre-commit:
       - moon run :typecheck :lint :format --affected --status staged --no-actions
+    pre-push:
+      # tests for what the pushed commits touch (and what depends on it); needs PostgreSQL: `pnpm db:up`
+      - moon run :test --affected --base origin/main --head HEAD

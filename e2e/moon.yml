@@ -23,11 +23,15 @@ tasks:
     command: pnpm exec tsc --noEmit
     inputs: ["@globs(sources)", tsconfig.json]
   lint:
-    command: pnpm exec biome lint .
+    command: pnpm exec biome lint
     inputs: ["@globs(sources)", /biome.json]
+    options:
+      affectedFiles: true # with --affected (the pre-commit hook), check only the changed files
   format:
-    command: pnpm exec biome format .
+    command: pnpm exec biome format
     inputs: ["@globs(sources)", /biome.json]
+    options:
+      affectedFiles: true
   fix:
     # apply Biome's formatting and safe lint fixes
     command: pnpm exec biome check --write .
