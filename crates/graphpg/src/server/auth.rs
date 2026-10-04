@@ -58,11 +58,17 @@ pub struct AuthSessionContext {
 impl AuthSessionContext {
     /// The role the request runs as.
     pub fn role(&self) -> Option<&str> {
-        self.settings.iter().find(|(name, _)| name == "role").map(|(_, value)| value.as_str())
+        self.settings
+            .iter()
+            .find(|(name, _)| name == "role")
+            .map(|(_, value)| value.as_str())
     }
 
     fn arrays(&self) -> (Vec<&str>, Vec<&str>) {
-        self.settings.iter().map(|(n, v)| (n.as_str(), v.as_str())).unzip()
+        self.settings
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .unzip()
     }
 
     /// Applies the role and settings to the transaction open on `conn`. Inside a transaction
@@ -70,14 +76,22 @@ impl AuthSessionContext {
     pub async fn apply<C: Connection>(&self, conn: &C) -> Result<(), ExecutionError> {
         let statement = conn.prepare(APPLY_SQL).await?;
         let (names, values) = self.arrays();
-        conn.client().query_one(&statement, &[&names, &values]).await?;
+        conn.client()
+            .query_one(&statement, &[&names, &values])
+            .await?;
         Ok(())
     }
 
     /// [`apply`](Self::apply) on any client, e.g. a `tokio_postgres` transaction.
-    pub async fn apply_on(&self, client: &impl tokio_postgres::GenericClient) -> Result<(), tokio_postgres::Error> {
+    pub async fn apply_on(
+        &self,
+        client: &impl tokio_postgres::GenericClient,
+    ) -> Result<(), tokio_postgres::Error> {
         let (names, values) = self.arrays();
-        client.query_one(APPLY_SQL, &[&names, &values]).await.map(|_| ())
+        client
+            .query_one(APPLY_SQL, &[&names, &values])
+            .await
+            .map(|_| ())
     }
 }
 
@@ -98,7 +112,10 @@ pub enum AuthError {
 impl AuthError {
     pub fn message(&self) -> String {
         match self {
-            Self::Missing => "authentication required: send an access token as `Authorization: Bearer <token>`".to_string(),
+            Self::Missing => {
+                "authentication required: send an access token as `Authorization: Bearer <token>`"
+                    .to_string()
+            }
             Self::InvalidRequest(m) | Self::InvalidToken(m) | Self::Unavailable(m) => m.clone(),
         }
     }
@@ -107,10 +124,17 @@ impl AuthError {
 /// An RFC 6750 `WWW-Authenticate` challenge (quotes and backslashes cannot appear in its
 /// quoted strings).
 fn challenge(error: Option<&str>, description: &str) -> HeaderValue {
-    let clean = |s: &str| s.chars().filter(|c| *c != '"' && *c != '\\' && (' '..='~').contains(c)).collect::<String>();
+    let clean = |s: &str| {
+        s.chars()
+            .filter(|c| *c != '"' && *c != '\\' && (' '..='~').contains(c))
+            .collect::<String>()
+    };
     let value = match error {
         None => "Bearer".to_string(),
-        Some(error) => format!("Bearer error=\"{error}\", error_description=\"{}\"", clean(description)),
+        Some(error) => format!(
+            "Bearer error=\"{error}\", error_description=\"{}\"",
+            clean(description)
+        ),
     };
     HeaderValue::from_str(&value).unwrap_or_else(|_| HeaderValue::from_static("Bearer"))
 }
@@ -119,9 +143,21 @@ impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let message = self.message();
         let (status, code, www) = match &self {
-            Self::Missing => (StatusCode::UNAUTHORIZED, "UNAUTHENTICATED", Some(challenge(None, ""))),
-            Self::InvalidRequest(m) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", Some(challenge(Some("invalid_request"), m))),
-            Self::InvalidToken(m) => (StatusCode::UNAUTHORIZED, "UNAUTHENTICATED", Some(challenge(Some("invalid_token"), m))),
+            Self::Missing => (
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHENTICATED",
+                Some(challenge(None, "")),
+            ),
+            Self::InvalidRequest(m) => (
+                StatusCode::BAD_REQUEST,
+                "BAD_REQUEST",
+                Some(challenge(Some("invalid_request"), m)),
+            ),
+            Self::InvalidToken(m) => (
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHENTICATED",
+                Some(challenge(Some("invalid_token"), m)),
+            ),
             Self::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "AUTH_UNAVAILABLE", None),
         };
         let body = serde_json::json!({ "errors": [{ "message": message, "extensions": { "code": code } }] });
@@ -164,14 +200,20 @@ impl Authenticator {
                 Keys::Jwks(jwks)
             }
         };
-        Ok(Some(Arc::new(Self { config: config.clone(), algorithms: checked.algorithms, keys })))
+        Ok(Some(Arc::new(Self {
+            config: config.clone(),
+            algorithms: checked.algorithms,
+            keys,
+        })))
     }
 
     /// The role and settings a request runs with.
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<AuthSessionContext, AuthError> {
         let Some(token) = bearer_token(headers)? else {
             return match &self.config.roles.anonymous {
-                Some(role) => Ok(AuthSessionContext { settings: vec![("role".to_string(), role.clone())] }),
+                Some(role) => Ok(AuthSessionContext {
+                    settings: vec![("role".to_string(), role.clone())],
+                }),
                 None => Err(AuthError::Missing),
             };
         };
@@ -181,15 +223,25 @@ impl Authenticator {
 
     /// The claims of a valid token.
     async fn verify(&self, token: &str) -> Result<Map<String, Value>, AuthError> {
-        let header = jsonwebtoken::decode_header(token).map_err(|err| AuthError::InvalidToken(format!("malformed token: {err}")))?;
+        let header = jsonwebtoken::decode_header(token)
+            .map_err(|err| AuthError::InvalidToken(format!("malformed token: {err}")))?;
         if !self.algorithms.contains(&header.alg) {
-            return Err(AuthError::InvalidToken(format!("signature algorithm {:?} is not accepted", header.alg)));
+            return Err(AuthError::InvalidToken(format!(
+                "signature algorithm {:?} is not accepted",
+                header.alg
+            )));
         }
         if let Some(expected) = &self.config.token_type {
-            let typ = header.typ.as_deref().unwrap_or_default().to_ascii_lowercase();
+            let typ = header
+                .typ
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
             let expected = expected.to_ascii_lowercase();
             if typ != expected && typ != format!("application/{expected}") {
-                return Err(AuthError::InvalidToken(format!("token type must be `{expected}`")));
+                return Err(AuthError::InvalidToken(format!(
+                    "token type must be `{expected}`"
+                )));
             }
         }
         let keys = match &self.keys {
@@ -212,16 +264,26 @@ impl Authenticator {
                 Err(err) => return Err(AuthError::InvalidToken(describe(err.kind()))),
             }
         }
-        Err(AuthError::InvalidToken("the token's signature does not verify".to_string()))
+        Err(AuthError::InvalidToken(
+            "the token's signature does not verify".to_string(),
+        ))
     }
 
     /// The role and settings of verified `claims`: the configured role (claims never choose
     /// it), and the claims as settings.
     fn context(&self, claims: Map<String, Value>) -> AuthSessionContext {
         let session = &self.config.session_variables;
-        let mut settings: Vec<(String, String)> =
-            self.config.roles.authenticated.iter().map(|role| ("role".to_string(), role.clone())).collect();
-        settings.push((session.claims_setting.clone(), Value::Object(claims.clone()).to_string()));
+        let mut settings: Vec<(String, String)> = self
+            .config
+            .roles
+            .authenticated
+            .iter()
+            .map(|role| ("role".to_string(), role.clone()))
+            .collect();
+        settings.push((
+            session.claims_setting.clone(),
+            Value::Object(claims.clone()).to_string(),
+        ));
         if !session.prefix.is_empty() {
             for (name, value) in &claims {
                 // Setting names are identifiers: `https://example.com/roles` gets none
@@ -242,20 +304,30 @@ impl Authenticator {
 /// The access token of a request: `Authorization: Bearer <token>`, `None` without one.
 fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, AuthError> {
     let mut values = headers.get_all(header::AUTHORIZATION).iter();
-    let Some(value) = values.next() else { return Ok(None) };
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
     if values.next().is_some() {
-        return Err(AuthError::InvalidRequest("more than one Authorization header".to_string()));
+        return Err(AuthError::InvalidRequest(
+            "more than one Authorization header".to_string(),
+        ));
     }
-    let value = value.to_str().map_err(|_| AuthError::InvalidRequest("malformed Authorization header".to_string()))?;
+    let value = value
+        .to_str()
+        .map_err(|_| AuthError::InvalidRequest("malformed Authorization header".to_string()))?;
     let (scheme, token) = value.trim().split_once(' ').unwrap_or((value.trim(), ""));
     if !scheme.eq_ignore_ascii_case("bearer") {
-        return Err(AuthError::InvalidRequest(format!("unsupported authorization scheme `{scheme}`: send `Bearer <token>`")));
+        return Err(AuthError::InvalidRequest(format!(
+            "unsupported authorization scheme `{scheme}`: send `Bearer <token>`"
+        )));
     }
     let token = token.trim();
     // RFC 6750 b64token characters
     let b64token = |c: char| c.is_ascii_alphanumeric() || "-._~+/=".contains(c);
     if token.is_empty() || !token.chars().all(b64token) {
-        return Err(AuthError::InvalidRequest("malformed bearer token".to_string()));
+        return Err(AuthError::InvalidRequest(
+            "malformed bearer token".to_string(),
+        ));
     }
     Ok(Some(token))
 }
@@ -284,7 +356,10 @@ fn setting_value(value: &Value) -> String {
 
 fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// A setting name a custom setting can have: identifiers joined by dots, at least two.
@@ -329,7 +404,9 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
             Some(var) => match std::env::var(var) {
                 Ok(value) if !value.is_empty() => Some(value),
                 _ => {
-                    errors.push(format!("auth.secret: the environment variable `{var}` is not set"));
+                    errors.push(format!(
+                        "auth.secret: the environment variable `{var}` is not set"
+                    ));
                     None
                 }
             },
@@ -345,7 +422,10 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
             errors.push("auth: set `secret` or `jwks_uri`, not both".to_string());
         }
     } else if config.secret.is_none() {
-        for (key, url) in [("issuer", Some(&issuer)), ("jwks_uri", config.jwks_uri.as_ref())] {
+        for (key, url) in [
+            ("issuer", Some(&issuer)),
+            ("jwks_uri", config.jwks_uri.as_ref()),
+        ] {
             if let Some(url) = url.filter(|u| !u.is_empty()) {
                 if let Err(err) = check_url(url) {
                     errors.push(format!("auth.{key}: {err}"));
@@ -355,7 +435,11 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
     }
 
     let algorithms: Vec<Algorithm> = if config.algorithms.is_empty() {
-        if config.secret.is_some() { vec![Algorithm::HS256] } else { ASYMMETRIC.to_vec() }
+        if config.secret.is_some() {
+            vec![Algorithm::HS256]
+        } else {
+            ASYMMETRIC.to_vec()
+        }
     } else {
         config
             .algorithms
@@ -375,7 +459,9 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
             errors.push(format!("auth.algorithms: {alg:?} needs `secret`"));
         }
         if !hmac && config.secret.is_some() {
-            errors.push(format!("auth.algorithms: {alg:?} needs a key set, not `secret`"));
+            errors.push(format!(
+                "auth.algorithms: {alg:?} needs a key set, not `secret`"
+            ));
         }
     }
 
@@ -390,7 +476,10 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
         errors.push(format!("auth.session_variables.claims_setting: `{}` is not a setting name (like `request.jwt.claims`)", session.claims_setting));
     }
     if !session.prefix.is_empty() && !is_setting_name(&format!("{}x", session.prefix)) {
-        errors.push(format!("auth.session_variables.prefix: `{}` must be dotted identifiers ending in `.`", session.prefix));
+        errors.push(format!(
+            "auth.session_variables.prefix: `{}` must be dotted identifiers ending in `.`",
+            session.prefix
+        ));
     }
     for (path, setting) in &session.mappings {
         if !is_setting_name(setting) {
@@ -398,13 +487,24 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
         }
     }
 
-    if errors.is_empty() { Ok(Checked { issuer, secret, algorithms }) } else { Err(errors.join("\n")) }
+    if errors.is_empty() {
+        Ok(Checked {
+            issuer,
+            secret,
+            algorithms,
+        })
+    } else {
+        Err(errors.join("\n"))
+    }
 }
 
 /// Keys and metadata are fetched over HTTPS, except from this machine (development servers).
 fn check_url(url: &str) -> Result<reqwest::Url, String> {
     let parsed = reqwest::Url::parse(url).map_err(|err| format!("`{url}` is not a URL: {err}"))?;
-    let local = matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"));
+    let local = matches!(
+        parsed.host_str(),
+        Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+    );
     match parsed.scheme() {
         "https" => Ok(parsed),
         "http" if local => Ok(parsed),
@@ -457,8 +557,17 @@ struct Jwks {
 
 impl Jwks {
     fn new(issuer: String, configured_uri: Option<String>) -> Result<Self, String> {
-        let http = reqwest::Client::builder().timeout(FETCH_TIMEOUT).build().map_err(|err| format!("auth: HTTP client: {err}"))?;
-        Ok(Self { http, issuer, configured_uri, current: RwLock::new(Arc::new(KeySet::default())), refreshing: tokio::sync::Mutex::new((None, None)) })
+        let http = reqwest::Client::builder()
+            .timeout(FETCH_TIMEOUT)
+            .build()
+            .map_err(|err| format!("auth: HTTP client: {err}"))?;
+        Ok(Self {
+            http,
+            issuer,
+            configured_uri,
+            current: RwLock::new(Arc::new(KeySet::default())),
+            refreshing: tokio::sync::Mutex::new((None, None)),
+        })
     }
 
     fn snapshot(&self) -> Arc<KeySet> {
@@ -478,11 +587,15 @@ impl Jwks {
         }
         let set = self.snapshot();
         if set.fetched.is_none() {
-            return Err(AuthError::Unavailable("the authorization server's signing keys are unavailable".to_string()));
+            return Err(AuthError::Unavailable(
+                "the authorization server's signing keys are unavailable".to_string(),
+            ));
         }
         let found = set.candidates(header);
         if found.is_empty() {
-            return Err(AuthError::InvalidToken("the token is signed with an unknown key".to_string()));
+            return Err(AuthError::InvalidToken(
+                "the token is signed with an unknown key".to_string(),
+            ));
         }
         Ok(found)
     }
@@ -491,7 +604,11 @@ impl Jwks {
     /// (`force` ignores that).
     async fn refresh(&self, force: bool) -> Result<(), String> {
         let mut state = self.refreshing.lock().await;
-        if !force && state.1.is_some_and(|at| at.elapsed() < MIN_REFRESH_INTERVAL) {
+        if !force
+            && state
+                .1
+                .is_some_and(|at| at.elapsed() < MIN_REFRESH_INTERVAL)
+        {
             return Ok(());
         }
         state.1 = Some(Instant::now());
@@ -509,7 +626,10 @@ impl Jwks {
             return Err(format!("`{uri}` has no usable signing keys"));
         }
         tracing::info!(keys = keys.len(), %uri, "auth: loaded signing keys");
-        *self.current.write().unwrap() = Arc::new(KeySet { keys, fetched: Some(Instant::now()) });
+        *self.current.write().unwrap() = Arc::new(KeySet {
+            keys,
+            fetched: Some(Instant::now()),
+        });
         Ok(())
     }
 
@@ -522,7 +642,10 @@ impl Jwks {
         let path = issuer.path().trim_end_matches('/');
         let origin = issuer.origin().ascii_serialization();
         let candidates = [
-            format!("{}/.well-known/openid-configuration", self.issuer.trim_end_matches('/')),
+            format!(
+                "{}/.well-known/openid-configuration",
+                self.issuer.trim_end_matches('/')
+            ),
             format!("{origin}/.well-known/oauth-authorization-server{path}"),
         ];
         let mut failures = Vec::new();
@@ -535,21 +658,40 @@ impl Jwks {
                 }
             };
             if metadata.get("issuer").and_then(Value::as_str) != Some(self.issuer.as_str()) {
-                return Err(format!("`{url}` names another issuer than `{}`", self.issuer));
+                return Err(format!(
+                    "`{url}` names another issuer than `{}`",
+                    self.issuer
+                ));
             }
-            let uri = metadata.get("jwks_uri").and_then(Value::as_str).ok_or_else(|| format!("`{url}` has no `jwks_uri`"))?;
+            let uri = metadata
+                .get("jwks_uri")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("`{url}` has no `jwks_uri`"))?;
             check_url(uri)?;
             return Ok(uri.to_string());
         }
-        Err(format!("no authorization server metadata for `{}`: {}", self.issuer, failures.join("; ")))
+        Err(format!(
+            "no authorization server metadata for `{}`: {}",
+            self.issuer,
+            failures.join("; ")
+        ))
     }
 
     async fn fetch(&self, url: &str) -> Result<Value, String> {
-        let response = self.http.get(url).header(header::ACCEPT, "application/json").send().await.map_err(|err| format!("`{url}`: {err}"))?;
+        let response = self
+            .http
+            .get(url)
+            .header(header::ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(|err| format!("`{url}`: {err}"))?;
         if !response.status().is_success() {
             return Err(format!("`{url}`: HTTP {}", response.status()));
         }
-        let bytes = response.bytes().await.map_err(|err| format!("`{url}`: {err}"))?;
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|err| format!("`{url}`: {err}"))?;
         serde_json::from_slice(&bytes).map_err(|err| format!("`{url}`: not JSON: {err}"))
     }
 }
@@ -557,7 +699,10 @@ impl Jwks {
 /// The signature verification keys of a JWK Set; keys for encryption, of unsupported types
 /// or malformed are skipped.
 fn parse_jwks(body: &Value) -> Result<Vec<VerifyKey>, String> {
-    let keys = body.get("keys").and_then(Value::as_array).ok_or("the key set has no `keys`")?;
+    let keys = body
+        .get("keys")
+        .and_then(Value::as_array)
+        .ok_or("the key set has no `keys`")?;
     Ok(keys
         .iter()
         .filter_map(|raw| {
@@ -565,13 +710,21 @@ fn parse_jwks(body: &Value) -> Result<Vec<VerifyKey>, String> {
             if matches!(jwk.common.public_key_use, Some(PublicKeyUse::Encryption)) {
                 return None;
             }
-            let alg = jwk.common.key_algorithm.and_then(|a| Algorithm::try_from(a).ok());
+            let alg = jwk
+                .common
+                .key_algorithm
+                .and_then(|a| Algorithm::try_from(a).ok());
             let key = DecodingKey::from_jwk(&jwk).ok()?;
             let family = key.family();
             if family == AlgorithmFamily::Hmac {
                 return None;
             }
-            Some(VerifyKey { kid: jwk.common.key_id.clone(), alg, family, key })
+            Some(VerifyKey {
+                kid: jwk.common.key_id.clone(),
+                alg,
+                family,
+                key,
+            })
         })
         .collect())
 }
@@ -597,9 +750,15 @@ mod tests {
         headers.insert(header::AUTHORIZATION, "bearer abc.def.ghi".parse().unwrap());
         assert_eq!(bearer_token(&headers), Ok(Some("abc.def.ghi")));
         headers.insert(header::AUTHORIZATION, "Basic dXNlcjpwYXNz".parse().unwrap());
-        assert!(matches!(bearer_token(&headers), Err(AuthError::InvalidRequest(_))));
+        assert!(matches!(
+            bearer_token(&headers),
+            Err(AuthError::InvalidRequest(_))
+        ));
         headers.insert(header::AUTHORIZATION, "Bearer a b".parse().unwrap());
-        assert!(matches!(bearer_token(&headers), Err(AuthError::InvalidRequest(_))));
+        assert!(matches!(
+            bearer_token(&headers),
+            Err(AuthError::InvalidRequest(_))
+        ));
     }
 
     #[test]
@@ -610,22 +769,38 @@ mod tests {
         cfg.secret = Some("short".to_string());
         cfg.algorithms = vec!["RS256".to_string(), "none".to_string()];
         cfg.session_variables.claims_setting = "claims".to_string();
-        let Err(err) = check(&cfg) else { panic!("accepted") };
-        for expected in ["auth.issuer", "auth.audience", "32 bytes", "RS256 needs a key set", "unknown algorithm `none`", "claims_setting"] {
+        let Err(err) = check(&cfg) else {
+            panic!("accepted")
+        };
+        for expected in [
+            "auth.issuer",
+            "auth.audience",
+            "32 bytes",
+            "RS256 needs a key set",
+            "unknown algorithm `none`",
+            "claims_setting",
+        ] {
             assert!(err.contains(expected), "missing `{expected}` in:\n{err}");
         }
         let mut cfg = config();
         cfg.secret = None;
         cfg.jwks_uri = Some("http://keys.example.com/jwks".to_string());
-        let Err(err) = check(&cfg) else { panic!("accepted") };
+        let Err(err) = check(&cfg) else {
+            panic!("accepted")
+        };
         assert!(err.contains("must use https"), "{err}");
     }
 
     #[test]
     fn claims_by_name_or_path() {
-        let claims: Map<String, Value> =
-            serde_json::from_value(serde_json::json!({ "https://example.com/role": "a", "app": { "role": "b" } })).unwrap();
-        assert_eq!(claim(&claims, "https://example.com/role"), Some(&Value::from("a")));
+        let claims: Map<String, Value> = serde_json::from_value(
+            serde_json::json!({ "https://example.com/role": "a", "app": { "role": "b" } }),
+        )
+        .unwrap();
+        assert_eq!(
+            claim(&claims, "https://example.com/role"),
+            Some(&Value::from("a"))
+        );
         assert_eq!(claim(&claims, "app.role"), Some(&Value::from("b")));
         assert_eq!(claim(&claims, "app.missing"), None);
     }

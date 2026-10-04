@@ -114,14 +114,27 @@ pub enum ValueOutput {
     Plain,
     Cast(String),
     /// Enum labels mapped to GraphQL enum values: `(label, value)` pairs; `list` for arrays.
-    Enum { values: Vec<(String, String)>, list: bool },
+    Enum {
+        values: Vec<(String, String)>,
+        list: bool,
+    },
     /// The selected attributes of a composite value (of each element, for `list`).
-    Composite { fields: Vec<CompositeField>, list: bool },
+    Composite {
+        fields: Vec<CompositeField>,
+        list: bool,
+    },
     /// SQL around the value, `{v}` standing for it (see `PgType::output_sql`); `list`
     /// applies it to each element.
-    Template { sql: String, list: bool },
+    Template {
+        sql: String,
+        list: bool,
+    },
     /// The selected parts of a range value (of each element, for `list`).
-    Range { fields: Vec<RangeField>, bound: Box<ValueOutput>, list: bool },
+    Range {
+        fields: Vec<RangeField>,
+        bound: Box<ValueOutput>,
+        list: bool,
+    },
 }
 
 /// One selected field of a range value.
@@ -135,7 +148,10 @@ pub struct RangeField {
 pub enum RangePart {
     /// The lower (`upper: false`) or upper bound: null when unbounded (or the range is
     /// empty), else its selected parts.
-    Bound { upper: bool, fields: Vec<(String, BoundPart)> },
+    Bound {
+        upper: bool,
+        fields: Vec<(String, BoundPart)>,
+    },
     IsEmpty,
     Typename(String),
 }
@@ -765,23 +781,35 @@ pub struct WriteNode {
 pub enum WriteNodeKind {
     Insert,
     /// An existing row a relation connects to, found by key (read only).
-    Lookup { key: Vec<WhereCondition> },
+    Lookup {
+        key: Vec<WhereCondition>,
+    },
     /// An existing row, updated: its `values` and the columns it takes from other rows
     /// (`refs`; connecting a row to a new parent sets its foreign key).
-    Update { key: Vec<WhereCondition> },
+    Update {
+        key: Vec<WhereCondition>,
+    },
     /// A junction row relating two rows, inserted unless they are already related.
     Link,
     /// `connectOrCreate` of a row a relation refers to: the row with `key`, or else a new
     /// row from the node's values.
-    LookupOrInsert { key: Vec<WhereCondition> },
+    LookupOrInsert {
+        key: Vec<WhereCondition>,
+    },
     /// `connectOrCreate` of a child: the row with `key` takes the parent's key (`refs`), or
     /// else a new row is created with it.
-    UpdateOrInsert { key: Vec<WhereCondition> },
+    UpdateOrInsert {
+        key: Vec<WhereCondition>,
+    },
     /// `update` of a child: the row with `key` that is related to the parent (its `refs`
     /// columns equal the parent's) gets the node's values.
-    UpdateRelated { key: Vec<WhereCondition> },
+    UpdateRelated {
+        key: Vec<WhereCondition>,
+    },
     /// `delete` of a child: the row with `key` related to the parent is deleted.
-    DeleteRelated { key: Vec<WhereCondition> },
+    DeleteRelated {
+        key: Vec<WhereCondition>,
+    },
     /// `update` of the row a to-one relation refers to: the row of this table whose columns
     /// the `from` row's foreign key holds (`columns`: `(column, from column)`).
     UpdateReferenced {
@@ -793,7 +821,10 @@ pub enum WriteNodeKind {
     /// `sync` of a child set (one `MERGE`): the parent's children are exactly `rows` —
     /// those whose key matches a child are updated, the others inserted, and the children
     /// no row matches deleted. `key`: the children's key `(column, cast)`.
-    Sync { rows: Vec<Vec<ColumnValue>>, key: Vec<(String, Option<String>)> },
+    Sync {
+        rows: Vec<Vec<ColumnValue>>,
+        key: Vec<(String, Option<String>)>,
+    },
     /// Rows related to another row, whose key columns their `refs` columns equal, are
     /// detached from it: children get NULL foreign keys, junction rows are deleted.
     Detach {
@@ -892,7 +923,10 @@ pub enum PayloadField {
     },
     /// Number of rows the statement(s) inserted, updated or deleted.
     AffectedCount { field_alias: String },
-    Typename { field_alias: String, type_name: String },
+    Typename {
+        field_alias: String,
+        type_name: String,
+    },
 }
 
 /// A Step represents a discrete planned operation in Graphile Crystal's compiler model.
@@ -901,15 +935,10 @@ pub enum PayloadField {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Step {
     /// A constant value.
-    Constant {
-        value: serde_json::Value,
-    },
+    Constant { value: serde_json::Value },
 
     /// A field access on a previous step.
-    FieldAccess {
-        source: StepId,
-        field_name: String,
-    },
+    FieldAccess { source: StepId, field_name: String },
 
     /// A planned PostgreSQL query (PgSelectStep).
     /// Emits single-query SQL with native JSON aggregation.

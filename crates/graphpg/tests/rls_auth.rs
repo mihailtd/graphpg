@@ -96,7 +96,10 @@ async fn setup_rls_db(client: &tokio_postgres::Client) {
             ('Diana Prince', 'diana', 'public_info', 'tenant-1'),
             ('Evan Wright', 'evan', 'cardiology', 'acme-2');
     "#;
-    client.batch_execute(sql).await.expect("Failed to setup rls_test database schema and policies");
+    client
+        .batch_execute(sql)
+        .await
+        .expect("Failed to setup rls_test database schema and policies");
 }
 
 static INIT: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
@@ -118,14 +121,23 @@ fn secret_config() -> AuthConfig {
         issuer: Some(ISSUER.to_string()),
         audience: vec![AUDIENCE.to_string()],
         secret: Some(JWT_SECRET.to_string()),
-        roles: RolesConfig { authenticated: Some("rls_app_user".to_string()), anonymous: Some("rls_anon_user".to_string()) },
-        session_variables: SessionVariablesConfig { mappings, ..SessionVariablesConfig::default() },
+        roles: RolesConfig {
+            authenticated: Some("rls_app_user".to_string()),
+            anonymous: Some("rls_anon_user".to_string()),
+        },
+        session_variables: SessionVariablesConfig {
+            mappings,
+            ..SessionVariablesConfig::default()
+        },
         ..AuthConfig::default()
     }
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 /// `claims` with an issuer, audience and expiry unless they set their own.
@@ -143,7 +155,12 @@ fn token(claims: serde_json::Value) -> String {
 }
 
 fn token_with(claims: serde_json::Value, secret: &[u8]) -> String {
-    jsonwebtoken::encode(&Header::new(Algorithm::HS256), &with_defaults(claims), &EncodingKey::from_secret(secret)).unwrap()
+    jsonwebtoken::encode(
+        &Header::new(Algorithm::HS256),
+        &with_defaults(claims),
+        &EncodingKey::from_secret(secret),
+    )
+    .unwrap()
 }
 
 fn bearer(token: &str) -> Vec<(&'static str, String)> {
@@ -161,37 +178,84 @@ async fn setup_app(auth_cfg: AuthConfig) -> axum::Router {
     });
     ensure_rls_db(&client).await;
 
-    let config = EngineConfig { schemas: vec!["rls_test".to_string()], ..EngineConfig::default() };
-    let catalog = CatalogInspector::new(&client).inspect_schema_with_config("rls_test", &config).await.expect("inspect rls_test");
+    let config = EngineConfig {
+        schemas: vec!["rls_test".to_string()],
+        ..EngineConfig::default()
+    };
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema_with_config("rls_test", &config)
+        .await
+        .expect("inspect rls_test");
     let schema = SchemaBuilder::build(&catalog).expect("Failed to build GraphQL schema");
-    let auth = Authenticator::new(&auth_cfg).await.expect("valid auth configuration");
+    let auth = Authenticator::new(&auth_cfg)
+        .await
+        .expect("valid auth configuration");
     let state = Arc::new(
-        ServerState::new(create_pool(common::db_url(), 5).expect("Failed to create pool"), schema, catalog, "rls_test".to_string(), Default::default())
-            .with_auth(auth),
+        ServerState::new(
+            create_pool(common::db_url(), 5).expect("Failed to create pool"),
+            schema,
+            catalog,
+            "rls_test".to_string(),
+            Default::default(),
+        )
+        .with_auth(auth),
     );
     create_router(state)
 }
 
 /// POSTs `body` to `uri`: status, `WWW-Authenticate` and the JSON (or raw text) body.
-async fn post(app: &axum::Router, uri: &str, body: serde_json::Value, headers: Vec<(&'static str, String)>) -> (StatusCode, String, serde_json::Value) {
-    let mut builder = Request::builder().method("POST").uri(uri).header(header::CONTENT_TYPE, "application/json");
+async fn post(
+    app: &axum::Router,
+    uri: &str,
+    body: serde_json::Value,
+    headers: Vec<(&'static str, String)>,
+) -> (StatusCode, String, serde_json::Value) {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json");
     for (k, v) in headers {
         builder = builder.header(k, v);
     }
-    let response = app.clone().oneshot(builder.body(Body::from(serde_json::to_vec(&body).unwrap())).unwrap()).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            builder
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let status = response.status();
-    let www = response.headers().get(header::WWW_AUTHENTICATE).map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+    let www = response
+        .headers()
+        .get(header::WWW_AUTHENTICATE)
+        .map(|v| v.to_str().unwrap().to_string())
+        .unwrap_or_default();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let json = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "raw": String::from_utf8_lossy(&bytes) }));
+    let json = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|_| json!({ "raw": String::from_utf8_lossy(&bytes) }));
     (status, www, json)
 }
 
-async fn documents(app: &axum::Router, headers: Vec<(&'static str, String)>) -> (StatusCode, String, serde_json::Value) {
-    post(app, "/graphql", json!({ "query": "{ documents { id name ownerId department tenantId } }" }), headers).await
+async fn documents(
+    app: &axum::Router,
+    headers: Vec<(&'static str, String)>,
+) -> (StatusCode, String, serde_json::Value) {
+    post(
+        app,
+        "/graphql",
+        json!({ "query": "{ documents { id name ownerId department tenantId } }" }),
+        headers,
+    )
+    .await
 }
 
 fn rows(res: &serde_json::Value) -> Vec<serde_json::Value> {
-    res["data"]["documents"].as_array().unwrap_or_else(|| panic!("no documents in {res}")).clone()
+    res["data"]["documents"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no documents in {res}"))
+        .clone()
 }
 
 #[tokio::test]
@@ -210,11 +274,21 @@ async fn test_rls_document_query_scoped_to_owner() {
 #[tokio::test]
 async fn test_rls_editor_department_policy() {
     let app = setup_app(secret_config()).await;
-    let (status, _, res) = documents(&app, bearer(&token(json!({ "sub": "dr_cardio", "role": "editor", "department": "cardiology" })))).await;
+    let (status, _, res) = documents(
+        &app,
+        bearer(&token(
+            json!({ "sub": "dr_cardio", "role": "editor", "department": "cardiology" }),
+        )),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let rows = rows(&res);
     // Alice, Charlie and Evan
-    assert_eq!(rows.len(), 3, "a cardiology editor sees every cardiology document");
+    assert_eq!(
+        rows.len(),
+        3,
+        "a cardiology editor sees every cardiology document"
+    );
     assert!(rows.iter().all(|p| p["department"] == "cardiology"));
 }
 
@@ -227,7 +301,9 @@ async fn test_rls_custom_session_variable_mapping_tenant_isolation() {
     let rows = rows(&res);
     // Alice and Charlie: Evan is in acme-2
     assert_eq!(rows.len(), 2);
-    assert!(rows.iter().all(|p| p["department"] == "cardiology" && p["tenantId"] == "tenant-1"));
+    assert!(rows
+        .iter()
+        .all(|p| p["department"] == "cardiology" && p["tenantId"] == "tenant-1"));
 }
 
 #[tokio::test]
@@ -236,7 +312,11 @@ async fn test_rls_anonymous_unauthenticated_request() {
     let (status, _, res) = documents(&app, vec![]).await;
     assert_eq!(status, StatusCode::OK);
     let rows = rows(&res);
-    assert_eq!(rows.len(), 1, "anonymous requests see public_info records only");
+    assert_eq!(
+        rows.len(),
+        1,
+        "anonymous requests see public_info records only"
+    );
     assert_eq!(rows[0]["name"], "Diana Prince");
 }
 
@@ -256,19 +336,53 @@ async fn test_claims_header_is_not_trusted() {
 async fn test_invalid_tokens_are_rejected_with_a_bearer_challenge() {
     let app = setup_app(secret_config()).await;
     let cases = [
-        ("forged", token_with(json!({ "sub": "alice" }), b"another-secret-of-at-least-32-bytes!!"), "signature"),
+        (
+            "forged",
+            token_with(
+                json!({ "sub": "alice" }),
+                b"another-secret-of-at-least-32-bytes!!",
+            ),
+            "signature",
+        ),
         ("malformed", "not-a-valid-jwt".to_string(), "malformed"),
-        ("expired", token(json!({ "sub": "alice", "exp": now() - 120 })), "expired"),
-        ("not yet valid", token(json!({ "sub": "alice", "nbf": now() + 120 })), "not valid yet"),
-        ("other audience", token(json!({ "sub": "alice", "aud": "another-api" })), "not for this API"),
-        ("other issuer", token(json!({ "sub": "alice", "iss": "https://elsewhere.test/" })), "another issuer"),
+        (
+            "expired",
+            token(json!({ "sub": "alice", "exp": now() - 120 })),
+            "expired",
+        ),
+        (
+            "not yet valid",
+            token(json!({ "sub": "alice", "nbf": now() + 120 })),
+            "not valid yet",
+        ),
+        (
+            "other audience",
+            token(json!({ "sub": "alice", "aud": "another-api" })),
+            "not for this API",
+        ),
+        (
+            "other issuer",
+            token(json!({ "sub": "alice", "iss": "https://elsewhere.test/" })),
+            "another issuer",
+        ),
         // `alg: none` (RFC 8725): never accepted
-        ("unsigned", format!("{}.{}.", b64(r#"{"alg":"none","typ":"JWT"}"#), b64(&with_defaults(json!({ "sub": "alice" })).to_string())), "malformed"),
+        (
+            "unsigned",
+            format!(
+                "{}.{}.",
+                b64(r#"{"alg":"none","typ":"JWT"}"#),
+                b64(&with_defaults(json!({ "sub": "alice" })).to_string())
+            ),
+            "malformed",
+        ),
     ];
     for (case, token, expected) in cases {
         let (status, www, res) = documents(&app, bearer(&token)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{case}: {res}");
-        assert!(www.starts_with("Bearer error=\"invalid_token\""), "{case}: {www}");
+        assert!(
+            www.starts_with("Bearer error=\"invalid_token\""),
+            "{case}: {www}"
+        );
         let message = res["errors"][0]["message"].as_str().unwrap();
         assert!(message.contains(expected), "{case}: {message}");
         assert!(res.get("data").is_none(), "{case}");
@@ -287,9 +401,16 @@ async fn test_requests_without_a_token_need_an_anonymous_role() {
     let app = setup_app(cfg).await;
     let (status, www, _) = documents(&app, vec![]).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(www, "Bearer", "RFC 6750 §3.1: no error code when the request had no token");
+    assert_eq!(
+        www, "Bearer",
+        "RFC 6750 §3.1: no error code when the request had no token"
+    );
 
-    let (status, www, _) = documents(&app, vec![("authorization", "Basic dXNlcjpwYXNz".to_string())]).await;
+    let (status, www, _) = documents(
+        &app,
+        vec![("authorization", "Basic dXNlcjpwYXNz".to_string())],
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(www.contains("invalid_request"), "{www}");
 }
@@ -298,7 +419,11 @@ async fn test_requests_without_a_token_need_an_anonymous_role() {
 async fn test_role_claims_are_data_not_database_roles() {
     let app = setup_app(secret_config()).await;
     // A token naming a privileged database role still runs as `rls_app_user`
-    let (status, _, res) = documents(&app, bearer(&token(json!({ "sub": "alice", "role": "postgres" })))).await;
+    let (status, _, res) = documents(
+        &app,
+        bearer(&token(json!({ "sub": "alice", "role": "postgres" }))),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{res}");
     let rows = rows(&res);
     assert_eq!(rows.len(), 1, "still restricted by the policies");
@@ -318,12 +443,20 @@ async fn test_rls_mutation_with_check_enforcement() {
 
     let (status, _, res) = post(&app, "/graphql", create("frank"), frank.clone()).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(res["data"]["createDocument"]["document"]["ownerId"], "frank", "{res}");
+    assert_eq!(
+        res["data"]["createDocument"]["document"]["ownerId"], "frank",
+        "{res}"
+    );
 
     // WITH CHECK: frank cannot create bob's record
     let (_, _, res) = post(&app, "/graphql", create("bob"), frank).await;
-    let message = res["errors"][0]["message"].as_str().unwrap_or_else(|| panic!("expected an error: {res}"));
-    assert!(message.contains("row-level security") || message.contains("violates"), "{message}");
+    let message = res["errors"][0]["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected an error: {res}"));
+    assert!(
+        message.contains("row-level security") || message.contains("violates"),
+        "{message}"
+    );
 }
 
 #[tokio::test]
@@ -351,34 +484,60 @@ async fn test_bulk_export_runs_as_the_token_role() {
     let (status, _, _) = post(&app, "/export", export.clone(), vec![]).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "exports need a token");
 
-    let (status, _, res) = post(&app, "/export", export, bearer(&token(json!({ "sub": "alice" })))).await;
+    let (status, _, res) = post(
+        &app,
+        "/export",
+        export,
+        bearer(&token(json!({ "sub": "alice" }))),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     // NDJSON: one line parses as JSON, several do not
     let lines: Vec<serde_json::Value> = match res["raw"].as_str() {
-        Some(raw) => raw.lines().map(|l| serde_json::from_str(l).unwrap()).collect(),
+        Some(raw) => raw
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect(),
         None => vec![res],
     };
-    assert_eq!(lines, vec![json!({ "name": "Alice Smith", "ownerId": "alice" })], "Row-Level Security applies to exports");
+    assert_eq!(
+        lines,
+        vec![json!({ "name": "Alice Smith", "ownerId": "alice" })],
+        "Row-Level Security applies to exports"
+    );
 }
 
 /// An authorization server on this machine: OpenID Connect discovery and a key set holding
 /// one Ed25519 key (`kid` `k1`). Returns its issuer and a token signer.
-async fn authorization_server() -> (String, impl Fn(&str, &[u8; 32], serde_json::Value) -> String) {
+async fn authorization_server() -> (
+    String,
+    impl Fn(&str, &[u8; 32], serde_json::Value) -> String,
+) {
     fn ed25519(seed: &[u8; 32]) -> EncodingKey {
         // PKCS#8 wrapping of an Ed25519 private key
-        let mut der = vec![0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20];
+        let mut der = vec![
+            0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22,
+            0x04, 0x20,
+        ];
         der.extend_from_slice(seed);
         EncodingKey::from_ed_der(&der)
     }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
-    let mut jwk = jsonwebtoken::jwk::Jwk::from_encoding_key(&ed25519(&[7; 32]), Algorithm::EdDSA).unwrap();
+    let mut jwk =
+        jsonwebtoken::jwk::Jwk::from_encoding_key(&ed25519(&[7; 32]), Algorithm::EdDSA).unwrap();
     jwk.common.key_id = Some("k1".to_string());
     let metadata = json!({ "issuer": issuer, "jwks_uri": format!("{issuer}/keys") });
     let keys = json!({ "keys": [jwk] });
     let router = axum::Router::new()
-        .route("/.well-known/openid-configuration", axum::routing::get(move || async move { axum::Json(metadata) }))
-        .route("/keys", axum::routing::get(move || async move { axum::Json(keys) }));
+        .route(
+            "/.well-known/openid-configuration",
+            axum::routing::get(move || async move { axum::Json(metadata) }),
+        )
+        .route(
+            "/keys",
+            axum::routing::get(move || async move { axum::Json(keys) }),
+        );
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
     let iss = issuer.clone();
@@ -400,14 +559,26 @@ async fn test_signing_keys_are_discovered_from_the_issuer() {
     cfg.issuer = Some(issuer);
     let app = setup_app(cfg).await;
 
-    let (status, _, res) = documents(&app, bearer(&sign("k1", &[7; 32], json!({ "sub": "alice" })))).await;
+    let (status, _, res) = documents(
+        &app,
+        bearer(&sign("k1", &[7; 32], json!({ "sub": "alice" }))),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{res}");
     assert_eq!(rows(&res)[0]["ownerId"], "alice");
 
     // Signed by a key the authorization server does not publish
-    let (status, _, res) = documents(&app, bearer(&sign("k2", &[9; 32], json!({ "sub": "alice" })))).await;
+    let (status, _, res) = documents(
+        &app,
+        bearer(&sign("k2", &[9; 32], json!({ "sub": "alice" }))),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{res}");
     // Its `kid` claiming the published key does not help
-    let (status, _, _) = documents(&app, bearer(&sign("k1", &[9; 32], json!({ "sub": "alice" })))).await;
+    let (status, _, _) = documents(
+        &app,
+        bearer(&sign("k1", &[9; 32], json!({ "sub": "alice" }))),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

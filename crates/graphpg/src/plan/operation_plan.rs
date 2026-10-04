@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use super::step::{Step, StepId};
+use std::collections::HashMap;
 
 /// OperationPlan holds the execution DAG for a GraphQL operation.
 #[derive(Debug, Default, Clone)]

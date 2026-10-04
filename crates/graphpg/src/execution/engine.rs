@@ -1,9 +1,10 @@
 use crate::catalog::pg_array_literal;
 use crate::compiler::{
-    CompiledMutation, CompiledOperation, CompiledQuery, CompiledStatement, ParamSource, SqlCompiler, ValueRef, WriteContext,
+    CompiledMutation, CompiledOperation, CompiledQuery, CompiledStatement, ParamSource,
+    SqlCompiler, ValueRef, WriteContext,
 };
-use std::collections::HashMap;
 use crate::plan::OperationPlan;
+use std::collections::HashMap;
 use thiserror::Error;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::types::ToSql;
@@ -49,7 +50,9 @@ impl ExecutionError {
             ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => e.code(),
             _ => None,
         };
-        code.is_some_and(|c| *c == SqlState::T_R_SERIALIZATION_FAILURE || *c == SqlState::T_R_DEADLOCK_DETECTED)
+        code.is_some_and(|c| {
+            *c == SqlState::T_R_SERIALIZATION_FAILURE || *c == SqlState::T_R_DEADLOCK_DETECTED
+        })
     }
 }
 
@@ -91,7 +94,10 @@ pub const MAX_CACHED_STATEMENTS: usize = 512;
 pub trait Connection: Sync {
     fn client(&self) -> &Client;
 
-    fn prepare(&self, sql: &str) -> impl std::future::Future<Output = Result<Statement, tokio_postgres::Error>> + Send;
+    fn prepare(
+        &self,
+        sql: &str,
+    ) -> impl std::future::Future<Output = Result<Statement, tokio_postgres::Error>> + Send;
 
     /// Whether a transaction may be open on the connection (then the engine nests in it with
     /// a savepoint instead of committing or rolling back the caller's transaction).
@@ -151,7 +157,10 @@ impl Scope {
             return Ok(Self::Transaction);
         }
         // SAVEPOINT fails outside a transaction block: then start one
-        match client.batch_execute(&format!("SAVEPOINT {SAVEPOINT}")).await {
+        match client
+            .batch_execute(&format!("SAVEPOINT {SAVEPOINT}"))
+            .await
+        {
             Ok(()) => Ok(Self::Savepoint),
             Err(err) if err.code() == Some(&SqlState::NO_ACTIVE_SQL_TRANSACTION) => {
                 client.batch_execute("BEGIN").await?;
@@ -164,7 +173,11 @@ impl Scope {
     async fn commit(self, client: &Client) -> Result<(), tokio_postgres::Error> {
         match self {
             Self::Transaction => client.batch_execute("COMMIT").await,
-            Self::Savepoint => client.batch_execute(&format!("RELEASE SAVEPOINT {SAVEPOINT}")).await,
+            Self::Savepoint => {
+                client
+                    .batch_execute(&format!("RELEASE SAVEPOINT {SAVEPOINT}"))
+                    .await
+            }
         }
     }
 
@@ -173,7 +186,9 @@ impl Scope {
             Self::Transaction => client.batch_execute("ROLLBACK").await,
             Self::Savepoint => {
                 client
-                    .batch_execute(&format!("ROLLBACK TO SAVEPOINT {SAVEPOINT}; RELEASE SAVEPOINT {SAVEPOINT}"))
+                    .batch_execute(&format!(
+                        "ROLLBACK TO SAVEPOINT {SAVEPOINT}; RELEASE SAVEPOINT {SAVEPOINT}"
+                    ))
                     .await
             }
         }
@@ -193,7 +208,11 @@ struct Written {
 
 impl Written {
     /// `statement` with its deferred parameters filled in.
-    fn resolve(&self, statement: &CompiledStatement, node_paths: &[String]) -> Result<CompiledQuery, ExecutionError> {
+    fn resolve(
+        &self,
+        statement: &CompiledStatement,
+        node_paths: &[String],
+    ) -> Result<CompiledQuery, ExecutionError> {
         let value = |v: &ValueRef| -> Result<Option<String>, ExecutionError> {
             match v {
                 ValueRef::Literal(text) => Ok(text.clone()),
@@ -208,7 +227,10 @@ impl Written {
             }
         };
         let array = |items: Vec<Option<String>>| {
-            let items = items.into_iter().map(|t| t.map_or(serde_json::Value::Null, serde_json::Value::String)).collect();
+            let items = items
+                .into_iter()
+                .map(|t| t.map_or(serde_json::Value::Null, serde_json::Value::String))
+                .collect();
             match pg_array_literal(&serde_json::Value::Array(items)) {
                 serde_json::Value::String(literal) => literal,
                 other => other.to_string(),
@@ -218,10 +240,19 @@ impl Written {
         for (i, source) in &statement.deferred {
             query.params[*i] = match source {
                 ParamSource::Value(v) => value(v)?.ok_or_else(|| {
-                    ExecutionError::Rejected("a nested row refers to a NULL value of the row it belongs to".to_string())
+                    ExecutionError::Rejected(
+                        "a nested row refers to a NULL value of the row it belongs to".to_string(),
+                    )
                 })?,
-                ParamSource::Array(items) => array(items.iter().map(value).collect::<Result<_, _>>()?),
-                ParamSource::Returned { column } => array(self.returned.iter().map(|row| row.get(*column).cloned().flatten()).collect()),
+                ParamSource::Array(items) => {
+                    array(items.iter().map(value).collect::<Result<_, _>>()?)
+                }
+                ParamSource::Returned { column } => array(
+                    self.returned
+                        .iter()
+                        .map(|row| row.get(*column).cloned().flatten())
+                        .collect(),
+                ),
             };
         }
         Ok(query)
@@ -230,7 +261,10 @@ impl Written {
 
 impl ExecutionEngine {
     /// Executes a planned operation and returns `{"data": ...}`.
-    pub async fn execute(client: &Client, plan: &OperationPlan) -> Result<serde_json::Value, ExecutionError> {
+    pub async fn execute(
+        client: &Client,
+        plan: &OperationPlan,
+    ) -> Result<serde_json::Value, ExecutionError> {
         let compiled = SqlCompiler::compile_operation(plan);
         let data = Self::run(client, &compiled, None).await?;
         Ok(serde_json::json!({ "data": data }))
@@ -273,7 +307,8 @@ impl ExecutionEngine {
     ) -> Result<serde_json::Value, ExecutionError> {
         let mut attempt = 1;
         loop {
-            let (result, owned) = Self::run_once(conn, compiled, explain.as_deref_mut(), auth_ctx).await;
+            let (result, owned) =
+                Self::run_once(conn, compiled, explain.as_deref_mut(), auth_ctx).await;
             match result {
                 Err(err) if owned && err.is_transient() && attempt < MAX_ATTEMPTS => {
                     tracing::debug!(attempt, error = %err, "retrying the operation after a transient failure");
@@ -327,12 +362,17 @@ impl ExecutionEngine {
                     Self::query_data(conn, query).await
                 }
                 .await;
-                let Some(scope) = scope else { return (result, owned) };
+                let Some(scope) = scope else {
+                    return (result, owned);
+                };
                 let ended = match &result {
                     Ok(_) => scope.commit(conn.client()).await,
                     Err(_) => scope.rollback(conn.client()).await,
                 };
-                (result.and_then(|data| ended.map(|()| data).map_err(Into::into)), owned)
+                (
+                    result.and_then(|data| ended.map(|()| data).map_err(Into::into)),
+                    owned,
+                )
             }
             CompiledOperation::Mutation(mutations) => {
                 let scope = match Scope::begin(conn).await {
@@ -356,13 +396,23 @@ impl ExecutionEngine {
                             if let Err(rollback) = scope.rollback(conn.client()).await {
                                 return (Err(rollback.into()), false);
                             }
-                            let err = ExecutionError::Mutation { field: mutation.field_alias.clone(), source: Box::new(err) };
+                            let err = ExecutionError::Mutation {
+                                field: mutation.field_alias.clone(),
+                                source: Box::new(err),
+                            };
                             return (Err(err), owned);
                         }
                     }
                 }
                 // A serialization failure can surface at commit, which ends the transaction
-                (scope.commit(conn.client()).await.map(|()| serde_json::Value::Object(data)).map_err(Into::into), owned)
+                (
+                    scope
+                        .commit(conn.client())
+                        .await
+                        .map(|()| serde_json::Value::Object(data))
+                        .map_err(Into::into),
+                    owned,
+                )
             }
         }
     }
@@ -387,15 +437,26 @@ impl ExecutionEngine {
             if let Some(lines) = explain.as_deref_mut() {
                 lines.extend(Self::explain_rolled_back(client, &query).await?);
             }
-            let failed = |error| ExecutionError::Write { error, context: write.statement.context.clone() };
+            let failed = |error| ExecutionError::Write {
+                error,
+                context: write.statement.context.clone(),
+            };
             let statement = conn.prepare(&query.sql).await?;
             let params = Self::param_refs(&query.params);
             let count = if write.returning.is_empty() && !write.collect {
                 client.execute(&statement, &params).await.map_err(failed)? as usize
             } else {
                 let rows = client.query(&statement, &params).await.map_err(failed)?;
-                let texts = |row: &tokio_postgres::Row| (0..row.len()).map(|c| row.get::<_, Option<String>>(c)).collect::<Vec<_>>();
-                if write.guard && rows.iter().any(|row| row.get::<_, Option<String>>(0).as_deref() != Some("true")) {
+                let texts = |row: &tokio_postgres::Row| {
+                    (0..row.len())
+                        .map(|c| row.get::<_, Option<String>>(c))
+                        .collect::<Vec<_>>()
+                };
+                if write.guard
+                    && rows
+                        .iter()
+                        .any(|row| row.get::<_, Option<String>>(0).as_deref() != Some("true"))
+                {
                     let context = write.statement.context.as_ref();
                     return Err(ExecutionError::StaleVersion {
                         schema: context.map(|c| c.schema.clone()).unwrap_or_default(),
@@ -408,7 +469,10 @@ impl ExecutionEngine {
                 // One row per node, in order (a row a trigger skipped leaves its nodes unknown)
                 if rows.len() == write.row_nodes.len() {
                     for (row, &node) in rows.iter().zip(&write.row_nodes) {
-                        written.nodes.insert(node, write.returning.iter().cloned().zip(texts(row)).collect());
+                        written.nodes.insert(
+                            node,
+                            write.returning.iter().cloned().zip(texts(row)).collect(),
+                        );
                     }
                 }
                 rows.len()
@@ -438,7 +502,10 @@ impl ExecutionEngine {
         }
         match Self::query_data(conn, &payload).await {
             Err(ExecutionError::Postgres(error)) if mutation.payload.context.is_some() => {
-                Err(ExecutionError::Write { error, context: mutation.payload.context.clone() })
+                Err(ExecutionError::Write {
+                    error,
+                    context: mutation.payload.context.clone(),
+                })
             }
             other => other,
         }
@@ -446,23 +513,37 @@ impl ExecutionEngine {
 
     /// The plan of a data-modifying statement, explained (and so executed) in a savepoint
     /// that is rolled back.
-    async fn explain_rolled_back(client: &Client, compiled: &CompiledQuery) -> Result<Vec<String>, ExecutionError> {
+    async fn explain_rolled_back(
+        client: &Client,
+        compiled: &CompiledQuery,
+    ) -> Result<Vec<String>, ExecutionError> {
         client.batch_execute("SAVEPOINT _explain").await?;
         let result = Self::explain(client, compiled).await;
-        client.batch_execute("ROLLBACK TO SAVEPOINT _explain").await?;
+        client
+            .batch_execute("ROLLBACK TO SAVEPOINT _explain")
+            .await?;
         result
     }
 
     /// Runs a statement returning one row with a `data` column, its estimates first.
-    async fn query_data<C: Connection>(conn: &C, query: &CompiledQuery) -> Result<serde_json::Value, ExecutionError> {
+    async fn query_data<C: Connection>(
+        conn: &C,
+        query: &CompiledQuery,
+    ) -> Result<serde_json::Value, ExecutionError> {
         let params = Self::resolved_params(conn.client(), query).await?;
         let statement = conn.prepare(&query.sql).await?;
-        let row = conn.client().query_one(&statement, &Self::param_refs(&params)).await?;
+        let row = conn
+            .client()
+            .query_one(&statement, &Self::param_refs(&params))
+            .await?;
         Ok(row.get("data"))
     }
 
     /// The parameters of `query`, its row count estimates filled in.
-    async fn resolved_params<'q>(client: &Client, query: &'q CompiledQuery) -> Result<std::borrow::Cow<'q, Vec<String>>, ExecutionError> {
+    async fn resolved_params<'q>(
+        client: &Client,
+        query: &'q CompiledQuery,
+    ) -> Result<std::borrow::Cow<'q, Vec<String>>, ExecutionError> {
         let mut params = std::borrow::Cow::Borrowed(&query.params);
         for estimate in &query.estimates {
             let rows = Self::estimate_rows(client, &estimate.query).await?;
@@ -474,20 +555,27 @@ impl ExecutionEngine {
     /// The planner's estimate of the rows a query returns (`EXPLAIN`, not run).
     async fn estimate_rows(client: &Client, query: &CompiledQuery) -> Result<u64, ExecutionError> {
         let sql = format!("EXPLAIN (FORMAT JSON) {}", query.sql);
-        let row = client.query_one(&sql, &Self::param_refs(&query.params)).await?;
+        let row = client
+            .query_one(&sql, &Self::param_refs(&query.params))
+            .await?;
         let plan: serde_json::Value = row.get(0);
         Ok(plan[0]["Plan"]["Plan Rows"].as_f64().unwrap_or(0.0).round() as u64)
     }
 
     /// The `EXPLAIN (ANALYZE, BUFFERS, SERIALIZE, MEMORY)` plan of a statement, as text lines.
     /// Callers roll back what ANALYZE executes.
-    pub async fn explain(client: &Client, compiled: &CompiledQuery) -> Result<Vec<String>, ExecutionError> {
+    pub async fn explain(
+        client: &Client,
+        compiled: &CompiledQuery,
+    ) -> Result<Vec<String>, ExecutionError> {
         let explain_sql = format!(
             "EXPLAIN (ANALYZE, BUFFERS, SERIALIZE, MEMORY, FORMAT TEXT) {}",
             compiled.sql.trim_end().trim_end_matches(';')
         );
         let params = Self::resolved_params(client, compiled).await?;
-        let rows = client.query(&explain_sql, &Self::param_refs(&params)).await?;
+        let rows = client
+            .query(&explain_sql, &Self::param_refs(&params))
+            .await?;
         Ok(rows.iter().map(|row| row.get::<_, String>(0)).collect())
     }
 

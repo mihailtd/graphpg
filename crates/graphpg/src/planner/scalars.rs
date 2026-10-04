@@ -45,7 +45,13 @@ fn shown(value: &Value) -> String {
 
 fn report(label: &str, value: &Value, expected: &str) -> Value {
     let message = format!("`{label}`: {} is not {expected}", shown(value));
-    ERRORS.with(|e| e.borrow_mut().push(InputError { path: Some(label.to_string()), message, code: "BAD_USER_INPUT".to_string() }));
+    ERRORS.with(|e| {
+        e.borrow_mut().push(InputError {
+            path: Some(label.to_string()),
+            message,
+            code: "BAD_USER_INPUT".to_string(),
+        })
+    });
     value.clone()
 }
 
@@ -61,7 +67,11 @@ fn field_code(label: &str, suffix: &str) -> String {
 pub(crate) fn check_limits(value: &Value, limits: &TypeLimits, label: &str) {
     let Value::String(text) = value else { return };
     let reject = |message: String, suffix: &str| {
-        let error = InputError { path: Some(label.to_string()), message, code: field_code(label, suffix) };
+        let error = InputError {
+            path: Some(label.to_string()),
+            message,
+            code: field_code(label, suffix),
+        };
         ERRORS.with(|e| e.borrow_mut().push(error));
     };
     if let Some(max) = limits.max_length {
@@ -69,7 +79,13 @@ pub(crate) fn check_limits(value: &Value, limits: &TypeLimits, label: &str) {
         let chars = text.chars().count();
         let excess_blank = text.chars().skip(max as usize).all(|c| c == ' ');
         if chars > max as usize && !excess_blank {
-            reject(format!("`{label}`: {} characters, more than the {max} allowed", chars), "TOO_LONG");
+            reject(
+                format!(
+                    "`{label}`: {} characters, more than the {max} allowed",
+                    chars
+                ),
+                "TOO_LONG",
+            );
         }
     }
     if let Some((precision, scale)) = limits.precision {
@@ -95,7 +111,11 @@ fn fits_numeric(text: &str, precision: u32, scale: i32) -> bool {
         None => (t, 0),
     };
     let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let mut digits: Vec<u8> = int.bytes().chain(frac.bytes()).filter(u8::is_ascii_digit).collect();
+    let mut digits: Vec<u8> = int
+        .bytes()
+        .chain(frac.bytes())
+        .filter(u8::is_ascii_digit)
+        .collect();
     // Position of the decimal point within `digits`
     let mut point = int.len() as i64 + exponent;
     while digits.first() == Some(&b'0') {
@@ -220,9 +240,15 @@ pub(crate) fn convert(pg_type: &PgType, value: Value, label: &str) -> Value {
 /// A GeoJSON geometry object, as its text (`ST_GeomFromGeoJSON` parses it).
 pub(crate) fn geojson(value: Value, label: &str) -> Value {
     match &value {
-        Value::Object(obj) if obj.get("type").is_some_and(Value::is_string) => Value::String(value.to_string()),
+        Value::Object(obj) if obj.get("type").is_some_and(Value::is_string) => {
+            Value::String(value.to_string())
+        }
         // Also accepted as its text
-        Value::String(text) if serde_json::from_str::<Value>(text).is_ok_and(|v| v.get("type").is_some()) => value,
+        Value::String(text)
+            if serde_json::from_str::<Value>(text).is_ok_and(|v| v.get("type").is_some()) =>
+        {
+            value
+        }
         _ => report(label, &value, "a GeoJSON geometry object (with a `type`)"),
     }
 }
@@ -230,25 +256,40 @@ pub(crate) fn geojson(value: Value, label: &str) -> Value {
 /// A range input `{ start: { value, inclusive }, end: { ... } }` as a range literal: a missing
 /// bound is unbounded, `inclusive` defaults to true for `start` and false for `end`.
 pub(crate) fn range_literal(element: &PgType, value: &Value, label: &str) -> Value {
-    let Value::Object(obj) = value else { return report(label, value, "a range") };
+    let Value::Object(obj) = value else {
+        return report(label, value, "a range");
+    };
     let bound = |name: &str, default_inclusive: bool| -> (String, bool) {
         match obj.get(name) {
             Some(Value::Object(b)) => {
-                let converted = convert(element, b.get("value").cloned().unwrap_or(Value::Null), &format!("{label}.{name}.value"));
+                let converted = convert(
+                    element,
+                    b.get("value").cloned().unwrap_or(Value::Null),
+                    &format!("{label}.{name}.value"),
+                );
                 let text = match converted {
                     Value::String(s) => s,
                     other => other.to_string(),
                 };
                 // Double quotes keep spaces, commas and colons of the value inside the bound
                 let quoted = format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""));
-                (quoted, b.get("inclusive").and_then(Value::as_bool).unwrap_or(default_inclusive))
+                (
+                    quoted,
+                    b.get("inclusive")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(default_inclusive),
+                )
             }
             _ => (String::new(), false),
         }
     };
     let (lower, lower_inc) = bound("start", true);
     let (upper, upper_inc) = bound("end", false);
-    Value::String(format!("{}{lower},{upper}{}", if lower_inc { '[' } else { '(' }, if upper_inc { ']' } else { ')' }))
+    Value::String(format!(
+        "{}{lower},{upper}{}",
+        if lower_inc { '[' } else { '(' },
+        if upper_inc { ']' } else { ')' }
+    ))
 }
 
 /// `[+-]digits[.digits][e[+-]digits]`
@@ -260,7 +301,11 @@ fn is_decimal(t: &str) -> bool {
     };
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let mantissa_ok = match mantissa.split_once('.') {
-        Some((int, frac)) => (digits(int) || int.is_empty()) && (digits(frac) || frac.is_empty()) && !(int.is_empty() && frac.is_empty()),
+        Some((int, frac)) => {
+            (digits(int) || int.is_empty())
+                && (digits(frac) || frac.is_empty())
+                && !(int.is_empty() && frac.is_empty())
+        }
         None => digits(mantissa),
     };
     mantissa_ok && exponent.is_none_or(digits)
@@ -268,13 +313,20 @@ fn is_decimal(t: &str) -> bool {
 
 /// ISO 8601 date and time without an offset (`T` or a space between them).
 fn local_datetime(t: &str) -> bool {
-    ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d %H:%M"]
-        .iter()
-        .any(|f| chrono::NaiveDateTime::parse_from_str(t, f).is_ok())
+    [
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M",
+    ]
+    .iter()
+    .any(|f| chrono::NaiveDateTime::parse_from_str(t, f).is_ok())
 }
 
 fn time_of_day(t: &str) -> bool {
-    ["%H:%M:%S%.f", "%H:%M"].iter().any(|f| chrono::NaiveTime::parse_from_str(t, f).is_ok())
+    ["%H:%M:%S%.f", "%H:%M"]
+        .iter()
+        .any(|f| chrono::NaiveTime::parse_from_str(t, f).is_ok())
 }
 
 /// `12:30:00+02:00` → (`12:30:00`, `+02:00`): a `Z` or `±HH[[:]MM]` suffix.
@@ -285,7 +337,9 @@ fn split_offset(t: &str) -> Option<(&str, &str)> {
     let at = t.rfind(['+', '-'])?;
     let (time, offset) = t.split_at(at);
     let digits: String = offset[1..].chars().filter(|c| *c != ':').collect();
-    let valid = matches!(digits.len(), 2 | 4) && digits.bytes().all(|b| b.is_ascii_digit()) && offset[1..].matches(':').count() <= 1;
+    let valid = matches!(digits.len(), 2 | 4)
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && offset[1..].matches(':').count() <= 1;
     valid.then_some((time, offset))
 }
 
@@ -293,7 +347,9 @@ fn split_offset(t: &str) -> Option<(&str, &str)> {
 /// fractional; `-P...` negates it all.
 fn is_iso_duration(t: &str) -> bool {
     let t = t.strip_prefix('-').unwrap_or(t);
-    let Some(rest) = t.strip_prefix('P') else { return false };
+    let Some(rest) = t.strip_prefix('P') else {
+        return false;
+    };
     let (date, time) = match rest.split_once('T') {
         Some((d, tm)) => (d, Some(tm)),
         None => (rest, None),
@@ -333,7 +389,9 @@ fn network(t: &str, network: bool) -> bool {
         Some((a, p)) => (a, Some(p)),
         None => (t, None),
     };
-    let Ok(ip) = addr.parse::<IpAddr>() else { return false };
+    let Ok(ip) = addr.parse::<IpAddr>() else {
+        return false;
+    };
     let bits = if ip.is_ipv4() { 32 } else { 128 };
     let prefix = match prefix.map(str::parse::<u32>) {
         None => bits,
@@ -353,7 +411,10 @@ fn network(t: &str, network: bool) -> bool {
 
 /// Hex bytes separated by `:` or `-` (or not at all): 6, or also 8 for `macaddr8`.
 fn mac_address(t: &str, eight: bool) -> bool {
-    let hex: String = t.chars().filter(|c| !matches!(c, ':' | '-' | '.')).collect();
+    let hex: String = t
+        .chars()
+        .filter(|c| !matches!(c, ':' | '-' | '.'))
+        .collect();
     let separators_ok = t.chars().filter(|c| matches!(c, ':' | '-' | '.')).count() <= 7;
     let sizes: &[usize] = if eight { &[12, 16] } else { &[12] };
     separators_ok && sizes.contains(&hex.len()) && hex.bytes().all(|b| b.is_ascii_hexdigit())
@@ -381,7 +442,11 @@ mod tests {
             ("0", 1, 0, true),
             ("5", 2, 2, false),
         ] {
-            assert_eq!(fits_numeric(text, p, s), fits, "{text} in numeric({p}, {s})");
+            assert_eq!(
+                fits_numeric(text, p, s),
+                fits,
+                "{text} in numeric({p}, {s})"
+            );
         }
     }
 
@@ -397,7 +462,16 @@ mod tests {
 
     #[test]
     fn durations() {
-        for ok in ["P1D", "PT2H", "P1Y2M3DT4H5M6.5S", "P2W", "-P1D", "P-1DT-2H", "PT0S", "P1.5D"] {
+        for ok in [
+            "P1D",
+            "PT2H",
+            "P1Y2M3DT4H5M6.5S",
+            "P2W",
+            "-P1D",
+            "P-1DT-2H",
+            "PT0S",
+            "P1.5D",
+        ] {
             assert!(is_iso_duration(ok), "{ok}");
         }
         for bad in ["P", "PT", "1 day", "P1H", "PT1D", "P1M1Y", "P1DT", "P1..5D"] {
@@ -411,7 +485,9 @@ mod tests {
         assert!(network("10.0.0.0/24", true) && !network("10.0.0.1/24", true));
         assert!(!network("10.0.0.1/33", false) && !network("nope", false));
         assert!(mac_address("08:00:2b:01:02:03", false) && mac_address("08-00-2b-01-02-03", false));
-        assert!(!mac_address("08:00:2b:01:02", false) && mac_address("08:00:2b:01:02:03:04:05", true));
+        assert!(
+            !mac_address("08:00:2b:01:02", false) && mac_address("08:00:2b:01:02:03:04:05", true)
+        );
     }
 
     #[test]
@@ -420,9 +496,17 @@ mod tests {
         assert_eq!(split_offset("12:30:00-05:30"), Some(("12:30:00", "-05:30")));
         assert_eq!(split_offset("12:30:00Z"), Some(("12:30:00", "Z")));
         assert_eq!(split_offset("12:30:00"), None);
-        let range = range_literal(&PgType::Int4, &serde_json::json!({ "start": { "value": 1 }, "end": { "value": 5 } }), "r");
+        let range = range_literal(
+            &PgType::Int4,
+            &serde_json::json!({ "start": { "value": 1 }, "end": { "value": 5 } }),
+            "r",
+        );
         assert_eq!(range, Value::String("[\"1\",\"5\")".to_string()));
-        let range = range_literal(&PgType::Int4, &serde_json::json!({ "end": { "value": 5, "inclusive": true } }), "r");
+        let range = range_literal(
+            &PgType::Int4,
+            &serde_json::json!({ "end": { "value": 5, "inclusive": true } }),
+            "r",
+        );
         assert_eq!(range, Value::String("(,\"5\"]".to_string()));
     }
 }

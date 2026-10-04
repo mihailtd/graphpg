@@ -5,16 +5,15 @@
 //! Uses the `interfaces_and_unions` fixture schema (tests/fixtures) plus a small
 //! `polymorphism_fixture` schema created on demand.
 mod common;
+use base64::Engine;
 use graphpg::catalog::{CatalogInspector, CtiKind};
 use graphpg::compiler::SqlCompiler;
 use graphpg::execution::ExecutionEngine;
 use graphpg::planner::QueryPlanner;
 use graphpg::schema::SchemaBuilder;
 use graphpg::DatabaseCatalog;
-use base64::Engine;
 use serde_json::json;
 use tokio_postgres::NoTls;
-
 
 /// Created once (serialised by an advisory lock, since tests run concurrently).
 const FIXTURE_SQL: &str = r#"
@@ -78,19 +77,37 @@ async fn connect() -> tokio_postgres::Client {
 }
 
 async fn ensure_fixture(client: &tokio_postgres::Client) {
-    client.execute("SELECT pg_advisory_lock(424242)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_lock(424242)", &[])
+        .await
+        .unwrap();
     let exists: bool = client
-        .query_one("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'polymorphism_fixture')", &[])
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'polymorphism_fixture')",
+            &[],
+        )
         .await
         .unwrap()
         .get(0);
     if !exists {
-        client.batch_execute(&format!("BEGIN; {FIXTURE_SQL} COMMIT;")).await.expect("fixture setup failed");
+        client
+            .batch_execute(&format!("BEGIN; {FIXTURE_SQL} COMMIT;"))
+            .await
+            .expect("fixture setup failed");
     }
-    client.execute("SELECT pg_advisory_unlock(424242)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_unlock(424242)", &[])
+        .await
+        .unwrap();
 }
 
-async fn setup(schema_name: &str) -> (tokio_postgres::Client, apollo_compiler::validation::Valid<apollo_compiler::Schema>, DatabaseCatalog) {
+async fn setup(
+    schema_name: &str,
+) -> (
+    tokio_postgres::Client,
+    apollo_compiler::validation::Valid<apollo_compiler::Schema>,
+    DatabaseCatalog,
+) {
     if schema_name == "interfaces_and_unions" {
         common::ensure_interfaces_fixture().await;
     }
@@ -98,7 +115,10 @@ async fn setup(schema_name: &str) -> (tokio_postgres::Client, apollo_compiler::v
     if schema_name == "polymorphism_fixture" {
         ensure_fixture(&client).await;
     }
-    let catalog = CatalogInspector::new(&client).inspect_schema(schema_name).await.expect("inspection failed");
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema(schema_name)
+        .await
+        .expect("inspection failed");
     let schema = SchemaBuilder::build(&catalog).expect("Failed to build valid GraphQL schema");
     (client, schema, catalog)
 }
@@ -110,11 +130,19 @@ async fn run(
     db_schema: &str,
     query: &str,
 ) -> serde_json::Value {
-    let doc = apollo_compiler::ExecutableDocument::parse_and_validate(schema, query, "q.graphql").expect("Query validation failed");
-    let plan = QueryPlanner::new(catalog, db_schema).plan(&doc).expect("Query planning failed");
+    let doc = apollo_compiler::ExecutableDocument::parse_and_validate(schema, query, "q.graphql")
+        .expect("Query validation failed");
+    let plan = QueryPlanner::new(catalog, db_schema)
+        .plan(&doc)
+        .expect("Query planning failed");
     println!("SQL:\n{}", SqlCompiler::compile(&plan).sql);
-    let result = ExecutionEngine::execute(client, &plan).await.expect("Execution failed");
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    let result = ExecutionEngine::execute(client, &plan)
+        .await
+        .expect("Execution failed");
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
     result["data"].clone()
 }
 
@@ -131,34 +159,59 @@ async fn test_detects_polymorphism_in_interfaces_and_unions() {
 
     // Enum-typed `type` column → STI. Variants would clash with other types (e.g. `Post`),
     // so the whole hierarchy is prefixed with the base type.
-    let sti = catalog.find_sti("interfaces_and_unions", "single_table_items").expect("STI not detected");
+    let sti = catalog
+        .find_sti("interfaces_and_unions", "single_table_items")
+        .expect("STI not detected");
     assert_eq!(sti.discriminator_column, "type");
     let names: Vec<&str> = sti.variants.iter().map(|v| v.type_name.as_str()).collect();
     assert_eq!(
         names,
-        ["SingleTableItemTopic", "SingleTableItemPost", "SingleTableItemDivider", "SingleTableItemChecklist", "SingleTableItemChecklistItem"]
+        [
+            "SingleTableItemTopic",
+            "SingleTableItemPost",
+            "SingleTableItemDivider",
+            "SingleTableItemChecklist",
+            "SingleTableItemChecklistItem"
+        ]
     );
     // NOT NULL discriminator: every row is one of the variants, no fallback type
     assert_eq!(sti.fallback_type_name, None);
 
     // Shared-primary-key subtype tables → table-per-type; they win over the `type` enum.
-    let cti = catalog.find_cti("interfaces_and_unions", "relational_items").expect("CTI not detected");
+    let cti = catalog
+        .find_cti("interfaces_and_unions", "relational_items")
+        .expect("CTI not detected");
     assert_eq!(cti.kind, CtiKind::SharedPrimaryKey);
     assert_eq!(cti.fallback_type_name, "GenericRelationalItem");
     let mut children: Vec<&str> = cti.children.iter().map(|c| c.table.as_str()).collect();
     children.sort();
     assert_eq!(
         children,
-        ["relational_checklist_items", "relational_checklists", "relational_dividers", "relational_posts", "relational_topics"]
+        [
+            "relational_checklist_items",
+            "relational_checklists",
+            "relational_dividers",
+            "relational_posts",
+            "relational_topics"
+        ]
     );
-    assert!(catalog.find_sti("interfaces_and_unions", "relational_items").is_none());
-    assert!(catalog.find_cti("interfaces_and_unions", "union_items").is_some());
+    assert!(catalog
+        .find_sti("interfaces_and_unions", "relational_items")
+        .is_none());
+    assert!(catalog
+        .find_cti("interfaces_and_unions", "union_items")
+        .is_some());
 
     // 1:1 extension tables with a single child and no discriminator are not subtypes
-    assert!(catalog.find_cti("interfaces_and_unions", "people").is_none());
+    assert!(catalog
+        .find_cti("interfaces_and_unions", "people")
+        .is_none());
 
     let sdl = SchemaBuilder::generate_sdl(&catalog);
-    assert!(sdl.contains("interface SingleTableItem implements Node {"), "{sdl}");
+    assert!(
+        sdl.contains("interface SingleTableItem implements Node {"),
+        "{sdl}"
+    );
     assert!(sdl.contains("type SingleTableItemTopic implements Node & SingleTableItem {"));
     assert!(sdl.contains("interface RelationalItem implements Node {"));
     assert!(sdl.contains("type RelationalTopic implements Node & RelationalItem {"));
@@ -170,22 +223,38 @@ async fn test_detects_polymorphism_in_interfaces_and_unions() {
 async fn test_detects_check_sti_inherits_and_ignores_partitions() {
     let (_client, _schema, catalog) = setup("polymorphism_fixture").await;
 
-    let sti = catalog.find_sti("polymorphism_fixture", "animals").expect("CHECK-based STI not detected");
+    let sti = catalog
+        .find_sti("polymorphism_fixture", "animals")
+        .expect("CHECK-based STI not detected");
     assert_eq!(sti.discriminator_column, "kind");
-    let names: Vec<(&str, &str)> = sti.variants.iter().map(|v| (v.discriminator_value.as_str(), v.type_name.as_str())).collect();
+    let names: Vec<(&str, &str)> = sti
+        .variants
+        .iter()
+        .map(|v| (v.discriminator_value.as_str(), v.type_name.as_str()))
+        .collect();
     assert_eq!(names, [("dog", "Dog"), ("cat", "Cat")]);
 
-    let cti = catalog.find_cti("polymorphism_fixture", "vehicles").expect("INHERITS not detected");
+    let cti = catalog
+        .find_cti("polymorphism_fixture", "vehicles")
+        .expect("INHERITS not detected");
     assert_eq!(cti.kind, CtiKind::Inherits);
     assert_eq!(cti.children.len(), 2);
 
-    assert!(catalog.find_cti("polymorphism_fixture", "readings").is_none(), "partitions are not subtypes");
+    assert!(
+        catalog
+            .find_cti("polymorphism_fixture", "readings")
+            .is_none(),
+        "partitions are not subtypes"
+    );
 
     let sdl = SchemaBuilder::generate_sdl(&catalog);
     assert!(sdl.contains("interface Animal implements Node {"), "{sdl}");
     assert!(sdl.contains("type Dog implements Node & Animal {"));
     assert!(sdl.contains("type Cat implements Node & Animal {"));
-    assert!(!sdl.contains("GenericAnimal"), "`kind` is NOT NULL, so no fallback type");
+    assert!(
+        !sdl.contains("GenericAnimal"),
+        "`kind` is NOT NULL, so no fallback type"
+    );
     assert!(sdl.contains("interface Vehicle implements Node {"));
     assert!(sdl.contains("type Car implements Node & Vehicle {"));
     assert!(sdl.contains("type GenericVehicle implements Node & Vehicle {"));
@@ -228,8 +297,14 @@ async fn test_sti_rows_resolve_to_concrete_types_everywhere() {
         ])
     );
     // Global IDs name the interface, so a row has a single ID and `node(id:)` resolves it
-    assert_eq!(data["tom"], json!({ "__typename": "Cat", "id": gid("Animal", 2) }));
-    assert_eq!(data["viaNode"], json!({ "__typename": "Dog", "id": gid("Animal", 1), "name": "Rex", "breed": "Beagle" }));
+    assert_eq!(
+        data["tom"],
+        json!({ "__typename": "Cat", "id": gid("Animal", 2) })
+    );
+    assert_eq!(
+        data["viaNode"],
+        json!({ "__typename": "Dog", "id": gid("Animal", 1), "name": "Rex", "breed": "Beagle" })
+    );
 }
 
 #[tokio::test]
@@ -297,7 +372,10 @@ async fn test_polymorphic_mutation_payload() {
     )
     .await;
     client.batch_execute("ROLLBACK").await.unwrap();
-    assert_eq!(data["createAnimal"]["animal"], json!({ "__typename": "Cat", "name": "Kit", "indoor": null }));
+    assert_eq!(
+        data["createAnimal"]["animal"],
+        json!({ "__typename": "Cat", "name": "Kit", "indoor": null })
+    );
 }
 
 /// Fields selected on the interface are planned for every concrete type, but the relation
@@ -306,12 +384,23 @@ async fn test_polymorphic_mutation_payload() {
 async fn test_interface_fields_join_once_per_row() {
     let (client, schema, catalog) = setup("polymorphism_fixture").await;
     let q = r#"{ animals { __typename name owner { name } notes { body } } }"#;
-    let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&schema, q, "q.graphql").unwrap();
-    let plan = QueryPlanner::new(&catalog, "polymorphism_fixture").plan(&doc).unwrap();
+    let doc =
+        apollo_compiler::ExecutableDocument::parse_and_validate(&schema, q, "q.graphql").unwrap();
+    let plan = QueryPlanner::new(&catalog, "polymorphism_fixture")
+        .plan(&doc)
+        .unwrap();
     let sql = SqlCompiler::compile(&plan).sql;
     println!("{sql}");
-    assert_eq!(sql.matches("\"polymorphism_fixture\".\"owners\"").count(), 1, "{sql}");
-    assert_eq!(sql.matches("LEFT JOIN LATERAL").count(), 1, "notes lateral once: {sql}");
+    assert_eq!(
+        sql.matches("\"polymorphism_fixture\".\"owners\"").count(),
+        1,
+        "{sql}"
+    );
+    assert_eq!(
+        sql.matches("LEFT JOIN LATERAL").count(),
+        1,
+        "notes lateral once: {sql}"
+    );
 
     let data = run(&client, &schema, &catalog, "polymorphism_fixture", q).await;
     let mut animals = data["animals"].as_array().unwrap().clone();
@@ -359,7 +448,10 @@ async fn test_cti_native_inherits() {
         ])
     );
     // The child table's own root returns the same object with the same ID
-    assert_eq!(data["cars"], json!([{ "__typename": "Car", "id": gid("Vehicle", 2), "name": "Mini", "seats": 4 }]));
+    assert_eq!(
+        data["cars"],
+        json!([{ "__typename": "Car", "id": gid("Vehicle", 2), "name": "Mini", "seats": 4 }])
+    );
 }
 
 #[tokio::test]

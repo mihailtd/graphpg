@@ -131,7 +131,9 @@ impl PgType {
             "int8range" => PgType::Int8Range,
             // `pg_type` names array types after their element with a leading underscore
             other => match other.strip_prefix('_') {
-                Some(elem) if !elem.is_empty() => PgType::Array(Box::new(PgType::from_sql_type(elem))),
+                Some(elem) if !elem.is_empty() => {
+                    PgType::Array(Box::new(PgType::from_sql_type(elem)))
+                }
                 _ => PgType::Other(other.to_string()),
             },
         }
@@ -173,7 +175,9 @@ impl PgType {
             PgType::TsVector => "tsvector",
             PgType::Geometry => "geometry",
             PgType::Geography => "geography",
-            PgType::Multirange(range) => return range.sql_cast().map(|r| r.replace("range", "multirange")),
+            PgType::Multirange(range) => {
+                return range.sql_cast().map(|r| r.replace("range", "multirange"))
+            }
             PgType::Jsonb => "jsonb",
             PgType::Citext => "citext",
             PgType::TstzRange => "tstzrange",
@@ -222,14 +226,23 @@ impl PgType {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            PgType::Int2 | PgType::Int4 | PgType::Int8 | PgType::Float4 | PgType::Float8 | PgType::Numeric
+            PgType::Int2
+                | PgType::Int4
+                | PgType::Int8
+                | PgType::Float4
+                | PgType::Float8
+                | PgType::Numeric
         )
     }
 
     pub fn is_range(&self) -> bool {
         matches!(
             self,
-            PgType::TstzRange | PgType::NumRange | PgType::DateRange | PgType::Int4Range | PgType::Int8Range
+            PgType::TstzRange
+                | PgType::NumRange
+                | PgType::DateRange
+                | PgType::Int4Range
+                | PgType::Int8Range
         )
     }
 
@@ -252,7 +265,8 @@ impl PgType {
 
     /// The range filter input of a range type (`IntRangeFilter`).
     pub fn range_filter_input_name(&self) -> Option<String> {
-        self.range_element().map(|(_, scalar)| format!("{scalar}RangeFilter"))
+        self.range_element()
+            .map(|(_, scalar)| format!("{scalar}RangeFilter"))
     }
 
     /// SQL turning a stored value `{v}` into its response value, for types whose JSON form
@@ -261,8 +275,12 @@ impl PgType {
     /// ISO 8601 duration, `vector` a list of floats.
     pub fn output_sql(&self) -> Option<&'static str> {
         Some(match self {
-            PgType::Float4 | PgType::Float8 => "CASE WHEN {v} IN ('NaN', 'Infinity', '-Infinity') THEN NULL ELSE {v} END",
-            PgType::Numeric => "CASE WHEN {v} IN ('NaN', 'Infinity', '-Infinity') THEN NULL ELSE {v}::text END",
+            PgType::Float4 | PgType::Float8 => {
+                "CASE WHEN {v} IN ('NaN', 'Infinity', '-Infinity') THEN NULL ELSE {v} END"
+            }
+            PgType::Numeric => {
+                "CASE WHEN {v} IN ('NaN', 'Infinity', '-Infinity') THEN NULL ELSE {v}::text END"
+            }
             PgType::Money => "{v}::numeric::text",
             PgType::Bytea => "translate(encode({v}, 'base64'), chr(10), '')",
             PgType::Vector => "{v}::text::json",
@@ -302,7 +320,9 @@ impl PgType {
     pub fn to_graphql_scalar(&self) -> &'static str {
         match self {
             PgType::Uuid => "UUID",
-            PgType::Text | PgType::Varchar | PgType::Char | PgType::Citext | PgType::Ltree => "String",
+            PgType::Text | PgType::Varchar | PgType::Char | PgType::Citext | PgType::Ltree => {
+                "String"
+            }
             PgType::Int2 | PgType::Int4 => "Int",
             PgType::Int8 => "BigInt",
             PgType::Bool => "Boolean",
@@ -351,7 +371,9 @@ impl PgType {
     /// past 2^53 in most clients) and types without a JSON form of their own as their text.
     pub fn output_cast(&self) -> Option<String> {
         match self {
-            PgType::Int8 | PgType::Numeric | PgType::Other(_) | PgType::TsVector => Some("text".to_string()),
+            PgType::Int8 | PgType::Numeric | PgType::Other(_) | PgType::TsVector => {
+                Some("text".to_string())
+            }
             PgType::Array(elem) => elem.output_cast().map(|c| format!("{c}[]")),
             _ => None,
         }
@@ -419,7 +441,12 @@ impl PgType {
     pub fn is_scalar_base(&self) -> bool {
         !matches!(
             self,
-            PgType::Array(_) | PgType::Composite(_) | PgType::Enum(_) | PgType::Other(_) | PgType::Vector | PgType::Multirange(_)
+            PgType::Array(_)
+                | PgType::Composite(_)
+                | PgType::Enum(_)
+                | PgType::Other(_)
+                | PgType::Vector
+                | PgType::Multirange(_)
         ) && !self.is_range()
     }
 }
@@ -440,7 +467,10 @@ pub struct EnumTypeMetadata {
 
 impl EnumTypeMetadata {
     pub fn label_of(&self, name: &str) -> Option<&str> {
-        self.values.iter().find(|v| v.name == name).map(|v| v.label.as_str())
+        self.values
+            .iter()
+            .find(|v| v.name == name)
+            .map(|v| v.label.as_str())
     }
 
     /// Labels and GraphQL values differ, so values need mapping in and out.
@@ -490,7 +520,10 @@ pub fn pg_array_literal(value: &serde_json::Value) -> serde_json::Value {
     fn element(v: &serde_json::Value) -> String {
         match v {
             serde_json::Value::Null => "NULL".to_string(),
-            serde_json::Value::Array(items) => format!("{{{}}}", items.iter().map(element).collect::<Vec<_>>().join(",")),
+            serde_json::Value::Array(items) => format!(
+                "{{{}}}",
+                items.iter().map(element).collect::<Vec<_>>().join(",")
+            ),
             serde_json::Value::String(s) => quote(s),
             other => quote(&other.to_string()),
         }
@@ -526,12 +559,18 @@ impl TypeLimits {
         }
         match pg_type {
             PgType::Array(elem) => Self::from_typmod(elem, typmod),
-            PgType::Varchar | PgType::Char => Self { max_length: Some((typmod - VARHDRSZ) as u32), precision: None },
+            PgType::Varchar | PgType::Char => Self {
+                max_length: Some((typmod - VARHDRSZ) as u32),
+                precision: None,
+            },
             PgType::Numeric => {
                 let t = typmod - VARHDRSZ;
                 // `NUMERIC_TYPMOD_SCALE`: an 11-bit signed scale (negative since PostgreSQL 15)
                 let scale = ((t & 0x7ff) ^ 1024) - 1024;
-                Self { max_length: None, precision: Some((((t >> 16) & 0xffff) as u32, scale)) }
+                Self {
+                    max_length: None,
+                    precision: Some((((t >> 16) & 0xffff) as u32, scale)),
+                }
             }
             _ => Self::default(),
         }
@@ -544,7 +583,10 @@ impl TypeLimits {
     /// Sentence documenting the limits, e.g. "At most 20 characters."
     pub fn describe(&self) -> Option<String> {
         if let Some(n) = self.max_length {
-            return Some(format!("At most {n} character{}.", if n == 1 { "" } else { "s" }));
+            return Some(format!(
+                "At most {n} character{}.",
+                if n == 1 { "" } else { "s" }
+            ));
         }
         let (p, s) = self.precision?;
         Some(match s {
@@ -636,7 +678,12 @@ impl ForeignKeyMetadata {
     /// `(column, foreign column)` pairs compared by equality, and the `(column, foreign
     /// column)` range pair of a temporal foreign key.
     pub fn split_period(&self) -> (Vec<ColumnPair>, Option<ColumnPair>) {
-        let mut pairs: Vec<(String, String)> = self.columns.iter().cloned().zip(self.foreign_columns.iter().cloned()).collect();
+        let mut pairs: Vec<(String, String)> = self
+            .columns
+            .iter()
+            .cloned()
+            .zip(self.foreign_columns.iter().cloned())
+            .collect();
         let period = if self.period { pairs.pop() } else { None };
         (pairs, period)
     }
@@ -870,11 +917,18 @@ impl TableMetadata {
         let con = self
             .constraints
             .iter()
-            .filter(|c| c.period && matches!(c.kind, ConstraintKind::PrimaryKey | ConstraintKind::Unique))
+            .filter(|c| {
+                c.period && matches!(c.kind, ConstraintKind::PrimaryKey | ConstraintKind::Unique)
+            })
             .min_by_key(|c| c.kind != ConstraintKind::PrimaryKey)?;
         let (period, entity) = con.columns.split_last()?;
-        let usable = self.get_column(period).is_some_and(|c| c.pg_type.is_range() && !c.omit);
-        usable.then(|| PeriodKey { entity: entity.to_vec(), period: period.clone() })
+        let usable = self
+            .get_column(period)
+            .is_some_and(|c| c.pg_type.is_range() && !c.omit);
+        usable.then(|| PeriodKey {
+            entity: entity.to_vec(),
+            period: period.clone(),
+        })
     }
 
     /// Rows have a version clients can pass back as `expectedVersion`: tables have `xmin`,
@@ -882,7 +936,12 @@ impl TableMetadata {
     pub fn has_row_version(&self) -> bool {
         !self.primary_key.is_empty()
             && (self.version_column.is_some()
-                || matches!(self.kind, RelationKind::Table | RelationKind::PartitionedTable | RelationKind::MaterializedView))
+                || matches!(
+                    self.kind,
+                    RelationKind::Table
+                        | RelationKind::PartitionedTable
+                        | RelationKind::MaterializedView
+                ))
     }
 
     /// GraphQL scalar of the `asOf` argument of fields reading this table's rows: the
@@ -911,14 +970,22 @@ impl TableMetadata {
         for col in self.visible_columns().filter(|c| c.pg_type.is_orderable()) {
             let name = col.order_by_name();
             let units: &[&'static str] = match col.pg_type {
-                PgType::Timestamp | PgType::TimestampTz => &["minute", "hour", "day", "week", "month", "quarter", "year"],
+                PgType::Timestamp | PgType::TimestampTz => {
+                    &["minute", "hour", "day", "week", "month", "quarter", "year"]
+                }
                 PgType::Date => &["week", "month", "quarter", "year"],
                 _ => &[],
             };
             // Timestamps also fall into bins of any width (`date_bin`): `<COLUMN>_BINNED`
-            let binned = matches!(col.pg_type, PgType::Timestamp | PgType::TimestampTz).then(|| (format!("{name}_BINNED"), Some("bin")));
+            let binned = matches!(col.pg_type, PgType::Timestamp | PgType::TimestampTz)
+                .then(|| (format!("{name}_BINNED"), Some("bin")));
             let values = std::iter::once((name.clone(), None))
-                .chain(units.iter().map(|u| (format!("{name}_TRUNCATED_TO_{}", u.to_uppercase()), Some(*u))))
+                .chain(units.iter().map(|u| {
+                    (
+                        format!("{name}_TRUNCATED_TO_{}", u.to_uppercase()),
+                        Some(*u),
+                    )
+                }))
                 .chain(binned);
             for (value, unit) in values {
                 if !out.iter().any(|(v, _, _)| *v == value) {
@@ -944,7 +1011,10 @@ impl TableMetadata {
         if self.primary_key.is_empty() {
             return None;
         }
-        self.primary_key.iter().map(|pk| self.get_column(pk)).collect()
+        self.primary_key
+            .iter()
+            .map(|pk| self.get_column(pk))
+            .collect()
     }
 
     /// Key fields string for Apollo Federation @key(fields: "...").
@@ -974,24 +1044,32 @@ impl TableMetadata {
 
     /// Columns of `<Type>` create and update inputs.
     pub fn writable_columns(&self) -> impl Iterator<Item = &ColumnMetadata> {
-        self.visible_columns().filter(|c| !c.is_generated && !c.readonly)
+        self.visible_columns()
+            .filter(|c| !c.is_generated && !c.readonly)
     }
 
     /// Exposed columns of a unique key, or `None` if one is hidden.
     fn exposed_key_columns(&self, key: &UniqueKey) -> Option<Vec<&ColumnMetadata>> {
-        key.columns.iter().map(|c| self.get_column(c).filter(|c| !c.omit)).collect()
+        key.columns
+            .iter()
+            .map(|c| self.get_column(c).filter(|c| !c.omit))
+            .collect()
     }
 
     /// Unique keys other than the primary key that rows can be looked up by
     /// (`userByEmail`): every column exposed and comparable by equality, and not named like
     /// the `input` argument its update field also takes.
     pub fn lookup_keys(&self) -> impl Iterator<Item = (&UniqueKey, Vec<&ColumnMetadata>)> {
-        let comparable =
-            |c: &ColumnMetadata| !matches!(c.pg_type, PgType::Json | PgType::Composite(_)) && c.field_name != "input";
-        self.unique_keys.iter().filter(|k| !k.is_primary).filter_map(move |k| {
-            let cols = self.exposed_key_columns(k)?;
-            cols.iter().all(|c| comparable(c)).then_some((k, cols))
-        })
+        let comparable = |c: &ColumnMetadata| {
+            !matches!(c.pg_type, PgType::Json | PgType::Composite(_)) && c.field_name != "input"
+        };
+        self.unique_keys
+            .iter()
+            .filter(|k| !k.is_primary)
+            .filter_map(move |k| {
+                let cols = self.exposed_key_columns(k)?;
+                cols.iter().all(|c| comparable(c)).then_some((k, cols))
+            })
     }
 
     /// Unique keys an insert can conflict on (`onConflict: { key: ... }`): every column
@@ -1000,7 +1078,9 @@ impl TableMetadata {
     pub fn conflict_keys(&self) -> impl Iterator<Item = (&UniqueKey, Vec<&ColumnMetadata>)> {
         self.unique_keys.iter().filter_map(move |k| {
             let cols = self.exposed_key_columns(k)?;
-            cols.iter().all(|c| !c.is_generated && !matches!(c.pg_type, PgType::Composite(_))).then_some((k, cols))
+            cols.iter()
+                .all(|c| !c.is_generated && !matches!(c.pg_type, PgType::Composite(_)))
+                .then_some((k, cols))
         })
     }
 
@@ -1021,7 +1101,11 @@ impl TableMetadata {
                 keys.push(pk.into_iter().map(|c| (c.field_name.clone(), c)).collect());
             }
         }
-        keys.extend(self.lookup_keys().map(|(_, cols)| cols.into_iter().map(|c| (c.field_name.clone(), c)).collect()));
+        keys.extend(self.lookup_keys().map(|(_, cols)| {
+            cols.into_iter()
+                .map(|c| (c.field_name.clone(), c))
+                .collect()
+        }));
         keys
     }
 
@@ -1043,7 +1127,10 @@ impl TableMetadata {
 
 /// `By<Field>And<Field>` suffix of the fields addressing a row by a unique key.
 pub fn unique_key_suffix(columns: &[&ColumnMetadata]) -> String {
-    let names: Vec<String> = columns.iter().map(|c| to_pascal_case(&c.field_name)).collect();
+    let names: Vec<String> = columns
+        .iter()
+        .map(|c| to_pascal_case(&c.field_name))
+        .collect();
     format!("By{}", names.join("And"))
 }
 
@@ -1053,16 +1140,27 @@ pub fn conflict_key_value(key: &UniqueKey, columns: &[&ColumnMetadata]) -> Strin
     if key.is_primary {
         return "PRIMARY_KEY".to_string();
     }
-    columns.iter().map(|c| c.order_by_name()).collect::<Vec<_>>().join("_AND_")
+    columns
+        .iter()
+        .map(|c| c.order_by_name())
+        .collect::<Vec<_>>()
+        .join("_AND_")
 }
 
 /// English plural of a PascalCase name (of its last word).
 pub fn pluralize(name: &str) -> String {
     let lower = name.to_ascii_lowercase();
-    let consonant_y = lower.ends_with('y') && !lower.ends_with("ay") && !lower.ends_with("ey") && !lower.ends_with("oy") && !lower.ends_with("uy");
+    let consonant_y = lower.ends_with('y')
+        && !lower.ends_with("ay")
+        && !lower.ends_with("ey")
+        && !lower.ends_with("oy")
+        && !lower.ends_with("uy");
     if consonant_y {
         format!("{}ies", &name[..name.len() - 1])
-    } else if ["s", "x", "z", "ch", "sh"].iter().any(|s| lower.ends_with(s)) {
+    } else if ["s", "x", "z", "ch", "sh"]
+        .iter()
+        .any(|s| lower.ends_with(s))
+    {
         format!("{name}es")
     } else {
         format!("{name}s")
@@ -1106,7 +1204,8 @@ impl FunctionArgument {
 
     /// Takes keys: a UUID, or named `*_id`. Typed `ID` so it accepts Relay IDs too.
     pub fn is_key_like(&self) -> bool {
-        self.pg_type == PgType::Uuid || (self.name.ends_with("_id") && !matches!(self.pg_type, PgType::Array(_)))
+        self.pg_type == PgType::Uuid
+            || (self.name.ends_with("_id") && !matches!(self.pg_type, PgType::Array(_)))
     }
 }
 
@@ -1188,7 +1287,8 @@ pub struct FunctionMetadata {
 impl FunctionMetadata {
     /// Whether the function is mounted as a field of `table`.
     pub fn is_mounted_on(&self, table: &TableMetadata) -> bool {
-        self.parent_table.as_deref() == Some(table.name.as_str()) && self.parent_schema.as_deref().unwrap_or(&self.schema) == table.schema
+        self.parent_table.as_deref() == Some(table.name.as_str())
+            && self.parent_schema.as_deref().unwrap_or(&self.schema) == table.schema
     }
 
     pub fn row_type_name(&self) -> String {
@@ -1202,7 +1302,10 @@ impl FunctionMetadata {
 
     /// Parent column bound to argument `arg` when the function is mounted.
     pub fn parent_column_for(&self, arg: &str) -> Option<&str> {
-        self.parent_arguments.iter().find(|(a, _)| a == arg).map(|(_, c)| c.as_str())
+        self.parent_arguments
+            .iter()
+            .find(|(a, _)| a == arg)
+            .map(|(_, c)| c.as_str())
     }
 }
 
@@ -1228,12 +1331,27 @@ pub struct ExclusiveArcMetadata {
 
 impl ExclusiveArcMetadata {
     /// `(arc_column, target_schema, target_table, target_key_column)` for every arc branch.
-    pub fn branches<'a>(&'a self, default_schema: &'a str) -> impl Iterator<Item = (&'a str, &'a str, &'a str, &'a str)> + 'a {
-        self.target_columns.iter().zip(&self.target_tables).enumerate().map(move |(i, (col, table))| {
-            let schema = self.target_schemas.get(i).map(String::as_str).unwrap_or(default_schema);
-            let key = self.target_key_columns.get(i).map(String::as_str).unwrap_or("id");
-            (col.as_str(), schema, table.as_str(), key)
-        })
+    pub fn branches<'a>(
+        &'a self,
+        default_schema: &'a str,
+    ) -> impl Iterator<Item = (&'a str, &'a str, &'a str, &'a str)> + 'a {
+        self.target_columns
+            .iter()
+            .zip(&self.target_tables)
+            .enumerate()
+            .map(move |(i, (col, table))| {
+                let schema = self
+                    .target_schemas
+                    .get(i)
+                    .map(String::as_str)
+                    .unwrap_or(default_schema);
+                let key = self
+                    .target_key_columns
+                    .get(i)
+                    .map(String::as_str)
+                    .unwrap_or("id");
+                (col.as_str(), schema, table.as_str(), key)
+            })
     }
 
     /// GraphQL type name of branch `i`'s target table.
@@ -1268,7 +1386,9 @@ pub struct ManyToManyMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchIndexKind {
     FuzzyTrgm,
-    Vector { opclass: String },
+    Vector {
+        opclass: String,
+    },
     Bm25,
     /// A `tsvector` document: a column, or the expression of an expression index
     /// (`to_tsvector('english', title || ' ' || body)`).
@@ -1305,7 +1425,14 @@ pub enum SearchMethod {
 }
 
 impl SearchMethod {
-    pub const ALL: [SearchMethod; 6] = [Self::Fuzzy, Self::Semantic, Self::Bm25, Self::Hybrid, Self::FullText, Self::Nearest];
+    pub const ALL: [SearchMethod; 6] = [
+        Self::Fuzzy,
+        Self::Semantic,
+        Self::Bm25,
+        Self::Hybrid,
+        Self::FullText,
+        Self::Nearest,
+    ];
 
     /// Suffix of the method's root field, after the table's list field.
     pub fn field_suffix(self) -> &'static str {
@@ -1329,7 +1456,10 @@ pub struct SearchLimits {
 
 impl Default for SearchLimits {
     fn default() -> Self {
-        Self { default: 10, max: 50 }
+        Self {
+            default: 10,
+            max: 50,
+        }
     }
 }
 
@@ -1426,7 +1556,11 @@ impl<'a> Polymorphism<'a> {
             Self::Sti(s) => &s.base_type_name,
             Self::Cti(c) => &c.base_type_name,
         };
-        if name.is_empty() { table_to_type_name(self.table()) } else { name.clone() }
+        if name.is_empty() {
+            table_to_type_name(self.table())
+        } else {
+            name.clone()
+        }
     }
 
     pub fn fallback_type_name(&self) -> Option<&'a str> {
@@ -1517,8 +1651,14 @@ pub enum MutationAction {
 }
 
 impl MutationAction {
-    pub const ALL: [MutationAction; 6] =
-        [Self::Create, Self::Update, Self::Delete, Self::CreateMany, Self::UpdateMany, Self::DeleteMany];
+    pub const ALL: [MutationAction; 6] = [
+        Self::Create,
+        Self::Update,
+        Self::Delete,
+        Self::CreateMany,
+        Self::UpdateMany,
+        Self::DeleteMany,
+    ];
 
     /// `CreateUserInput` / `CreateUserPayload` prefix.
     pub fn type_prefix(self) -> &'static str {
@@ -1555,7 +1695,11 @@ impl MutationAction {
     }
 
     fn subject(self, table: &TableMetadata) -> String {
-        if self.is_many() { table.plural_type_name() } else { table.type_name.clone() }
+        if self.is_many() {
+            table.plural_type_name()
+        } else {
+            table.type_name.clone()
+        }
     }
 }
 
@@ -1625,7 +1769,10 @@ pub enum TreeLink {
 pub enum OrderTarget {
     Column(String),
     /// A column of the row a to-one relation leads to (`AUTHOR_NAME`).
-    Related { rel: RelationInfo, column: String },
+    Related {
+        rel: RelationInfo,
+        column: String,
+    },
     /// The number of rows of a to-many relation (`MESSAGES_COUNT`).
     Count(RelationInfo),
     /// A computed column's value (index into `DatabaseCatalog::functions`).
@@ -1677,9 +1824,16 @@ impl CatalogIndex {
                 names.push((t.connection_field.clone(), false, true));
                 names.extend(t.all_connection_field.clone().map(|n| (n, false, true)));
             }
-            names.extend(catalog.unique_lookup_fields(t).into_iter().map(|(n, _)| (n, true, false)));
+            names.extend(
+                catalog
+                    .unique_lookup_fields(t)
+                    .into_iter()
+                    .map(|(n, _)| (n, true, false)),
+            );
             for (name, single, connection) in names {
-                roots.entry(name).or_insert_with(|| (t.name.clone(), single, connection));
+                roots
+                    .entry(name)
+                    .or_insert_with(|| (t.name.clone(), single, connection));
             }
             index
                 .type_tables
@@ -1701,9 +1855,10 @@ impl CatalogIndex {
             for field in catalog.table_mutation_fields(t) {
                 mutations.entry(field.name.clone()).or_insert(field);
             }
-            index
-                .object_fields
-                .insert((t.schema.clone(), t.name.clone()), catalog.build_object_fields(t));
+            index.object_fields.insert(
+                (t.schema.clone(), t.name.clone()),
+                catalog.build_object_fields(t),
+            );
         }
         for t in &catalog.tables {
             let roots = index.root_fields.get(&t.schema);
@@ -1711,14 +1866,22 @@ impl CatalogIndex {
             for method in catalog.search_methods(t) {
                 let name = format!("{}{}", t.list_field, method.field_suffix());
                 if !roots.is_some_and(|r| r.contains_key(&name)) {
-                    searches.entry(name).or_insert_with(|| (t.name.clone(), method));
+                    searches
+                        .entry(name)
+                        .or_insert_with(|| (t.name.clone(), method));
                 }
             }
         }
         let global = catalog.global_search_tables();
         for (t, _) in &global {
-            let taken = index.root_fields.get(&t.schema).is_some_and(|r| r.contains_key(GLOBAL_SEARCH_FIELD))
-                || index.search_fields.get(&t.schema).is_some_and(|r| r.contains_key(GLOBAL_SEARCH_FIELD));
+            let taken = index
+                .root_fields
+                .get(&t.schema)
+                .is_some_and(|r| r.contains_key(GLOBAL_SEARCH_FIELD))
+                || index
+                    .search_fields
+                    .get(&t.schema)
+                    .is_some_and(|r| r.contains_key(GLOBAL_SEARCH_FIELD));
             if !taken {
                 index.global_search_schemas.insert(t.schema.clone());
             }
@@ -1730,16 +1893,36 @@ impl CatalogIndex {
             }
             let name = f.field_name.clone();
             if f.volatile {
-                let taken = index.mutation_fields.get(&f.schema).is_some_and(|m| m.contains_key(&name));
+                let taken = index
+                    .mutation_fields
+                    .get(&f.schema)
+                    .is_some_and(|m| m.contains_key(&name));
                 if !taken {
-                    index.function_mutations.entry(f.schema.clone()).or_default().entry(name).or_insert(i);
+                    index
+                        .function_mutations
+                        .entry(f.schema.clone())
+                        .or_default()
+                        .entry(name)
+                        .or_insert(i);
                 }
             } else if f.returns != FunctionReturn::Void {
-                let taken = index.root_fields.get(&f.schema).is_some_and(|r| r.contains_key(&name))
-                    || index.search_fields.get(&f.schema).is_some_and(|r| r.contains_key(&name))
-                    || (name == GLOBAL_SEARCH_FIELD && index.global_search_schemas.contains(&f.schema));
+                let taken = index
+                    .root_fields
+                    .get(&f.schema)
+                    .is_some_and(|r| r.contains_key(&name))
+                    || index
+                        .search_fields
+                        .get(&f.schema)
+                        .is_some_and(|r| r.contains_key(&name))
+                    || (name == GLOBAL_SEARCH_FIELD
+                        && index.global_search_schemas.contains(&f.schema));
                 if !taken {
-                    index.function_queries.entry(f.schema.clone()).or_default().entry(name).or_insert(i);
+                    index
+                        .function_queries
+                        .entry(f.schema.clone())
+                        .or_default()
+                        .entry(name)
+                        .or_insert(i);
                 }
             }
         }
@@ -1805,14 +1988,21 @@ impl DatabaseCatalog {
     }
 
     /// Function behind a root query field.
-    pub fn resolve_function_query(&self, schema: &str, field_name: &str) -> Option<(usize, &FunctionMetadata)> {
+    pub fn resolve_function_query(
+        &self,
+        schema: &str,
+        field_name: &str,
+    ) -> Option<(usize, &FunctionMetadata)> {
         let i = *self.index().function_queries.get(schema)?.get(field_name)?;
         Some((i, &self.functions[i]))
     }
 
     /// Function behind a root query field in any schema.
-    pub fn resolve_function_query_any(&self, field_name: &str) -> Option<(usize, &FunctionMetadata)> {
-        for (_, funcs) in &self.index().function_queries {
+    pub fn resolve_function_query_any(
+        &self,
+        field_name: &str,
+    ) -> Option<(usize, &FunctionMetadata)> {
+        for funcs in self.index().function_queries.values() {
             if let Some(&i) = funcs.get(field_name) {
                 return Some((i, &self.functions[i]));
             }
@@ -1821,14 +2011,25 @@ impl DatabaseCatalog {
     }
 
     /// Function behind a root mutation field.
-    pub fn resolve_function_mutation(&self, schema: &str, field_name: &str) -> Option<(usize, &FunctionMetadata)> {
-        let i = *self.index().function_mutations.get(schema)?.get(field_name)?;
+    pub fn resolve_function_mutation(
+        &self,
+        schema: &str,
+        field_name: &str,
+    ) -> Option<(usize, &FunctionMetadata)> {
+        let i = *self
+            .index()
+            .function_mutations
+            .get(schema)?
+            .get(field_name)?;
         Some((i, &self.functions[i]))
     }
 
     /// Function behind a root mutation field in any schema.
-    pub fn resolve_function_mutation_any(&self, field_name: &str) -> Option<(usize, &FunctionMetadata)> {
-        for (_, funcs) in &self.index().function_mutations {
+    pub fn resolve_function_mutation_any(
+        &self,
+        field_name: &str,
+    ) -> Option<(usize, &FunctionMetadata)> {
+        for funcs in self.index().function_mutations.values() {
             if let Some(&i) = funcs.get(field_name) {
                 return Some((i, &self.functions[i]));
             }
@@ -1864,7 +2065,11 @@ impl DatabaseCatalog {
     }
 
     /// Table and method behind a search root field.
-    pub fn resolve_search_field(&self, schema: &str, field_name: &str) -> Option<(&str, SearchMethod)> {
+    pub fn resolve_search_field(
+        &self,
+        schema: &str,
+        field_name: &str,
+    ) -> Option<(&str, SearchMethod)> {
         let (table, method) = self.index().search_fields.get(schema)?.get(field_name)?;
         Some((table.as_str(), *method))
     }
@@ -1874,16 +2079,26 @@ impl DatabaseCatalog {
         self.index()
             .search_fields
             .iter()
-            .find_map(|(schema, fields)| fields.get(field_name).map(|(table, method)| (schema.as_str(), table.as_str(), *method)))
+            .find_map(|(schema, fields)| {
+                fields
+                    .get(field_name)
+                    .map(|(table, method)| (schema.as_str(), table.as_str(), *method))
+            })
     }
 
     /// Search root fields of `table`, in `SearchMethod::ALL` order.
     pub fn search_fields(&self, table: &TableMetadata) -> Vec<(String, SearchMethod)> {
         self.search_methods(table)
             .into_iter()
-            .map(|method| (format!("{}{}", table.list_field, method.field_suffix()), method))
+            .map(|method| {
+                (
+                    format!("{}{}", table.list_field, method.field_suffix()),
+                    method,
+                )
+            })
             .filter(|(name, method)| {
-                self.resolve_search_field(&table.schema, name) == Some((table.name.as_str(), *method))
+                self.resolve_search_field(&table.schema, name)
+                    == Some((table.name.as_str(), *method))
             })
             .collect()
     }
@@ -1902,7 +2117,9 @@ impl DatabaseCatalog {
                 SearchMethod::Semantic => !self.vector_indexes_for_table(schema, name).is_empty(),
                 SearchMethod::Bm25 => !self.bm25_indexes_for_table(schema, name).is_empty(),
                 SearchMethod::Hybrid => self.has_hybrid_search(schema, name),
-                SearchMethod::FullText => !self.full_text_indexes_for_table(schema, name).is_empty(),
+                SearchMethod::FullText => {
+                    !self.full_text_indexes_for_table(schema, name).is_empty()
+                }
                 SearchMethod::Nearest => !self.spatial_indexes_for_table(schema, name).is_empty(),
             })
             .collect()
@@ -1925,13 +2142,21 @@ impl DatabaseCatalog {
 
     /// Root query fields looking a row up by a unique key other than the primary key
     /// (`userByEmail`), with the key's columns.
-    pub fn unique_lookup_fields<'t>(&self, table: &'t TableMetadata) -> Vec<(String, Vec<&'t ColumnMetadata>)> {
+    pub fn unique_lookup_fields<'t>(
+        &self,
+        table: &'t TableMetadata,
+    ) -> Vec<(String, Vec<&'t ColumnMetadata>)> {
         if !table.operations.read {
             return Vec::new();
         }
         table
             .lookup_keys()
-            .map(|(_, cols)| (format!("{}{}", table.single_field, unique_key_suffix(&cols)), cols))
+            .map(|(_, cols)| {
+                (
+                    format!("{}{}", table.single_field, unique_key_suffix(&cols)),
+                    cols,
+                )
+            })
             .collect()
     }
 
@@ -1943,19 +2168,27 @@ impl DatabaseCatalog {
     pub fn nested_relations(&self, table: &TableMetadata) -> Vec<(String, RelationInfo)> {
         let mut out: Vec<(String, RelationInfo)> = Vec::new();
         for field in self.object_fields(&table.schema, &table.name) {
-            let FieldKind::Relation(rel) = &field.kind else { continue };
-            if out.iter().any(|(_, r)| r == rel) || table.writable_columns().any(|c| c.field_name == field.name) {
+            let FieldKind::Relation(rel) = &field.kind else {
+                continue;
+            };
+            if out.iter().any(|(_, r)| r == rel)
+                || table.writable_columns().any(|c| c.field_name == field.name)
+            {
                 continue;
             }
-            let Some(target) = self.find_table(&rel.target_schema, &rel.target_table) else { continue };
+            let Some(target) = self.find_table(&rel.target_schema, &rel.target_table) else {
+                continue;
+            };
             let usable = match &rel.junction {
                 Some(j) => {
-                    self.find_table(&j.junction_schema, &j.junction_table).is_some_and(|t| t.operations.create)
+                    self.find_table(&j.junction_schema, &j.junction_table)
+                        .is_some_and(|t| t.operations.create)
                         && (target.is_insertable() || target.is_connectable())
                 }
                 // Connecting existing children updates their foreign key
                 None if rel.is_many => {
-                    target.is_insertable() || (target.operations.update && !target.primary_key.is_empty())
+                    target.is_insertable()
+                        || (target.operations.update && !target.primary_key.is_empty())
                 }
                 None => target.is_insertable() || target.is_connectable(),
             };
@@ -1972,11 +2205,19 @@ impl DatabaseCatalog {
         let ops = table.operations;
         let writable = table.writable_columns().next().is_some();
         let has_pk = !table.primary_key.is_empty();
-        let lookups: Vec<Vec<&ColumnMetadata>> = table.lookup_keys().map(|(_, cols)| cols).collect();
+        let lookups: Vec<Vec<&ColumnMetadata>> =
+            table.lookup_keys().map(|(_, cols)| cols).collect();
         let mut out = Vec::new();
         let mut push = |action: MutationAction, key: &[&ColumnMetadata]| {
             out.push(MutationField {
-                name: action.field_name(table, &if key.is_empty() { String::new() } else { unique_key_suffix(key) }),
+                name: action.field_name(
+                    table,
+                    &if key.is_empty() {
+                        String::new()
+                    } else {
+                        unique_key_suffix(key)
+                    },
+                ),
                 table: table.name.clone(),
                 action,
                 unique_key: key.iter().map(|c| c.name.clone()).collect(),
@@ -2015,7 +2256,11 @@ impl DatabaseCatalog {
 
     /// Table whose GraphQL type is `type_name` (e.g. `OrderItem` -> `order_items`).
     pub fn table_for_type(&self, schema: &str, type_name: &str) -> Option<&str> {
-        self.index().type_tables.get(schema)?.get(type_name).map(String::as_str)
+        self.index()
+            .type_tables
+            .get(schema)?
+            .get(type_name)
+            .map(String::as_str)
     }
 
     /// Table whose GraphQL type is `type_name` across any schema: `(schema, table)`.
@@ -2039,7 +2284,9 @@ impl DatabaseCatalog {
 
     /// Field `name` of the object type of `(schema, table)`.
     pub fn object_field(&self, schema: &str, table: &str, name: &str) -> Option<&ObjectField> {
-        self.object_fields(schema, table).iter().find(|f| f.name == name)
+        self.object_fields(schema, table)
+            .iter()
+            .find(|f| f.name == name)
     }
 
     pub fn find_enum(&self, key: &str) -> Option<&EnumTypeMetadata> {
@@ -2102,23 +2349,40 @@ impl DatabaseCatalog {
     }
 
     pub fn find_table(&self, schema: &str, name: &str) -> Option<&TableMetadata> {
-        self.tables.iter().find(|t| t.schema == schema && t.name == name)
+        self.tables
+            .iter()
+            .find(|t| t.schema == schema && t.name == name)
     }
 
     /// Payload field holding the rows as they were before a write (`previousUser`,
     /// `previousUsers`), read with `RETURNING OLD` (PostgreSQL 18): updates, and creates that
     /// can upsert. `None` otherwise.
-    pub fn previous_field_name(&self, table: &TableMetadata, action: MutationAction, upsert: bool) -> Option<String> {
+    pub fn previous_field_name(
+        &self,
+        table: &TableMetadata,
+        action: MutationAction,
+        upsert: bool,
+    ) -> Option<String> {
         let applies = match action {
             MutationAction::Update | MutationAction::UpdateMany => true,
             MutationAction::Create | MutationAction::CreateMany => upsert,
             _ => false,
         };
-        (applies && self.server_version >= 180000).then(|| format!("previous{}", to_pascal_case(&action.payload_field_name(table))))
+        (applies && self.server_version >= 180000).then(|| {
+            format!(
+                "previous{}",
+                to_pascal_case(&action.payload_field_name(table))
+            )
+        })
     }
 
     /// Constraint `name` of `(schema, table)`.
-    pub fn find_constraint(&self, schema: &str, table: &str, name: &str) -> Option<(&TableMetadata, &ConstraintMetadata)> {
+    pub fn find_constraint(
+        &self,
+        schema: &str,
+        table: &str,
+        name: &str,
+    ) -> Option<(&TableMetadata, &ConstraintMetadata)> {
         let t = self.find_table(schema, table)?;
         Some((t, t.constraints.iter().find(|c| c.name == name)?))
     }
@@ -2141,13 +2405,22 @@ impl DatabaseCatalog {
         for col in table.writable_columns() {
             let field = &col.field_name;
             if !col.is_nullable {
-                push(Self::column_error_code(col, "REQUIRED"), format!("`{field}` is required (it cannot be null)."));
+                push(
+                    Self::column_error_code(col, "REQUIRED"),
+                    format!("`{field}` is required (it cannot be null)."),
+                );
             }
             if let Some(n) = col.limits.max_length {
-                push(Self::column_error_code(col, "TOO_LONG"), format!("`{field}` is longer than {n} characters."));
+                push(
+                    Self::column_error_code(col, "TOO_LONG"),
+                    format!("`{field}` is longer than {n} characters."),
+                );
             }
             if let Some((p, s)) = col.limits.precision {
-                push(Self::column_error_code(col, "OUT_OF_RANGE"), format!("`{field}` does not fit `numeric({p}, {s})`."));
+                push(
+                    Self::column_error_code(col, "OUT_OF_RANGE"),
+                    format!("`{field}` does not fit `numeric({p}, {s})`."),
+                );
             }
         }
         if table.has_row_version() {
@@ -2159,35 +2432,72 @@ impl DatabaseCatalog {
         let fields = |t: &TableMetadata, columns: &[String]| -> String {
             columns
                 .iter()
-                .map(|c| format!("`{}`", t.get_column(c).map(|c| c.field_name.as_str()).unwrap_or(c)))
+                .map(|c| {
+                    format!(
+                        "`{}`",
+                        t.get_column(c).map(|c| c.field_name.as_str()).unwrap_or(c)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         };
         for con in &table.constraints {
             let doc = match con.kind {
-                ConstraintKind::PrimaryKey => format!("A row with this primary key ({}) already exists.", fields(table, &con.columns)),
-                ConstraintKind::Unique => format!("Another row already has this {} (unique `{}`).", fields(table, &con.columns), con.name),
+                ConstraintKind::PrimaryKey => format!(
+                    "A row with this primary key ({}) already exists.",
+                    fields(table, &con.columns)
+                ),
+                ConstraintKind::Unique => format!(
+                    "Another row already has this {} (unique `{}`).",
+                    fields(table, &con.columns),
+                    con.name
+                ),
                 ConstraintKind::ForeignKey => {
-                    let target = con.references.as_ref().map(|(s, t)| self.type_name_of(s, t)).unwrap_or_default();
-                    format!("{} refers to a `{target}` that does not exist (`{}`).", fields(table, &con.columns), con.name)
+                    let target = con
+                        .references
+                        .as_ref()
+                        .map(|(s, t)| self.type_name_of(s, t))
+                        .unwrap_or_default();
+                    format!(
+                        "{} refers to a `{target}` that does not exist (`{}`).",
+                        fields(table, &con.columns),
+                        con.name
+                    )
                 }
                 ConstraintKind::Check => format!(
                     "Check `{}` failed: `{}`.",
                     con.name,
-                    con.check_expression().unwrap_or_else(|| con.definition.clone()).replace('`', "'")
+                    con.check_expression()
+                        .unwrap_or_else(|| con.definition.clone())
+                        .replace('`', "'")
                 ),
                 ConstraintKind::Exclusion => {
-                    format!("Conflicts with another row on {} (exclusion `{}`).", fields(table, &con.columns), con.name)
+                    format!(
+                        "Conflicts with another row on {} (exclusion `{}`).",
+                        fields(table, &con.columns),
+                        con.name
+                    )
                 }
             };
             push(con.code.clone(), doc);
         }
         for other in &self.tables {
-            for con in other.constraints.iter().filter(|c| c.kind == ConstraintKind::ForeignKey) {
-                if con.references.as_ref().is_some_and(|(s, t)| *s == table.schema && *t == table.name) {
+            for con in other
+                .constraints
+                .iter()
+                .filter(|c| c.kind == ConstraintKind::ForeignKey)
+            {
+                if con
+                    .references
+                    .as_ref()
+                    .is_some_and(|(s, t)| *s == table.schema && *t == table.name)
+                {
                     push(
                         con.referenced_code.clone(),
-                        format!("`{}` rows still refer to it (`{}`).", other.type_name, con.name),
+                        format!(
+                            "`{}` rows still refer to it (`{}`).",
+                            other.type_name, con.name
+                        ),
                     );
                 }
             }
@@ -2212,57 +2522,95 @@ impl DatabaseCatalog {
         let screaming = |columns: &[String], t: &TableMetadata| -> String {
             let names: Vec<String> = columns
                 .iter()
-                .map(|c| t.get_column(c).map(|c| c.order_by_name()).unwrap_or_else(|| enum_value_name(c)))
+                .map(|c| {
+                    t.get_column(c)
+                        .map(|c| c.order_by_name())
+                        .unwrap_or_else(|| enum_value_name(c))
+                })
                 .collect();
-            if names.is_empty() { "ROW".to_string() } else { names.join("_AND_") }
+            if names.is_empty() {
+                "ROW".to_string()
+            } else {
+                names.join("_AND_")
+            }
         };
         // Relation fields naming foreign keys: the to-one field, and the to-many field on
         // the referenced type
-        let relation_field = |t: &TableMetadata, con: &ConstraintMetadata, many: bool| -> Option<String> {
+        let relation_field = |t: &TableMetadata,
+                              con: &ConstraintMetadata,
+                              many: bool|
+         -> Option<String> {
             let (schema, table) = con.references.as_ref()?;
-            let pairs: Vec<(String, String)> = con.columns.iter().cloned().zip(self.fk_foreign_columns(t, con)).collect();
-            let (owner_schema, owner) = if many { (schema.as_str(), table.as_str()) } else { (t.schema.as_str(), t.name.as_str()) };
-            self.object_fields(owner_schema, owner).iter().find_map(|f| match &f.kind {
-                FieldKind::Relation(rel) if rel.is_many == many && rel.junction.is_none() => {
-                    let matches = if many {
-                        rel.target_schema == t.schema
-                            && rel.target_table == t.name
-                            && rel.columns == pairs
-                    } else {
-                        rel.target_schema == *schema
-                            && rel.target_table == *table
-                            && rel.columns.iter().map(|(a, b)| (b.clone(), a.clone())).collect::<Vec<_>>() == pairs
-                    };
-                    matches.then(|| f.name.clone())
-                }
-                _ => None,
-            })
+            let pairs: Vec<(String, String)> = con
+                .columns
+                .iter()
+                .cloned()
+                .zip(self.fk_foreign_columns(t, con))
+                .collect();
+            let (owner_schema, owner) = if many {
+                (schema.as_str(), table.as_str())
+            } else {
+                (t.schema.as_str(), t.name.as_str())
+            };
+            self.object_fields(owner_schema, owner)
+                .iter()
+                .find_map(|f| match &f.kind {
+                    FieldKind::Relation(rel) if rel.is_many == many && rel.junction.is_none() => {
+                        let matches = if many {
+                            rel.target_schema == t.schema
+                                && rel.target_table == t.name
+                                && rel.columns == pairs
+                        } else {
+                            rel.target_schema == *schema
+                                && rel.target_table == *table
+                                && rel
+                                    .columns
+                                    .iter()
+                                    .map(|(a, b)| (b.clone(), a.clone()))
+                                    .collect::<Vec<_>>()
+                                    == pairs
+                        };
+                        matches.then(|| f.name.clone())
+                    }
+                    _ => None,
+                })
         };
 
         let mut codes: Vec<(usize, usize, String, String)> = Vec::new();
         for (ti, t) in self.tables.iter().enumerate() {
             for (ci, con) in t.constraints.iter().enumerate() {
                 let base = match con.kind {
-                    ConstraintKind::PrimaryKey | ConstraintKind::Unique => format!("{}_TAKEN", screaming(&con.columns, t)),
+                    ConstraintKind::PrimaryKey | ConstraintKind::Unique => {
+                        format!("{}_TAKEN", screaming(&con.columns, t))
+                    }
                     ConstraintKind::ForeignKey => {
                         let name = relation_field(t, con, false)
                             .map(|f| enum_value_name(&f))
-                            .or_else(|| con.references.as_ref().map(|(s, tb)| enum_value_name(&self.type_name_of(s, tb))))
+                            .or_else(|| {
+                                con.references
+                                    .as_ref()
+                                    .map(|(s, tb)| enum_value_name(&self.type_name_of(s, tb)))
+                            })
                             .unwrap_or_else(|| screaming(&con.columns, t));
                         format!("{name}_NOT_FOUND")
                     }
-                    ConstraintKind::Check => match custom_constraint_name(&con.name, &t.name, "check") {
-                        Some(custom) => enum_value_name(custom),
-                        None => format!("{}_INVALID", screaming(&con.columns, t)),
-                    },
-                    ConstraintKind::Exclusion => match custom_constraint_name(&con.name, &t.name, "excl") {
-                        Some(custom) => enum_value_name(custom),
-                        None => format!("{}_CONFLICT", screaming(&con.columns, t)),
-                    },
+                    ConstraintKind::Check => {
+                        match custom_constraint_name(&con.name, &t.name, "check") {
+                            Some(custom) => enum_value_name(custom),
+                            None => format!("{}_INVALID", screaming(&con.columns, t)),
+                        }
+                    }
+                    ConstraintKind::Exclusion => {
+                        match custom_constraint_name(&con.name, &t.name, "excl") {
+                            Some(custom) => enum_value_name(custom),
+                            None => format!("{}_CONFLICT", screaming(&con.columns, t)),
+                        }
+                    }
                 };
                 let referenced = match con.kind {
                     ConstraintKind::ForeignKey => {
-                        let name = relation_field(t, con, true).unwrap_or_else(|| t.plural_type_name());
+                        let name =
+                            relation_field(t, con, true).unwrap_or_else(|| t.plural_type_name());
                         format!("REFERENCED_BY_{}", enum_value_name(&name))
                     }
                     _ => String::new(),
@@ -2271,13 +2619,21 @@ impl DatabaseCatalog {
             }
         }
         // Enum values cannot be `true`, `false` or `null`
-        let valid = |code: String| if matches!(code.as_str(), "TRUE" | "FALSE" | "NULL") { format!("{code}_VIOLATED") } else { code };
+        let valid = |code: String| {
+            if matches!(code.as_str(), "TRUE" | "FALSE" | "NULL") {
+                format!("{code}_VIOLATED")
+            } else {
+                code
+            }
+        };
         for (ti, ci, base, referenced) in codes {
             let base = valid(base);
             let key = (self.tables[ti].schema.clone(), self.tables[ti].name.clone());
             let code = claim_name_with(taken.entry(key).or_default(), &base, "_");
             let referenced_code = match self.tables[ti].constraints[ci].references.clone() {
-                Some(target) if !referenced.is_empty() => claim_name_with(taken.entry(target).or_default(), &referenced, "_"),
+                Some(target) if !referenced.is_empty() => {
+                    claim_name_with(taken.entry(target).or_default(), &referenced, "_")
+                }
                 _ => String::new(),
             };
             let con = &mut self.tables[ti].constraints[ci];
@@ -2298,12 +2654,28 @@ impl DatabaseCatalog {
 
     /// Description of a column's field: its comment, then the limits of its type and the
     /// `CHECK` constraints on it alone (other than a closed value list, which is its enum).
-    pub fn column_description(&self, table: &TableMetadata, col: &ColumnMetadata) -> Option<String> {
-        let mut parts: Vec<String> = col.description.iter().map(|d| d.trim().to_string()).filter(|d| !d.is_empty()).collect();
+    pub fn column_description(
+        &self,
+        table: &TableMetadata,
+        col: &ColumnMetadata,
+    ) -> Option<String> {
+        let mut parts: Vec<String> = col
+            .description
+            .iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .collect();
         parts.extend(col.limits.describe());
-        for con in table.constraints.iter().filter(|c| c.kind == ConstraintKind::Check && c.columns == [col.name.clone()]) {
-            let is_enum = col.enum_key.as_deref() == Some(format!("check:{}.{}", table.name, col.name).as_str())
-                && con.check_expression().is_some_and(|e| e.contains(" = ANY (ARRAY[") || e.contains(" = '"));
+        for con in table
+            .constraints
+            .iter()
+            .filter(|c| c.kind == ConstraintKind::Check && c.columns == [col.name.clone()])
+        {
+            let is_enum = col.enum_key.as_deref()
+                == Some(format!("check:{}.{}", table.name, col.name).as_str())
+                && con
+                    .check_expression()
+                    .is_some_and(|e| e.contains(" = ANY (ARRAY[") || e.contains(" = '"));
             if let (false, Some(expr)) = (is_enum, con.check_expression()) {
                 parts.push(format!("Must satisfy `{}`.", expr.replace('`', "'")));
             }
@@ -2314,7 +2686,12 @@ impl DatabaseCatalog {
     /// Description of a table's type: its comment, then the `CHECK` constraints spanning
     /// several of its columns.
     pub fn table_description(&self, table: &TableMetadata) -> Option<String> {
-        let mut parts: Vec<String> = table.description.iter().map(|d| d.trim().to_string()).filter(|d| !d.is_empty()).collect();
+        let mut parts: Vec<String> = table
+            .description
+            .iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .collect();
         let checks: Vec<String> = table
             .constraints
             .iter()
@@ -2334,11 +2711,15 @@ impl DatabaseCatalog {
     }
 
     pub fn find_sti(&self, schema: &str, table: &str) -> Option<&StiMetadata> {
-        self.sti.iter().find(|s| s.schema == schema && s.table_name == table)
+        self.sti
+            .iter()
+            .find(|s| s.schema == schema && s.table_name == table)
     }
 
     pub fn find_cti(&self, schema: &str, table: &str) -> Option<&CtiMetadata> {
-        self.cti.iter().find(|c| c.schema == schema && c.parent_table == table)
+        self.cti
+            .iter()
+            .find(|c| c.schema == schema && c.parent_table == table)
     }
 
     /// Row polymorphism of a table. Table-per-type wins over a discriminator column, since
@@ -2351,7 +2732,10 @@ impl DatabaseCatalog {
 
     /// All polymorphic tables, CTI hierarchies first.
     pub fn polymorphisms(&self) -> impl Iterator<Item = Polymorphism<'_>> {
-        self.cti.iter().map(Polymorphism::Cti).chain(self.sti.iter().map(Polymorphism::Sti))
+        self.cti
+            .iter()
+            .map(Polymorphism::Cti)
+            .chain(self.sti.iter().map(Polymorphism::Sti))
     }
 
     /// CTI hierarchies `table` is a child of, in catalog order (the first parent provides
@@ -2359,7 +2743,12 @@ impl DatabaseCatalog {
     pub fn cti_parents_of(&self, schema: &str, table: &str) -> Vec<(&CtiMetadata, &CtiChild)> {
         self.cti
             .iter()
-            .filter_map(|c| c.children.iter().find(|ch| ch.schema == schema && ch.table == table).map(|ch| (c, ch)))
+            .filter_map(|c| {
+                c.children
+                    .iter()
+                    .find(|ch| ch.schema == schema && ch.table == table)
+                    .map(|ch| (c, ch))
+            })
             .collect()
     }
 
@@ -2377,7 +2766,11 @@ impl DatabaseCatalog {
 
     /// Concrete member types of an exclusive-arc union: a polymorphic target contributes its
     /// concrete types (GraphQL unions cannot contain interfaces).
-    pub fn arc_member_types(&self, arc: &ExclusiveArcMetadata, default_schema: &str) -> Vec<String> {
+    pub fn arc_member_types(
+        &self,
+        arc: &ExclusiveArcMetadata,
+        default_schema: &str,
+    ) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for (i, (_, schema, table, _)) in arc.branches(default_schema).enumerate() {
             let names = match self.find_polymorphism(schema, table) {
@@ -2469,7 +2862,11 @@ impl DatabaseCatalog {
                 }
             }
         }
-        for e in self.enums.iter_mut().filter(|e| !e.key.starts_with("check:")) {
+        for e in self
+            .enums
+            .iter_mut()
+            .filter(|e| !e.key.starts_with("check:"))
+        {
             if e.type_name.is_empty() {
                 e.type_name = to_pascal_case(&e.config_name);
             }
@@ -2508,12 +2905,19 @@ impl DatabaseCatalog {
         let is = |s: &str, t: &str| s == schema && t == table;
         self.tables.retain(|t| !is(&t.schema, &t.name));
         for t in &mut self.tables {
-            t.foreign_keys.retain(|fk| !is(&fk.foreign_schema, &fk.foreign_table));
+            t.foreign_keys
+                .retain(|fk| !is(&fk.foreign_schema, &fk.foreign_table));
         }
-        self.functions.retain(|f| f.parent_schema.as_deref().unwrap_or(&f.schema) != schema || f.parent_table.as_deref() != Some(table));
-        self.many_to_many.retain(|m| m.source_table != table && m.target_table != table);
-        self.exclusive_arcs.retain(|a| a.table_name != table && !a.target_tables.iter().any(|t| t == table));
-        self.search_indexes.retain(|i| !is(&i.table_schema, &i.table_name));
+        self.functions.retain(|f| {
+            f.parent_schema.as_deref().unwrap_or(&f.schema) != schema
+                || f.parent_table.as_deref() != Some(table)
+        });
+        self.many_to_many
+            .retain(|m| m.source_table != table && m.target_table != table);
+        self.exclusive_arcs
+            .retain(|a| a.table_name != table && !a.target_tables.iter().any(|t| t == table));
+        self.search_indexes
+            .retain(|i| !is(&i.table_schema, &i.table_name));
         self.sti.retain(|s| !is(&s.schema, &s.table_name));
         self.cti.retain(|c| !is(&c.schema, &c.parent_table));
         for c in &mut self.cti {
@@ -2535,25 +2939,34 @@ impl DatabaseCatalog {
     /// - Fallback concrete types are `Generic<Base>`.
     pub fn resolve_polymorphic_names(&mut self) {
         let tables = &self.tables;
-        let known = |schema: &str, name: &str| tables.iter().any(|t| t.schema == schema && t.name == name);
+        let known =
+            |schema: &str, name: &str| tables.iter().any(|t| t.schema == schema && t.name == name);
         self.cti.retain(|c| known(&c.schema, &c.parent_table));
         for c in &mut self.cti {
             c.children.retain(|ch| known(&ch.schema, &ch.table));
         }
         let is_child = |cti: &[CtiMetadata], schema: &str, table: &str| {
-            cti.iter().any(|c| c.children.iter().any(|ch| ch.schema == schema && ch.table == table))
+            cti.iter().any(|c| {
+                c.children
+                    .iter()
+                    .any(|ch| ch.schema == schema && ch.table == table)
+            })
         };
         let snapshot = self.cti.clone();
-        self.cti.retain(|c| !c.children.is_empty() && !is_child(&snapshot, &c.schema, &c.parent_table));
+        self.cti
+            .retain(|c| !c.children.is_empty() && !is_child(&snapshot, &c.schema, &c.parent_table));
         let cti = &self.cti;
         self.sti.retain(|s| {
             !s.variants.is_empty()
                 && known(&s.schema, &s.table_name)
-                && !cti.iter().any(|c| c.schema == s.schema && c.parent_table == s.table_name)
+                && !cti
+                    .iter()
+                    .any(|c| c.schema == s.schema && c.parent_table == s.table_name)
                 && !is_child(cti, &s.schema, &s.table_name)
         });
         let mut seen = HashSet::new();
-        self.sti.retain(|s| seen.insert((s.schema.clone(), s.table_name.clone())));
+        self.sti
+            .retain(|s| seen.insert((s.schema.clone(), s.table_name.clone())));
 
         let type_name = |schema: &str, table: &str| {
             tables
@@ -2578,14 +2991,24 @@ impl DatabaseCatalog {
                 .find(|t| t.schema == s.schema && t.name == s.table_name)
                 .and_then(|t| t.get_column(&s.discriminator_column))
                 .is_none_or(|c| c.is_nullable);
-            s.fallback_type_name = nullable.then(|| claim_name(&mut taken, &format!("Generic{}", base)));
+            s.fallback_type_name =
+                nullable.then(|| claim_name(&mut taken, &format!("Generic{}", base)));
 
-            let mut bare: Vec<String> = s.variants.iter().map(|v| graphql_type_name(&v.discriminator_value)).collect();
+            let mut bare: Vec<String> = s
+                .variants
+                .iter()
+                .map(|v| graphql_type_name(&v.discriminator_value))
+                .collect();
             let unique = bare.iter().collect::<HashSet<_>>().len() == bare.len();
             let prefix = !unique
-                || bare.iter().any(|n| taken.contains(n) || !n.starts_with(|c: char| c.is_ascii_alphabetic()));
+                || bare.iter().any(|n| {
+                    taken.contains(n) || !n.starts_with(|c: char| c.is_ascii_alphabetic())
+                });
             if prefix {
-                bare = bare.iter().map(|n| format!("{}{}", base, n.trim_start_matches('_'))).collect();
+                bare = bare
+                    .iter()
+                    .map(|n| format!("{}{}", base, n.trim_start_matches('_')))
+                    .collect();
             }
             for (v, name) in s.variants.iter_mut().zip(bare) {
                 v.type_name = claim_name(&mut taken, &name);
@@ -2597,7 +3020,12 @@ impl DatabaseCatalog {
                 .target_tables
                 .iter()
                 .enumerate()
-                .map(|(i, t)| type_name(arc.target_schemas.get(i).map(String::as_str).unwrap_or(""), t))
+                .map(|(i, t)| {
+                    type_name(
+                        arc.target_schemas.get(i).map(String::as_str).unwrap_or(""),
+                        t,
+                    )
+                })
                 .collect();
         }
         self.invalidate_index();
@@ -2617,7 +3045,11 @@ impl DatabaseCatalog {
                 .and_then(|k| k.split_once('.'))
                 .and_then(|(table, column)| {
                     let t = self.tables.iter().find(|t| t.name == table)?;
-                    Some(format!("{}{}", t.type_name, to_pascal_case(&t.get_column(column)?.field_name)))
+                    Some(format!(
+                        "{}{}",
+                        t.type_name,
+                        to_pascal_case(&t.get_column(column)?.field_name)
+                    ))
                 })
                 .unwrap_or_else(|| to_pascal_case(&self.enums[i].config_name));
             self.enums[i].type_name = name;
@@ -2662,27 +3094,86 @@ impl DatabaseCatalog {
     /// Reserved names of everything but enum and composite types.
     fn reserved_type_names_except_values(&self) -> HashSet<String> {
         const BUILTINS: &[&str] = &[
-            "Query", "Mutation", "Subscription", "Node", "PageInfo", "JSON", "String", "Int", "Float", "Boolean", "ID",
-            "ConflictAction", "LTreeFilter", "FullTextFilter", "GeoJSONFilter", "GeoJSONDistanceInput", "BoundingBoxInput",
-            "GlobalSearchResults", "GlobalSearchHit", "GlobalSearchNode",
+            "Query",
+            "Mutation",
+            "Subscription",
+            "Node",
+            "PageInfo",
+            "JSON",
+            "String",
+            "Int",
+            "Float",
+            "Boolean",
+            "ID",
+            "ConflictAction",
+            "LTreeFilter",
+            "FullTextFilter",
+            "GeoJSONFilter",
+            "GeoJSONDistanceInput",
+            "BoundingBoxInput",
+            "GlobalSearchResults",
+            "GlobalSearchHit",
+            "GlobalSearchNode",
         ];
         const TABLE_SUFFIXES: &[&str] = &[
-            "", "Condition", "Filter", "OrderBy", "Edge", "Connection", "Aggregates", "MinAggregate", "MaxAggregate",
-            "SumAggregate", "AvgAggregate", "FuzzyField", "FuzzyInput", "VectorField", "SemanticInput", "Bm25Field", "FullTextField",
+            "",
+            "Condition",
+            "Filter",
+            "OrderBy",
+            "Edge",
+            "Connection",
+            "Aggregates",
+            "MinAggregate",
+            "MaxAggregate",
+            "SumAggregate",
+            "AvgAggregate",
+            "FuzzyField",
+            "FuzzyInput",
+            "VectorField",
+            "SemanticInput",
+            "Bm25Field",
+            "FullTextField",
             "SpatialField",
-            "Bm25Input", "HybridSearchInput", "OnConflict", "ConflictKey", "UpdateColumn", "KeyInput", "ToOneInput",
-            "ToManyInput", "GroupBy", "AggregateGroup", "HavingInput", "HavingNumbersInput", "ToOneUpdateInput",
-            "ToManyUpdateInput", "ErrorCode", "ToManyFilter", "DistinctCountAggregate", "StatisticAggregate", "ConnectOrCreateInput", "UpdateByKeyInput",
+            "Bm25Input",
+            "HybridSearchInput",
+            "OnConflict",
+            "ConflictKey",
+            "UpdateColumn",
+            "KeyInput",
+            "ToOneInput",
+            "ToManyInput",
+            "GroupBy",
+            "AggregateGroup",
+            "HavingInput",
+            "HavingNumbersInput",
+            "ToOneUpdateInput",
+            "ToManyUpdateInput",
+            "ErrorCode",
+            "ToManyFilter",
+            "DistinctCountAggregate",
+            "StatisticAggregate",
+            "ConnectOrCreateInput",
+            "UpdateByKeyInput",
         ];
         let mut names: HashSet<String> = BUILTINS.iter().map(|s| s.to_string()).collect();
-        for scalar in ["String", "Int", "Float", "Boolean"].iter().chain(CUSTOM_SCALARS.iter().map(|(name, _)| name)) {
+        for scalar in ["String", "Int", "Float", "Boolean"]
+            .iter()
+            .chain(CUSTOM_SCALARS.iter().map(|(name, _)| name))
+        {
             names.insert(scalar.to_string());
             for suffix in ["Filter", "ListFilter"] {
                 names.insert(format!("{scalar}{suffix}"));
             }
         }
         for scalar in RANGE_SCALARS {
-            for suffix in ["Range", "RangeInput", "RangeBound", "RangeBoundInput", "RangeFilter", "MultirangeFilter"] {
+            for suffix in [
+                "Range",
+                "RangeInput",
+                "RangeBound",
+                "RangeBoundInput",
+                "RangeFilter",
+                "MultirangeFilter",
+            ] {
                 names.insert(format!("{scalar}{suffix}"));
             }
         }
@@ -2723,7 +3214,12 @@ impl DatabaseCatalog {
                 let names: Vec<String> = idx
                     .columns
                     .iter()
-                    .map(|c| table.and_then(|t| t.get_column(c)).map(|c| c.order_by_name()).unwrap_or_else(|| enum_value_name(c)))
+                    .map(|c| {
+                        table
+                            .and_then(|t| t.get_column(c))
+                            .map(|c| c.order_by_name())
+                            .unwrap_or_else(|| enum_value_name(c))
+                    })
                     .collect();
                 names.join("_AND_")
             }
@@ -2740,7 +3236,8 @@ impl DatabaseCatalog {
             .map(|i| !i.column_name.is_empty() && self.search_column(i).is_none())
             .collect();
         let mut hidden = hidden.into_iter();
-        self.search_indexes.retain(|_| !hidden.next().unwrap_or(false));
+        self.search_indexes
+            .retain(|_| !hidden.next().unwrap_or(false));
     }
 
     pub fn search_indexes_for_table(&self, schema: &str, table: &str) -> Vec<&SearchIndexMetadata> {
@@ -2753,35 +3250,63 @@ impl DatabaseCatalog {
     pub fn fuzzy_indexes_for_table(&self, schema: &str, table: &str) -> Vec<&SearchIndexMetadata> {
         self.search_indexes
             .iter()
-            .filter(|idx| idx.table_schema == schema && idx.table_name == table && matches!(idx.kind, SearchIndexKind::FuzzyTrgm))
+            .filter(|idx| {
+                idx.table_schema == schema
+                    && idx.table_name == table
+                    && matches!(idx.kind, SearchIndexKind::FuzzyTrgm)
+            })
             .collect()
     }
 
     pub fn vector_indexes_for_table(&self, schema: &str, table: &str) -> Vec<&SearchIndexMetadata> {
         self.search_indexes
             .iter()
-            .filter(|idx| idx.table_schema == schema && idx.table_name == table && matches!(idx.kind, SearchIndexKind::Vector { .. }))
+            .filter(|idx| {
+                idx.table_schema == schema
+                    && idx.table_name == table
+                    && matches!(idx.kind, SearchIndexKind::Vector { .. })
+            })
             .collect()
     }
 
     pub fn bm25_indexes_for_table(&self, schema: &str, table: &str) -> Vec<&SearchIndexMetadata> {
         self.search_indexes
             .iter()
-            .filter(|idx| idx.table_schema == schema && idx.table_name == table && matches!(idx.kind, SearchIndexKind::Bm25))
+            .filter(|idx| {
+                idx.table_schema == schema
+                    && idx.table_name == table
+                    && matches!(idx.kind, SearchIndexKind::Bm25)
+            })
             .collect()
     }
 
-    pub fn full_text_indexes_for_table(&self, schema: &str, table: &str) -> Vec<&SearchIndexMetadata> {
+    pub fn full_text_indexes_for_table(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Vec<&SearchIndexMetadata> {
         self.search_indexes
             .iter()
-            .filter(|idx| idx.table_schema == schema && idx.table_name == table && matches!(idx.kind, SearchIndexKind::FullText { .. }))
+            .filter(|idx| {
+                idx.table_schema == schema
+                    && idx.table_name == table
+                    && matches!(idx.kind, SearchIndexKind::FullText { .. })
+            })
             .collect()
     }
 
-    pub fn spatial_indexes_for_table(&self, schema: &str, table: &str) -> Vec<&SearchIndexMetadata> {
+    pub fn spatial_indexes_for_table(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Vec<&SearchIndexMetadata> {
         self.search_indexes
             .iter()
-            .filter(|idx| idx.table_schema == schema && idx.table_name == table && idx.kind == SearchIndexKind::Spatial)
+            .filter(|idx| {
+                idx.table_schema == schema
+                    && idx.table_name == table
+                    && idx.kind == SearchIndexKind::Spatial
+            })
             .collect()
     }
 
@@ -2793,8 +3318,15 @@ impl DatabaseCatalog {
             .iter()
             .filter(|t| t.operations.list || t.operations.connection)
             .filter_map(|t| {
-                let full_text = self.full_text_indexes_for_table(&t.schema, &t.name).into_iter().next();
-                let fuzzy = || self.fuzzy_indexes_for_table(&t.schema, &t.name).into_iter().find(|i| self.search_column(i).is_some());
+                let full_text = self
+                    .full_text_indexes_for_table(&t.schema, &t.name)
+                    .into_iter()
+                    .next();
+                let fuzzy = || {
+                    self.fuzzy_indexes_for_table(&t.schema, &t.name)
+                        .into_iter()
+                        .find(|i| self.search_column(i).is_some())
+                };
                 Some((t, full_text.or_else(fuzzy)?))
             })
             .collect()
@@ -2803,7 +3335,10 @@ impl DatabaseCatalog {
     /// Name of the global search root field of `schema`, if any table is searchable and no
     /// table's root field takes the name.
     pub fn global_search_field(&self, schema: &str) -> Option<&'static str> {
-        self.index().global_search_schemas.contains(schema).then_some(GLOBAL_SEARCH_FIELD)
+        self.index()
+            .global_search_schemas
+            .contains(schema)
+            .then_some(GLOBAL_SEARCH_FIELD)
     }
 
     /// Name of the global search root field, if any inspected schema has one (the search
@@ -2836,11 +3371,15 @@ impl DatabaseCatalog {
 
     /// Hybrid search ranks rows by their single-column key.
     pub fn has_hybrid_search(&self, schema: &str, table: &str) -> bool {
-        if !self.find_table(schema, table).is_some_and(|t| t.implements_node()) {
+        if !self
+            .find_table(schema, table)
+            .is_some_and(|t| t.implements_node())
+        {
             return false;
         }
         let has_vec = !self.vector_indexes_for_table(schema, table).is_empty();
-        let has_lex = !self.fuzzy_indexes_for_table(schema, table).is_empty() || !self.bm25_indexes_for_table(schema, table).is_empty();
+        let has_lex = !self.fuzzy_indexes_for_table(schema, table).is_empty()
+            || !self.bm25_indexes_for_table(schema, table).is_empty();
         has_vec && has_lex
     }
 
@@ -2852,7 +3391,9 @@ impl DatabaseCatalog {
     pub fn order_options(&self, table: &TableMetadata) -> Vec<(String, OrderTarget)> {
         let mut out: Vec<(String, OrderTarget)> = Vec::new();
         let mut push = |name: String, target: OrderTarget| {
-            if !matches!(name.as_str(), "NATURAL" | "PRIMARY_KEY") && !out.iter().any(|(n, _)| *n == name) {
+            if !matches!(name.as_str(), "NATURAL" | "PRIMARY_KEY")
+                && !out.iter().any(|(n, _)| *n == name)
+            {
                 out.push((name, target));
             }
         };
@@ -2871,9 +3412,18 @@ impl DatabaseCatalog {
                             push(format!("{prefix}_COUNT"), OrderTarget::Count(rel.clone()));
                         }
                     } else if rel.junction.is_none() {
-                        let Some(target) = self.find_table(&rel.target_schema, &rel.target_table) else { continue };
-                        for col in target.visible_columns().filter(|c| c.pg_type.is_orderable()) {
-                            let target_ = OrderTarget::Related { rel: rel.clone(), column: col.name.clone() };
+                        let Some(target) = self.find_table(&rel.target_schema, &rel.target_table)
+                        else {
+                            continue;
+                        };
+                        for col in target
+                            .visible_columns()
+                            .filter(|c| c.pg_type.is_orderable())
+                        {
+                            let target_ = OrderTarget::Related {
+                                rel: rel.clone(),
+                                column: col.name.clone(),
+                            };
                             push(format!("{prefix}_{}", col.order_by_name()), target_);
                         }
                     }
@@ -2897,7 +3447,12 @@ impl DatabaseCatalog {
 
     /// Relation field `field_name` of `(schema, table_name)`: a to-one or to-many relation
     /// (including many-to-many), or a connection over one.
-    pub fn find_relation(&self, schema: &str, table_name: &str, field_name: &str) -> Option<RelationInfo> {
+    pub fn find_relation(
+        &self,
+        schema: &str,
+        table_name: &str,
+        field_name: &str,
+    ) -> Option<RelationInfo> {
         match &self.object_field(schema, table_name, field_name)?.kind {
             FieldKind::Relation(rel) | FieldKind::Connection(rel) => Some(rel.clone()),
             _ => None,
@@ -2922,7 +3477,10 @@ impl DatabaseCatalog {
         let node = table.implements_node();
         if node {
             push("id".to_string(), FieldKind::GlobalId);
-            if table.get_column(&table.primary_key[0]).is_some_and(|c| !c.omit) {
+            if table
+                .get_column(&table.primary_key[0])
+                .is_some_and(|c| !c.omit)
+            {
                 push("databaseId".to_string(), FieldKind::DatabaseId);
             }
         }
@@ -2960,7 +3518,9 @@ impl DatabaseCatalog {
                             names.push(to_camel_case(base));
                         }
                     }
-                    names.push(to_camel_case(&self.type_name_of(&fk.foreign_schema, &fk.foreign_table)));
+                    names.push(to_camel_case(
+                        &self.type_name_of(&fk.foreign_schema, &fk.foreign_table),
+                    ));
                     names
                 }
             };
@@ -2972,7 +3532,11 @@ impl DatabaseCatalog {
         // Incoming foreign keys (1:N)
         for other in &self.tables {
             for fk in &other.foreign_keys {
-                if fk.foreign_schema != table.schema || fk.foreign_table != table.name || fk.omit || fk.omit_reverse {
+                if fk.foreign_schema != table.schema
+                    || fk.foreign_table != table.name
+                    || fk.omit
+                    || fk.omit_reverse
+                {
                     continue;
                 }
                 let (columns, period) = fk.split_period();
@@ -2985,7 +3549,8 @@ impl DatabaseCatalog {
                     period,
                     history: false,
                 };
-                let other_conflict = self.tables.iter().filter(|t| t.name == other.name).count() > 1;
+                let other_conflict =
+                    self.tables.iter().filter(|t| t.name == other.name).count() > 1;
                 let name = fk.reverse_field_name.clone().unwrap_or_else(|| {
                     if other_conflict {
                         other.list_field.clone()
@@ -3000,10 +3565,17 @@ impl DatabaseCatalog {
 
         // Many-to-many relations through junction tables
         for m2m in self.many_to_many.iter().filter(|m| {
-            (m.source_schema.is_empty() || m.source_schema == table.schema) && m.source_table == table.name
+            (m.source_schema.is_empty() || m.source_schema == table.schema)
+                && m.source_table == table.name
         }) {
-            let target_schema = if m2m.target_schema.is_empty() { &table.schema } else { &m2m.target_schema };
-            let Some(target) = self.find_table(target_schema, &m2m.target_table) else { continue };
+            let target_schema = if m2m.target_schema.is_empty() {
+                &table.schema
+            } else {
+                &m2m.target_schema
+            };
+            let Some(target) = self.find_table(target_schema, &m2m.target_table) else {
+                continue;
+            };
             let rel = RelationInfo {
                 is_many: true,
                 target_schema: target.schema.clone(),
@@ -3020,7 +3592,10 @@ impl DatabaseCatalog {
             };
             for name in [&m2m.field_name, &m2m.via_field_name] {
                 push(name.clone(), FieldKind::Relation(rel.clone()));
-                push(format!("{name}Connection"), FieldKind::Connection(rel.clone()));
+                push(
+                    format!("{name}Connection"),
+                    FieldKind::Connection(rel.clone()),
+                );
             }
         }
 
@@ -3029,10 +3604,19 @@ impl DatabaseCatalog {
         // `ltree` path columns
         let mut self_keys = 0;
         for fk in &table.foreign_keys {
-            if fk.omit || fk.period || fk.foreign_schema != table.schema || fk.foreign_table != table.name {
+            if fk.omit
+                || fk.period
+                || fk.foreign_schema != table.schema
+                || fk.foreign_table != table.name
+            {
                 continue;
             }
-            let pairs: Vec<(String, String)> = fk.columns.iter().cloned().zip(fk.foreign_columns.iter().cloned()).collect();
+            let pairs: Vec<(String, String)> = fk
+                .columns
+                .iter()
+                .cloned()
+                .zip(fk.foreign_columns.iter().cloned())
+                .collect();
             let prefix = match (self_keys, &fk.field_name, fk.single()) {
                 (0, _, _) => String::new(),
                 (_, Some(name), _) => name.clone(),
@@ -3041,13 +3625,32 @@ impl DatabaseCatalog {
             };
             self_keys += 1;
             for (ancestors, suffix) in [(true, "ancestors"), (false, "descendants")] {
-                let name = if prefix.is_empty() { suffix.to_string() } else { format!("{prefix}{}", to_pascal_case(suffix)) };
-                push(name, FieldKind::Tree(TreeInfo { ancestors, link: TreeLink::ForeignKey(pairs.clone()) }));
+                let name = if prefix.is_empty() {
+                    suffix.to_string()
+                } else {
+                    format!("{prefix}{}", to_pascal_case(suffix))
+                };
+                push(
+                    name,
+                    FieldKind::Tree(TreeInfo {
+                        ancestors,
+                        link: TreeLink::ForeignKey(pairs.clone()),
+                    }),
+                );
             }
         }
-        for col in table.visible_columns().filter(|c| c.pg_type == PgType::Ltree) {
+        for col in table
+            .visible_columns()
+            .filter(|c| c.pg_type == PgType::Ltree)
+        {
             for (ancestors, suffix) in [(true, "Ancestors"), (false, "Descendants")] {
-                push(format!("{}{suffix}", col.field_name), FieldKind::Tree(TreeInfo { ancestors, link: TreeLink::Path(col.name.clone()) }));
+                push(
+                    format!("{}{suffix}", col.field_name),
+                    FieldKind::Tree(TreeInfo {
+                        ancestors,
+                        link: TreeLink::Path(col.name.clone()),
+                    }),
+                );
             }
         }
 
@@ -3066,12 +3669,15 @@ impl DatabaseCatalog {
             push("historyConnection".to_string(), FieldKind::Connection(rel));
         }
 
-        if self.exclusive_arcs.iter().any(|a| a.table_name == table.name) {
+        if self
+            .exclusive_arcs
+            .iter()
+            .any(|a| a.table_name == table.name)
+        {
             push("target".to_string(), FieldKind::ArcTarget);
         }
         for (i, func) in self.functions.iter().enumerate() {
-            if func.is_mounted_on(table) && self.function_is_exposed(func)
-            {
+            if func.is_mounted_on(table) && self.function_is_exposed(func) {
                 push(func.mounted_field_name.clone(), FieldKind::Function(i));
             }
         }
@@ -3100,7 +3706,11 @@ pub fn to_camel_case(s: &str) -> String {
 }
 
 fn prefix_digit(name: String) -> String {
-    if name.starts_with(|c: char| c.is_ascii_digit()) { format!("_{name}") } else { name }
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("_{name}")
+    } else {
+        name
+    }
 }
 
 /// GraphQL type name for a discriminator value: `dog` -> `Dog`, `CHECKLIST_ITEM` -> `ChecklistItem`,
@@ -3110,10 +3720,24 @@ pub fn graphql_type_name(value: &str) -> String {
     let has_lower = value.chars().any(|c| c.is_lowercase());
     let normalized: String = value
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { if has_lower { c } else { c.to_ascii_lowercase() } } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                if has_lower {
+                    c
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            } else {
+                '_'
+            }
+        })
         .collect();
     let name = to_pascal_case(&normalized);
-    if name.is_empty() { "_".to_string() } else { name }
+    if name.is_empty() {
+        "_".to_string()
+    } else {
+        name
+    }
 }
 
 /// Hints in an SQL comment, each on a line of its own: `@name <GraphQL name>` names the
@@ -3130,15 +3754,28 @@ pub struct CommentHints {
 
 impl CommentHints {
     pub fn parse(comment: Option<&str>) -> Self {
-        let Some(comment) = comment else { return Self::default() };
+        let Some(comment) = comment else {
+            return Self::default();
+        };
         let mut hints = Self::default();
         let mut kept: Vec<&str> = Vec::new();
         for line in comment.lines() {
             let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("@deprecated").filter(|r| r.is_empty() || r.starts_with(char::is_whitespace)) {
+            if let Some(rest) = trimmed
+                .strip_prefix("@deprecated")
+                .filter(|r| r.is_empty() || r.starts_with(char::is_whitespace))
+            {
                 let reason = rest.trim();
-                hints.deprecated = Some(if reason.is_empty() { "No longer supported.".to_string() } else { reason.to_string() });
-            } else if let Some(name) = trimmed.strip_prefix("@name ").map(str::trim).filter(|n| is_graphql_name(n)) {
+                hints.deprecated = Some(if reason.is_empty() {
+                    "No longer supported.".to_string()
+                } else {
+                    reason.to_string()
+                });
+            } else if let Some(name) = trimmed
+                .strip_prefix("@name ")
+                .map(str::trim)
+                .filter(|n| is_graphql_name(n))
+            {
                 hints.name = Some(name.to_string());
             } else {
                 kept.push(line);
@@ -3211,7 +3848,10 @@ impl DatabaseCatalog {
 pub fn deprecated_directive(reason: Option<&str>) -> String {
     match reason {
         Some(reason) => {
-            let escaped = reason.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+            let escaped = reason
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n");
             format!(" @deprecated(reason: \"{escaped}\")")
         }
         None => String::new(),
@@ -3221,7 +3861,9 @@ pub fn deprecated_directive(reason: Option<&str>) -> String {
 /// Whether `name` is a valid GraphQL name (`/[_A-Za-z][_0-9A-Za-z]*/`).
 pub fn is_graphql_name(name: &str) -> bool {
     let mut chars = name.chars();
-    chars.next().is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+    chars
+        .next()
+        .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
@@ -3324,7 +3966,10 @@ pub fn connection_field_names(table_name: &str) -> (String, String) {
 pub fn table_to_type_name(table_name: &str) -> String {
     let singular = if let Some(stem) = table_name.strip_suffix("ies") {
         format!("{stem}y")
-    } else if let Some(stem) = table_name.strip_suffix('s').filter(|_| !table_name.ends_with("ss")) {
+    } else if let Some(stem) = table_name
+        .strip_suffix('s')
+        .filter(|_| !table_name.ends_with("ss"))
+    {
         stem.to_string()
     } else {
         table_name.to_string()
@@ -3349,9 +3994,17 @@ pub fn table_singular_snake(table_name: &str) -> String {
 /// - `generate_report` on `users`          → `generateReport`  (no match → full camelCase)
 pub fn tvf_mounted_field_name(func_name: &str, parent_table: &str) -> String {
     let words: Vec<&str> = func_name.split('_').collect();
-    let parent: Vec<String> = table_singular_snake(parent_table).split('_').map(str::to_lowercase).collect();
+    let parent: Vec<String> = table_singular_snake(parent_table)
+        .split('_')
+        .map(str::to_lowercase)
+        .collect();
     let rest = (0..words.len().saturating_sub(parent.len()))
-        .find(|&i| words[i..i + parent.len()].iter().zip(&parent).all(|(w, p)| w.eq_ignore_ascii_case(p)))
+        .find(|&i| {
+            words[i..i + parent.len()]
+                .iter()
+                .zip(&parent)
+                .all(|(w, p)| w.eq_ignore_ascii_case(p))
+        })
         .map(|i| words[i + parent.len()..].join("_"));
     match rest {
         Some(rest) if !rest.is_empty() => to_camel_case(&rest),
@@ -3375,9 +4028,18 @@ mod naming_tests {
     #[test]
     fn mounted_field_name_drops_parent_prefix() {
         assert_eq!(tvf_mounted_field_name("user_summary", "users"), "summary");
-        assert_eq!(tvf_mounted_field_name("export_order_totals", "orders"), "totals");
-        assert_eq!(tvf_mounted_field_name("list_care_plan_goals", "care_plans"), "goals");
-        assert_eq!(tvf_mounted_field_name("generate_report", "users"), "generateReport");
+        assert_eq!(
+            tvf_mounted_field_name("export_order_totals", "orders"),
+            "totals"
+        );
+        assert_eq!(
+            tvf_mounted_field_name("list_care_plan_goals", "care_plans"),
+            "goals"
+        );
+        assert_eq!(
+            tvf_mounted_field_name("generate_report", "users"),
+            "generateReport"
+        );
         assert_eq!(tvf_mounted_field_name("user", "users"), "user");
     }
 
@@ -3391,10 +4053,19 @@ mod naming_tests {
 
     #[test]
     fn array_types_and_literals() {
-        assert_eq!(PgType::from_sql_type("_text"), PgType::Array(Box::new(PgType::Text)));
-        assert_eq!(PgType::from_sql_type("_int8").sql_cast().as_deref(), Some("int8[]"));
+        assert_eq!(
+            PgType::from_sql_type("_text"),
+            PgType::Array(Box::new(PgType::Text))
+        );
+        assert_eq!(
+            PgType::from_sql_type("_int8").sql_cast().as_deref(),
+            Some("int8[]")
+        );
         assert_eq!(PgType::from_sql_type("_int8").graphql_type(), "[BigInt]");
-        assert_eq!(PgType::from_sql_type("_int8").output_cast().as_deref(), Some("text[]"));
+        assert_eq!(
+            PgType::from_sql_type("_int8").output_cast().as_deref(),
+            Some("text[]")
+        );
         let lit = pg_array_literal(&serde_json::json!(["a", "b\"c", null, 3]));
         assert_eq!(lit, serde_json::json!("{\"a\",\"b\\\"c\",NULL,\"3\"}"));
     }
@@ -3433,16 +4104,24 @@ mod naming_tests {
 
     #[test]
     fn comment_hints() {
-        let hints = CommentHints::parse(Some("Who wrote it.\n@name Writer\n@deprecated Use `authors` instead."));
+        let hints = CommentHints::parse(Some(
+            "Who wrote it.\n@name Writer\n@deprecated Use `authors` instead.",
+        ));
         assert_eq!(hints.description.as_deref(), Some("Who wrote it."));
         assert_eq!(hints.name.as_deref(), Some("Writer"));
         assert_eq!(hints.deprecated.as_deref(), Some("Use `authors` instead."));
         let bare = CommentHints::parse(Some("@deprecated"));
-        assert_eq!((bare.description, bare.deprecated.as_deref()), (None, Some("No longer supported.")));
+        assert_eq!(
+            (bare.description, bare.deprecated.as_deref()),
+            (None, Some("No longer supported."))
+        );
         // Not hints: an invalid name, a word merely starting with the tag
         let other = CommentHints::parse(Some("@name not valid\n@deprecatedness"));
         assert_eq!((other.name, other.deprecated), (None, None));
-        assert_eq!(deprecated_directive(Some("say \"no\"")), " @deprecated(reason: \"say \\\"no\\\"\")");
+        assert_eq!(
+            deprecated_directive(Some("say \"no\"")),
+            " @deprecated(reason: \"say \\\"no\\\"\")"
+        );
     }
 
     #[test]

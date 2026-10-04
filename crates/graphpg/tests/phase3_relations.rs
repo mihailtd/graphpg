@@ -7,7 +7,6 @@ use graphpg::schema::SchemaBuilder;
 use serde_json::json;
 use tokio_postgres::NoTls;
 
-
 async fn setup_test() -> (
     tokio_postgres::Client,
     apollo_compiler::validation::Valid<apollo_compiler::Schema>,
@@ -70,7 +69,10 @@ async fn test_forum_fixture_relations_basics() {
         .await
         .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     // Matches Crystal's grafast/dataplan-pg/__tests__/queries/relations/basics.json5 exactly:
     assert_eq!(
@@ -127,7 +129,10 @@ async fn test_multiple_relations_on_single_record() {
         .await
         .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     assert_eq!(
         result["data"]["message"]["forum"],
@@ -136,10 +141,7 @@ async fn test_multiple_relations_on_single_record() {
             "name": "Cats"
         })
     );
-    assert_eq!(
-        result["data"]["message"]["author"]["username"],
-        "Cecilia"
-    );
+    assert_eq!(result["data"]["message"]["author"]["username"], "Cecilia");
 }
 
 #[tokio::test]
@@ -177,7 +179,10 @@ async fn test_one_to_many_relation_forum_messages() {
         .await
         .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     assert_eq!(result["data"]["forum"]["name"], "Cats");
     let messages = result["data"]["forum"]["messages"]
@@ -228,7 +233,10 @@ async fn test_three_level_deep_relations() {
         .await
         .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     assert_eq!(result["data"]["forum"]["name"], "Cats");
     let messages = result["data"]["forum"]["messages"]
@@ -279,7 +287,10 @@ async fn test_list_with_nested_relations_zero_n_plus_one() {
         .await
         .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     let messages = result["data"]["messages"]
         .as_array()

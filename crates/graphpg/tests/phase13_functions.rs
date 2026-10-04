@@ -84,7 +84,9 @@ CREATE FUNCTION twice(a text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT a
 "#;
 
 async fn connect() -> tokio_postgres::Client {
-    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls).await.expect("Failed to connect to PostgreSQL");
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .expect("Failed to connect to PostgreSQL");
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             eprintln!("connection error: {}", e);
@@ -96,9 +98,15 @@ async fn connect() -> tokio_postgres::Client {
 /// Creates the fixture schema once (serialised by an advisory lock, since tests run
 /// concurrently), recreating it when the fixture changed.
 async fn ensure_fixture(client: &tokio_postgres::Client) {
-    client.execute("SELECT pg_advisory_lock(424244)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_lock(424244)", &[])
+        .await
+        .unwrap();
     let version: Option<String> = client
-        .query_opt("SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1", &[&SCHEMA])
+        .query_opt(
+            "SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1",
+            &[&SCHEMA],
+        )
         .await
         .unwrap()
         .and_then(|row| row.get(0));
@@ -110,7 +118,10 @@ async fn ensure_fixture(client: &tokio_postgres::Client) {
             .await
             .expect("fixture setup failed");
     }
-    client.execute("SELECT pg_advisory_unlock(424244)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_unlock(424244)", &[])
+        .await
+        .unwrap();
 }
 
 struct Env {
@@ -124,10 +135,19 @@ async fn setup_with(config: &str) -> Env {
     let client = connect().await;
     ensure_fixture(&client).await;
     let config = EngineConfig::from_yaml(config).expect("config parses");
-    let catalog = CatalogInspector::new(&client).inspect_schema_with_config(SCHEMA, &config).await.expect("inspection failed");
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema_with_config(SCHEMA, &config)
+        .await
+        .expect("inspection failed");
     let sdl = SchemaBuilder::generate_sdl(&catalog);
-    let schema = SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
-    Env { client, schema, catalog, sdl }
+    let schema =
+        SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
+    Env {
+        client,
+        schema,
+        catalog,
+        sdl,
+    }
 }
 
 async fn setup() -> Env {
@@ -136,15 +156,25 @@ async fn setup() -> Env {
 
 impl Env {
     async fn try_run(&self, query: &str) -> Result<serde_json::Value, String> {
-        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&self.schema, query, "q.graphql")
-            .map_err(|e| format!("validation: {e}"))?;
-        let plan = QueryPlanner::new(&self.catalog, SCHEMA).plan(&doc).map_err(|e| format!("planning: {e}"))?;
-        let result = ExecutionEngine::execute(&self.client, &plan).await.map_err(|e| format!("execution: {e}"))?;
+        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(
+            &self.schema,
+            query,
+            "q.graphql",
+        )
+        .map_err(|e| format!("validation: {e}"))?;
+        let plan = QueryPlanner::new(&self.catalog, SCHEMA)
+            .plan(&doc)
+            .map_err(|e| format!("planning: {e}"))?;
+        let result = ExecutionEngine::execute(&self.client, &plan)
+            .await
+            .map_err(|e| format!("execution: {e}"))?;
         Ok(result["data"].clone())
     }
 
     async fn run(&self, query: &str) -> serde_json::Value {
-        self.try_run(query).await.unwrap_or_else(|e| panic!("{e}\nquery: {query}"))
+        self.try_run(query)
+            .await
+            .unwrap_or_else(|e| panic!("{e}\nquery: {query}"))
     }
 
     /// Runs `query` in a transaction that is rolled back afterwards.
@@ -157,8 +187,14 @@ impl Env {
 
     /// SDL block of type `name`.
     fn type_sdl(&self, name: &str) -> String {
-        let start = self.sdl.find(&format!("type {name} ")).unwrap_or_else(|| panic!("no type {name} in SDL:\n{}", self.sdl));
-        let end = self.sdl[start..].find("\n}").map(|e| start + e + 1).unwrap_or(self.sdl.len());
+        let start = self
+            .sdl
+            .find(&format!("type {name} "))
+            .unwrap_or_else(|| panic!("no type {name} in SDL:\n{}", self.sdl));
+        let end = self.sdl[start..]
+            .find("\n}")
+            .map(|e| start + e + 1)
+            .unwrap_or(self.sdl.len());
         self.sdl[start..end].to_string()
     }
 }
@@ -184,15 +220,32 @@ async fn test_function_fields_are_typed_by_what_they_return() {
     ] {
         assert!(query.contains(&format!("{field}\n")), "{field}\n{query}");
     }
-    assert!(query.contains("\"\"\"Members by name, best first\"\"\""), "{query}");
-    for absent in ["tg", "anything", "proc", "bumpScore", "resetScores", "ranked", "captain", "greeting"] {
+    assert!(
+        query.contains("\"\"\"Members by name, best first\"\"\""),
+        "{query}"
+    );
+    for absent in [
+        "tg",
+        "anything",
+        "proc",
+        "bumpScore",
+        "resetScores",
+        "ranked",
+        "captain",
+        "greeting",
+    ] {
         assert!(!query.contains(&format!("  {absent}")), "{absent}: {query}");
     }
 
     let team = env.type_sdl("Team");
-    assert!(team.contains(&format!("  ranked({conn}): MemberConnection!")), "{team}");
+    assert!(
+        team.contains(&format!("  ranked({conn}): MemberConnection!")),
+        "{team}"
+    );
     assert!(team.contains("  captain: Member\n"), "{team}");
-    assert!(env.type_sdl("Member").contains("  greeting(greeting: String): String"));
+    assert!(env
+        .type_sdl("Member")
+        .contains("  greeting(greeting: String): String"));
 
     let mutation = env.type_sdl("Mutation");
     for field in [
@@ -202,7 +255,10 @@ async fn test_function_fields_are_typed_by_what_they_return() {
         "  resetScores: Boolean",
         "  totalScore: Int",
     ] {
-        assert!(mutation.contains(&format!("{field}\n")), "{field}\n{mutation}");
+        assert!(
+            mutation.contains(&format!("{field}\n")),
+            "{field}\n{mutation}"
+        );
     }
 }
 
@@ -210,7 +266,12 @@ async fn test_function_fields_are_typed_by_what_they_return() {
 async fn test_functions_returning_rows() {
     let env = setup().await;
     let names = |conn: &serde_json::Value| -> Vec<String> {
-        conn["nodes"].as_array().unwrap().iter().map(|n| n["name"].as_str().unwrap().to_string()).collect()
+        conn["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["name"].as_str().unwrap().to_string())
+            .collect()
     };
 
     // A set of rows is a connection, in the function's order unless `orderBy` says otherwise
@@ -235,17 +296,29 @@ async fn test_functions_returning_rows() {
     assert_eq!(names(&data["last"]), ["Dana"]);
     assert_eq!(names(&data["byName"]), ["Dana", "Cyd", "Bob", "Ada"]);
     assert_eq!(names(&data["filtered"]), ["Ada"]);
-    assert_eq!(data["condition"]["nodes"], json!([{ "name": "Bob", "mood": "GRUMPY" }, { "name": "Dana", "mood": "GRUMPY" }]));
+    assert_eq!(
+        data["condition"]["nodes"],
+        json!([{ "name": "Bob", "mood": "GRUMPY" }, { "name": "Dana", "mood": "GRUMPY" }])
+    );
     assert_eq!(names(&data["byIds"]), ["Cyd", "Ada"]);
 
     // Cursors page through the function's order
     let cursor = data["page"]["pageInfo"]["endCursor"].as_str().unwrap();
-    let next = env.run(&format!(r#"{{ searchMembers(q: "", first: 2, after: "{cursor}") {{ nodes {{ name }} }} }}"#)).await;
+    let next = env
+        .run(&format!(
+            r#"{{ searchMembers(q: "", first: 2, after: "{cursor}") {{ nodes {{ name }} }} }}"#
+        ))
+        .await;
     assert_eq!(names(&next["searchMembers"]), ["Bob", "Dana"]);
 
     // One row, or null when the function returns none
-    let data = env.run("{ bestMember { name team { name } } nobody { name } }").await;
-    assert_eq!(data["bestMember"], json!({ "name": "Cyd", "team": { "name": "Blue" } }));
+    let data = env
+        .run("{ bestMember { name team { name } } nobody { name } }")
+        .await;
+    assert_eq!(
+        data["bestMember"],
+        json!({ "name": "Cyd", "team": { "name": "Blue" } })
+    );
     assert_eq!(data["nobody"], json!(null));
 }
 
@@ -295,7 +368,10 @@ async fn test_computed_columns_take_the_row() {
         })
     );
     // The row passed in is the member's, even where rows carry extra columns (`__ord`)
-    assert_eq!(data["searchMembers"]["nodes"], json!([{ "greeting": "Hi Cyd", "yo": "Yo Cyd" }]));
+    assert_eq!(
+        data["searchMembers"]["nodes"],
+        json!([{ "greeting": "Hi Cyd", "yo": "Yo Cyd" }])
+    );
 }
 
 #[tokio::test]
@@ -315,9 +391,15 @@ async fn test_volatile_functions_are_mutations() {
             }}"#
         ))
         .await;
-    assert_eq!(data["bumpScore"], json!({ "name": "Ada", "score": 7, "team": { "name": "Red" } }));
+    assert_eq!(
+        data["bumpScore"],
+        json!({ "name": "Ada", "score": 7, "team": { "name": "Red" } })
+    );
     // Rows are read back after the function ran, so their relations see its writes
-    assert_eq!(data["teamWithMember"], json!({ "name": "Green", "members": [{ "name": "Eve" }] }));
+    assert_eq!(
+        data["teamWithMember"],
+        json!({ "name": "Green", "members": [{ "name": "Eve" }] })
+    );
     assert_eq!(
         data["bumpTeam"],
         json!([{ "name": "Cyd", "score": 18, "team": { "name": "Blue" } }, { "name": "Dana", "score": 11, "team": { "name": "Blue" } }])
@@ -343,8 +425,14 @@ functions:
     )
     .await;
     let query = env.type_sdl("Query");
-    assert!(query.contains("\"\"\"Configured\"\"\"\n  findMembers(q: String!"), "{query}");
-    assert!(!query.contains("searchMembers") && !query.contains("bestMember"), "{query}");
+    assert!(
+        query.contains("\"\"\"Configured\"\"\"\n  findMembers(q: String!"),
+        "{query}"
+    );
+    assert!(
+        !query.contains("searchMembers") && !query.contains("bestMember"),
+        "{query}"
+    );
     assert!(env.type_sdl("Team").contains("  leader: Member"));
     assert!(!env.type_sdl("Member").contains("greeting"));
     assert!(env.type_sdl("Mutation").contains("  bump(memberId: ID!"));

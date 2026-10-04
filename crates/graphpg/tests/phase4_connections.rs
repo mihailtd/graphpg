@@ -7,7 +7,6 @@ use graphpg::schema::SchemaBuilder;
 use serde_json::json;
 use tokio_postgres::NoTls;
 
-
 async fn setup_test() -> (
     tokio_postgres::Client,
     apollo_compiler::validation::Valid<apollo_compiler::Schema>,
@@ -75,13 +74,19 @@ async fn test_forum_fixture_connections_basics_limit3() {
     let plan = planner.plan(&doc).expect("Query planning failed");
 
     let compiled = SqlCompiler::compile(&plan);
-    println!("Compiled SQL for connections/basics-limit3:\n{}", compiled.sql);
+    println!(
+        "Compiled SQL for connections/basics-limit3:\n{}",
+        compiled.sql
+    );
 
     let result = ExecutionEngine::execute(&client, &plan)
         .await
         .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     let conn = &result["data"]["allMessagesConnection"];
     assert_eq!(conn["totalCount"], 9);
@@ -136,9 +141,13 @@ async fn test_cursor_forward_pagination() {
 
     let planner = QueryPlanner::new(&catalog, "app_public");
     let plan1 = planner.plan(&doc1).expect("Planning failed");
-    let res1 = ExecutionEngine::execute(&client, &plan1).await.expect("Execution failed");
+    let res1 = ExecutionEngine::execute(&client, &plan1)
+        .await
+        .expect("Execution failed");
 
-    let first_edges = res1["data"]["allMessagesConnection"]["edges"].as_array().unwrap();
+    let first_edges = res1["data"]["allMessagesConnection"]["edges"]
+        .as_array()
+        .unwrap();
     assert_eq!(first_edges.len(), 2);
     let end_cursor = res1["data"]["allMessagesConnection"]["pageInfo"]["endCursor"]
         .as_str()
@@ -174,11 +183,18 @@ async fn test_cursor_forward_pagination() {
     .expect("Validation failed");
 
     let plan2 = planner.plan(&doc2).expect("Planning failed");
-    let res2 = ExecutionEngine::execute(&client, &plan2).await.expect("Execution failed");
+    let res2 = ExecutionEngine::execute(&client, &plan2)
+        .await
+        .expect("Execution failed");
 
-    println!("Second page result:\n{}", serde_json::to_string_pretty(&res2).unwrap());
+    println!(
+        "Second page result:\n{}",
+        serde_json::to_string_pretty(&res2).unwrap()
+    );
 
-    let second_edges = res2["data"]["allMessagesConnection"]["edges"].as_array().unwrap();
+    let second_edges = res2["data"]["allMessagesConnection"]["edges"]
+        .as_array()
+        .unwrap();
     assert_eq!(second_edges.len(), 2);
 
     let second_page_info = &res2["data"]["allMessagesConnection"]["pageInfo"];
@@ -196,7 +212,10 @@ async fn test_cursor_forward_pagination() {
         .collect();
 
     for id in &second_ids {
-        assert!(!first_ids.contains(id), "Second page IDs must not overlap with first page");
+        assert!(
+            !first_ids.contains(id),
+            "Second page IDs must not overlap with first page"
+        );
     }
 }
 
@@ -233,9 +252,14 @@ async fn test_connection_condition_filter() {
     let compiled = SqlCompiler::compile(&plan);
     println!("Compiled SQL for condition filter:\n{}", compiled.sql);
 
-    let result = ExecutionEngine::execute(&client, &plan).await.expect("Execution failed");
+    let result = ExecutionEngine::execute(&client, &plan)
+        .await
+        .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     let conn = &result["data"]["allMessagesConnection"];
     let edges = conn["edges"].as_array().unwrap();
@@ -284,11 +308,19 @@ async fn test_relational_nested_connection() {
     let plan = planner.plan(&doc).expect("Planning failed");
 
     let compiled = SqlCompiler::compile(&plan);
-    println!("Compiled SQL for nested relational connection:\n{}", compiled.sql);
+    println!(
+        "Compiled SQL for nested relational connection:\n{}",
+        compiled.sql
+    );
 
-    let result = ExecutionEngine::execute(&client, &plan).await.expect("Execution failed");
+    let result = ExecutionEngine::execute(&client, &plan)
+        .await
+        .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     let forums = result["data"]["forums"].as_array().unwrap();
     assert_eq!(forums.len(), 3);
@@ -309,12 +341,22 @@ async fn test_relational_nested_connection() {
 async fn test_count_and_aggregates_share_one_scan() {
     let (client, schema, catalog) = setup_test().await;
     let run = |q: &'static str| {
-        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&schema, q, "q.graphql").expect("validation");
-        QueryPlanner::new(&catalog, "app_public").plan(&doc).expect("planning")
+        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&schema, q, "q.graphql")
+            .expect("validation");
+        QueryPlanner::new(&catalog, "app_public")
+            .plan(&doc)
+            .expect("planning")
     };
-    let expected: i64 = client.query_one("SELECT count(*) FROM app_public.messages", &[]).await.unwrap().get(0);
+    let expected: i64 = client
+        .query_one("SELECT count(*) FROM app_public.messages", &[])
+        .await
+        .unwrap()
+        .get(0);
     let (min, max): (String, String) = client
-        .query_one("SELECT min(created_at)::text, max(created_at)::text FROM app_public.messages", &[])
+        .query_one(
+            "SELECT min(created_at)::text, max(created_at)::text FROM app_public.messages",
+            &[],
+        )
         .await
         .map(|r| (r.get(0), r.get(1)))
         .unwrap();
@@ -354,13 +396,23 @@ async fn run(
     catalog: &graphpg::DatabaseCatalog,
     query: &str,
 ) -> Result<serde_json::Value, String> {
-    let doc = apollo_compiler::ExecutableDocument::parse_and_validate(schema, query, "q.graphql").map_err(|e| e.to_string())?;
-    let plan = QueryPlanner::new(catalog, "app_public").plan(&doc).map_err(|e| e.to_string())?;
-    ExecutionEngine::execute(client, &plan).await.map_err(|e| e.to_string())
+    let doc = apollo_compiler::ExecutableDocument::parse_and_validate(schema, query, "q.graphql")
+        .map_err(|e| e.to_string())?;
+    let plan = QueryPlanner::new(catalog, "app_public")
+        .plan(&doc)
+        .map_err(|e| e.to_string())?;
+    ExecutionEngine::execute(client, &plan)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 fn ids(conn: &serde_json::Value) -> Vec<String> {
-    conn["edges"].as_array().unwrap().iter().map(|e| e["node"]["databaseId"].as_str().unwrap().to_string()).collect()
+    conn["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["node"]["databaseId"].as_str().unwrap().to_string())
+        .collect()
 }
 
 /// One page of `messagesConnection`: the ids, the cursors of its first and last edge,
@@ -375,7 +427,9 @@ async fn page(
         "{{ messagesConnection({args}) {{ edges {{ cursor node {{ databaseId }} }} \
          pageInfo {{ hasPreviousPage hasNextPage startCursor endCursor }} }} }}"
     );
-    let res = run(client, schema, catalog, &query).await.unwrap_or_else(|e| panic!("{args}: {e}"));
+    let res = run(client, schema, catalog, &query)
+        .await
+        .unwrap_or_else(|e| panic!("{args}: {e}"));
     let conn = &res["data"]["messagesConnection"];
     let info = &conn["pageInfo"];
     let edges = conn["edges"].as_array().unwrap();
@@ -387,7 +441,10 @@ async fn page(
         ids(conn),
         info["startCursor"].as_str().map(str::to_string),
         info["endCursor"].as_str().map(str::to_string),
-        (info["hasPreviousPage"].as_bool().unwrap(), info["hasNextPage"].as_bool().unwrap()),
+        (
+            info["hasPreviousPage"].as_bool().unwrap(),
+            info["hasNextPage"].as_bool().unwrap(),
+        ),
     )
 }
 
@@ -403,30 +460,63 @@ async fn test_keyset_pagination_follows_order_by() {
         ("[FEATURED_DESC]", "featured DESC, id ASC"),
         ("[ARCHIVED_AT_ASC]", "archived_at ASC, id ASC"),
         ("[ARCHIVED_AT_DESC]", "archived_at DESC, id ASC"),
-        ("[ARCHIVED_AT_DESC, FEATURED_ASC]", "archived_at DESC, featured ASC, id ASC"),
-        ("[CREATED_AT_ASC, BODY_DESC]", "created_at ASC, body DESC, id ASC"),
+        (
+            "[ARCHIVED_AT_DESC, FEATURED_ASC]",
+            "archived_at DESC, featured ASC, id ASC",
+        ),
+        (
+            "[CREATED_AT_ASC, BODY_DESC]",
+            "created_at ASC, body DESC, id ASC",
+        ),
         ("[FEATURED_ASC, PRIMARY_KEY_DESC]", "featured ASC, id DESC"),
     ];
     for (order_by, sql_order) in orders {
-        let order_arg = if order_by.is_empty() { String::new() } else { format!(", orderBy: {order_by}") };
+        let order_arg = if order_by.is_empty() {
+            String::new()
+        } else {
+            format!(", orderBy: {order_by}")
+        };
         let expected: Vec<String> = client
-            .query(&format!("SELECT id::text FROM app_public.messages ORDER BY {sql_order}"), &[])
+            .query(
+                &format!("SELECT id::text FROM app_public.messages ORDER BY {sql_order}"),
+                &[],
+            )
             .await
             .unwrap()
             .iter()
             .map(|r| r.get(0))
             .collect();
-        assert!(expected.len() > 4, "fixture has enough rows to page through");
+        assert!(
+            expected.len() > 4,
+            "fixture has enough rows to page through"
+        );
 
         // Forward: first 2 after each endCursor
         let mut seen = Vec::new();
         let mut after = None::<String>;
         loop {
-            let cursor = after.as_ref().map(|c| format!(", after: \"{c}\"")).unwrap_or_default();
-            let (page_ids, _, end, (has_prev, has_next)) = page(&client, &schema, &catalog, &format!("first: 2{order_arg}{cursor}")).await;
-            assert_eq!(has_prev, after.is_some(), "{order_by} forward hasPreviousPage");
+            let cursor = after
+                .as_ref()
+                .map(|c| format!(", after: \"{c}\""))
+                .unwrap_or_default();
+            let (page_ids, _, end, (has_prev, has_next)) = page(
+                &client,
+                &schema,
+                &catalog,
+                &format!("first: 2{order_arg}{cursor}"),
+            )
+            .await;
+            assert_eq!(
+                has_prev,
+                after.is_some(),
+                "{order_by} forward hasPreviousPage"
+            );
             seen.extend(page_ids);
-            assert_eq!(has_next, seen.len() < expected.len(), "{order_by} forward hasNextPage");
+            assert_eq!(
+                has_next,
+                seen.len() < expected.len(),
+                "{order_by} forward hasNextPage"
+            );
             if !has_next {
                 break;
             }
@@ -438,12 +528,29 @@ async fn test_keyset_pagination_follows_order_by() {
         let mut seen: Vec<String> = Vec::new();
         let mut before = None::<String>;
         loop {
-            let cursor = before.as_ref().map(|c| format!(", before: \"{c}\"")).unwrap_or_default();
-            let (page_ids, start, _, (has_prev, has_next)) = page(&client, &schema, &catalog, &format!("last: 2{order_arg}{cursor}")).await;
+            let cursor = before
+                .as_ref()
+                .map(|c| format!(", before: \"{c}\""))
+                .unwrap_or_default();
+            let (page_ids, start, _, (has_prev, has_next)) = page(
+                &client,
+                &schema,
+                &catalog,
+                &format!("last: 2{order_arg}{cursor}"),
+            )
+            .await;
             assert!(page_ids.len() <= 2);
-            assert_eq!(has_next, before.is_some(), "{order_by} backward hasNextPage");
+            assert_eq!(
+                has_next,
+                before.is_some(),
+                "{order_by} backward hasNextPage"
+            );
             seen.splice(0..0, page_ids);
-            assert_eq!(has_prev, seen.len() < expected.len(), "{order_by} backward hasPreviousPage");
+            assert_eq!(
+                has_prev,
+                seen.len() < expected.len(),
+                "{order_by} backward hasPreviousPage"
+            );
             if !has_prev {
                 break;
             }
@@ -452,12 +559,30 @@ async fn test_keyset_pagination_follows_order_by() {
         assert_eq!(seen, expected, "{order_by}: backward pages");
 
         // A window between two cursors, from either end
-        let (_, _, after_second, _) = page(&client, &schema, &catalog, &format!("first: 2{order_arg}")).await;
-        let (_, before_last, _, _) = page(&client, &schema, &catalog, &format!("last: 1{order_arg}")).await;
-        let window = format!("{order_arg}, after: \"{}\", before: \"{}\"", after_second.unwrap(), before_last.unwrap());
+        let (_, _, after_second, _) =
+            page(&client, &schema, &catalog, &format!("first: 2{order_arg}")).await;
+        let (_, before_last, _, _) =
+            page(&client, &schema, &catalog, &format!("last: 1{order_arg}")).await;
+        let window = format!(
+            "{order_arg}, after: \"{}\", before: \"{}\"",
+            after_second.unwrap(),
+            before_last.unwrap()
+        );
         let middle = &expected[2..expected.len() - 1];
-        assert_eq!(page(&client, &schema, &catalog, &format!("first: 100{window}")).await.0, middle, "{order_by}: first between");
-        assert_eq!(page(&client, &schema, &catalog, &format!("last: 100{window}")).await.0, middle, "{order_by}: last between");
+        assert_eq!(
+            page(&client, &schema, &catalog, &format!("first: 100{window}"))
+                .await
+                .0,
+            middle,
+            "{order_by}: first between"
+        );
+        assert_eq!(
+            page(&client, &schema, &catalog, &format!("last: 100{window}"))
+                .await
+                .0,
+            middle,
+            "{order_by}: last between"
+        );
     }
 }
 
@@ -472,24 +597,66 @@ async fn test_keyset_pagination_on_citext_column() {
             .map(|e| e["node"]["username"].as_str().unwrap().to_string())
             .collect()
     };
-    let query = |args: &str| format!("{{ usersConnection({args}) {{ edges {{ cursor node {{ username }} }} }} }}");
+    let query = |args: &str| {
+        format!("{{ usersConnection({args}) {{ edges {{ cursor node {{ username }} }} }} }}")
+    };
 
-    let first = run(&client, &schema, &catalog, &query("orderBy: [USERNAME_DESC], first: 1")).await.unwrap();
+    let first = run(
+        &client,
+        &schema,
+        &catalog,
+        &query("orderBy: [USERNAME_DESC], first: 1"),
+    )
+    .await
+    .unwrap();
     assert_eq!(names(&first), ["Cecilia"]);
-    let cursor = first["data"]["usersConnection"]["edges"][0]["cursor"].as_str().unwrap();
-    let next = run(&client, &schema, &catalog, &query(&format!("orderBy: [USERNAME_DESC], first: 1, after: \"{cursor}\""))).await.unwrap();
+    let cursor = first["data"]["usersConnection"]["edges"][0]["cursor"]
+        .as_str()
+        .unwrap();
+    let next = run(
+        &client,
+        &schema,
+        &catalog,
+        &query(&format!(
+            "orderBy: [USERNAME_DESC], first: 1, after: \"{cursor}\""
+        )),
+    )
+    .await
+    .unwrap();
     assert_eq!(names(&next), ["Bob"]);
 
     // `last` is the end of the order, not its start
-    let last = run(&client, &schema, &catalog, &query("last: 1")).await.unwrap();
+    let last = run(&client, &schema, &catalog, &query("last: 1"))
+        .await
+        .unwrap();
     assert_eq!(names(&last), ["Cecilia"]);
-    let last = run(&client, &schema, &catalog, &query("orderBy: [USERNAME_DESC], last: 2")).await.unwrap();
+    let last = run(
+        &client,
+        &schema,
+        &catalog,
+        &query("orderBy: [USERNAME_DESC], last: 2"),
+    )
+    .await
+    .unwrap();
     assert_eq!(names(&last), ["Bob", "Alice"]);
 
     // A cursor is only valid for the order it was issued for
-    let default_cursor = run(&client, &schema, &catalog, &query("first: 1")).await.unwrap();
-    let default_cursor = default_cursor["data"]["usersConnection"]["edges"][0]["cursor"].as_str().unwrap();
-    let err = run(&client, &schema, &catalog, &query(&format!("orderBy: [USERNAME_DESC], after: \"{default_cursor}\""))).await.unwrap_err();
+    let default_cursor = run(&client, &schema, &catalog, &query("first: 1"))
+        .await
+        .unwrap();
+    let default_cursor = default_cursor["data"]["usersConnection"]["edges"][0]["cursor"]
+        .as_str()
+        .unwrap();
+    let err = run(
+        &client,
+        &schema,
+        &catalog,
+        &query(&format!(
+            "orderBy: [USERNAME_DESC], after: \"{default_cursor}\""
+        )),
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("Invalid cursor"), "{err}");
 }
 
@@ -497,7 +664,10 @@ async fn test_keyset_pagination_on_citext_column() {
 async fn test_offset_and_first_with_last() {
     let (client, schema, catalog) = setup_test().await;
     let expected: Vec<String> = client
-        .query("SELECT id::text FROM app_public.messages ORDER BY featured DESC, id ASC", &[])
+        .query(
+            "SELECT id::text FROM app_public.messages ORDER BY featured DESC, id ASC",
+            &[],
+        )
         .await
         .unwrap()
         .iter()
@@ -514,27 +684,63 @@ async fn test_offset_and_first_with_last() {
     };
 
     // `offset` skips rows forward from the start or a cursor, backward from the end or a cursor
-    assert_eq!(get(format!("{order}, first: 2, offset: 3")).await, (expected[3..5].to_vec(), true, true));
-    assert_eq!(get(format!("{order}, first: 5, offset: {}", n - 2)).await, (expected[n - 2..].to_vec(), true, false));
+    assert_eq!(
+        get(format!("{order}, first: 2, offset: 3")).await,
+        (expected[3..5].to_vec(), true, true)
+    );
+    assert_eq!(
+        get(format!("{order}, first: 5, offset: {}", n - 2)).await,
+        (expected[n - 2..].to_vec(), true, false)
+    );
     let (_, _, after, _) = page(&client, &schema, &catalog, &format!("{order}, first: 1")).await;
     let after = after.unwrap();
-    assert_eq!(get(format!("{order}, first: 2, offset: 2, after: \"{after}\"")).await.0, expected[3..5]);
-    assert_eq!(get(format!("{order}, last: 2, offset: 1")).await, (expected[n - 3..n - 1].to_vec(), true, true));
-    assert_eq!(get(format!("{order}, offset: {n}")).await, (vec![], true, false));
+    assert_eq!(
+        get(format!("{order}, first: 2, offset: 2, after: \"{after}\""))
+            .await
+            .0,
+        expected[3..5]
+    );
+    assert_eq!(
+        get(format!("{order}, last: 2, offset: 1")).await,
+        (expected[n - 3..n - 1].to_vec(), true, true)
+    );
+    assert_eq!(
+        get(format!("{order}, offset: {n}")).await,
+        (vec![], true, false)
+    );
 
     // `first` then `last`: the tail of the first page
-    assert_eq!(get(format!("{order}, first: 4, last: 2")).await, (expected[2..4].to_vec(), true, true));
-    assert_eq!(get(format!("{order}, first: 4, last: 9")).await, (expected[..4].to_vec(), false, true));
-    assert_eq!(get(format!("{order}, first: 100, last: 2")).await, (expected[n - 2..].to_vec(), true, false));
-    assert_eq!(get(format!("{order}, first: 3, last: 2, after: \"{after}\"")).await, (expected[2..4].to_vec(), true, true));
+    assert_eq!(
+        get(format!("{order}, first: 4, last: 2")).await,
+        (expected[2..4].to_vec(), true, true)
+    );
+    assert_eq!(
+        get(format!("{order}, first: 4, last: 9")).await,
+        (expected[..4].to_vec(), false, true)
+    );
+    assert_eq!(
+        get(format!("{order}, first: 100, last: 2")).await,
+        (expected[n - 2..].to_vec(), true, false)
+    );
+    assert_eq!(
+        get(format!("{order}, first: 3, last: 2, after: \"{after}\"")).await,
+        (expected[2..4].to_vec(), true, true)
+    );
 }
 
 #[tokio::test]
 async fn test_page_sizes_share_one_statement() {
     let (_client, schema, catalog) = setup_test().await;
     let sql = |query: String| {
-        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&schema, &query, "q.graphql").unwrap();
-        SqlCompiler::compile(&QueryPlanner::new(&catalog, "app_public").plan(&doc).unwrap()).sql
+        let doc =
+            apollo_compiler::ExecutableDocument::parse_and_validate(&schema, &query, "q.graphql")
+                .unwrap();
+        SqlCompiler::compile(
+            &QueryPlanner::new(&catalog, "app_public")
+                .plan(&doc)
+                .unwrap(),
+        )
+        .sql
     };
     // Sizes and offsets are parameters: only the arguments passed shape the statement
     for template in [
@@ -568,7 +774,11 @@ async fn test_grouped_aggregates() {
     .await
     .unwrap();
     let conn = &data["data"]["messagesConnection"];
-    assert_eq!(conn["nodes"].as_array().unwrap().len(), 2, "paging is unaffected");
+    assert_eq!(
+        conn["nodes"].as_array().unwrap().len(),
+        2,
+        "paging is unaffected"
+    );
 
     // The same groups straight from SQL
     let expected: Vec<serde_json::Value> = client
@@ -620,12 +830,24 @@ async fn test_grouped_aggregates() {
     .unwrap();
     for forum in data["data"]["forums"].as_array().unwrap() {
         let conn = &forum["messagesConnection"];
-        let sum: i64 = conn["groupedAggregates"].as_array().unwrap().iter().map(|g| g["count"].as_i64().unwrap()).sum();
+        let sum: i64 = conn["groupedAggregates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["count"].as_i64().unwrap())
+            .sum();
         assert_eq!(conn["totalCount"].as_i64().unwrap(), sum, "{forum}");
     }
     assert_eq!(data["data"]["empty"]["groupedAggregates"], json!([]));
 
     // Unknown groupings are rejected by the schema
-    let err = run(&client, &schema, &catalog, "{ messagesConnection { groupedAggregates(groupBy: [BODY_TRUNCATED_TO_DAY]) { count } } }").await.unwrap_err();
+    let err = run(
+        &client,
+        &schema,
+        &catalog,
+        "{ messagesConnection { groupedAggregates(groupBy: [BODY_TRUNCATED_TO_DAY]) { count } } }",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("BODY_TRUNCATED_TO_DAY"), "{err}");
 }

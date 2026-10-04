@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://moonrepo.dev/schemas/project.json
+language: typescript
+layer: automation
+
+dependsOn: [graphpg]
+
+fileGroups:
+  sources:
+    - src/**/*
+    - test/**/*
+    - drizzle/**/*
+    - "*.ts"
+    - package.json
+
+tasks:
+  generate:
+    # after editing src/schema.ts: writes the next SQL migration into drizzle/
+    command: pnpm exec drizzle-kit generate
+    inputs: [src/schema.ts, drizzle.config.ts]
+    options:
+      cache: false
+  typecheck:
+    command: pnpm exec tsc --noEmit
+    inputs: ["@globs(sources)", tsconfig.json]
+  lint:
+    command: pnpm exec biome lint .
+    inputs: ["@globs(sources)", /biome.json]
+  format:
+    command: pnpm exec biome format .
+    inputs: ["@globs(sources)", /biome.json]
+  fix:
+    # apply Biome's formatting and safe lint fixes
+    command: pnpm exec biome check --write .
+    options:
+      cache: false
+  test:
+    # migrates and seeds PostgreSQL with Drizzle, starts the built graphpg binary, queries it
+    command: pnpm exec vitest run
+    deps: [graphpg:build]
+    inputs: ["@globs(sources)", /target/debug/graphpg]
+    options:
+      cache: false

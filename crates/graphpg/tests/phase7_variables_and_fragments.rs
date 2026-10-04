@@ -8,7 +8,6 @@ use std::sync::Arc;
 use tokio_postgres::NoTls;
 use tower::ServiceExt;
 
-
 async fn setup_app() -> axum::Router {
     common::ensure_forum_fixture().await;
     let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
@@ -40,12 +39,17 @@ async fn setup_app() -> axum::Router {
     create_router(state)
 }
 
-async fn post_graphql(app: &axum::Router, payload: serde_json::Value) -> (StatusCode, serde_json::Value) {
+async fn post_graphql(
+    app: &axum::Router,
+    payload: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
     let req = axum::http::Request::builder()
         .method("POST")
         .uri("/graphql")
         .header("content-type", "application/json")
-        .body(axum::body::Body::from(serde_json::to_vec(&payload).unwrap()))
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&payload).unwrap(),
+        ))
         .unwrap();
 
     let res = app.clone().oneshot(req).await.expect("handler failed");
@@ -154,8 +158,14 @@ async fn test_query_with_variables() {
 
     assert_eq!(status, StatusCode::OK, "{json}");
     assert!(json["errors"].is_null(), "{json}");
-    assert_eq!(json["data"]["forum"]["id"], "Rm9ydW06Y2E3MDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwY2E3");
-    assert_eq!(json["data"]["forum"]["databaseId"], "ca700000-0000-0000-0000-000000000ca7");
+    assert_eq!(
+        json["data"]["forum"]["id"],
+        "Rm9ydW06Y2E3MDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwY2E3"
+    );
+    assert_eq!(
+        json["data"]["forum"]["databaseId"],
+        "ca700000-0000-0000-0000-000000000ca7"
+    );
     assert_eq!(json["data"]["forum"]["name"], "Cats");
 }
 
@@ -214,8 +224,14 @@ async fn test_variable_default_values_fallback() {
     let (status, json) = post_graphql(&app, serde_json::json!({ "query": query })).await;
     assert_eq!(status, StatusCode::OK, "{json}");
     assert!(json["errors"].is_null(), "{json}");
-    let nodes = json["data"]["forumsConnection"]["nodes"].as_array().expect("nodes array");
-    assert_eq!(nodes.len(), 1, "Default value $first: 1 should limit to 1 node");
+    let nodes = json["data"]["forumsConnection"]["nodes"]
+        .as_array()
+        .expect("nodes array");
+    assert_eq!(
+        nodes.len(),
+        1,
+        "Default value $first: 1 should limit to 1 node"
+    );
 }
 
 #[tokio::test]
@@ -249,7 +265,10 @@ async fn test_mutation_lifecycle_with_variables() {
         .as_str()
         .expect("created id")
         .to_string();
-    assert_eq!(json["data"]["createForum"]["forum"]["name"], "GraphQL Variables Test");
+    assert_eq!(
+        json["data"]["createForum"]["forum"]["name"],
+        "GraphQL Variables Test"
+    );
 
     // 2. Update with $id and $input variables
     let update_query = "
@@ -274,7 +293,10 @@ async fn test_mutation_lifecycle_with_variables() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{json}");
-    assert_eq!(json["data"]["updateForum"]["forum"]["name"], "Updated Variables Forum");
+    assert_eq!(
+        json["data"]["updateForum"]["forum"]["name"],
+        "Updated Variables Forum"
+    );
 
     // 3. Delete with $id variable
     let delete_query = "

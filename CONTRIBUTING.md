@@ -13,6 +13,24 @@ cargo test --workspace
 
 To use another database, set `TEST_DATABASE_URL`. The tests create their own schemas (`*_fixture`, `app_public`, `interfaces_and_unions`) and leave them in place; use a throwaway database.
 
+## Monorepo commands
+
+The repository is a [moon](https://moonrepo.dev) workspace: Rust in `crates/graphpg`, and the end-to-end suite in `e2e/` (TypeScript, with [Drizzle](https://orm.drizzle.team) owning the test schema and migrations). moon installs the pinned Rust and Node/pnpm toolchains (`.moon/toolchains.yml`) itself. Install moon, then from the repository root:
+
+```bash
+pnpm install               # once: Node dependencies
+pnpm db:up                 # PostgreSQL 18 + pgvector
+pnpm build                 # cargo build
+pnpm test                  # Rust integration tests, then the end-to-end suite
+pnpm test:e2e              # Drizzle migrates + seeds, the built graphpg is queried
+pnpm db:generate           # after editing e2e/src/schema.ts: writes the next SQL migration
+pnpm verify                # typecheck, lint and format check (Rust and TypeScript), as CI runs first
+pnpm fix                   # apply rustfmt and Biome fixes
+pnpm check                 # verify + all tests
+```
+
+`pnpm <script>` is shorthand for `moon run <project>:<task>`; `moon run :lint` runs a task in every project (`typecheck`, `lint`, `format`, `fix` and `test` exist in both; Rust uses cargo check, clippy and rustfmt, TypeScript uses tsc and Biome). The end-to-end suite uses `E2E_DATABASE_URL` (falling back to `TEST_DATABASE_URL`) and replaces its `blog` schema on every run.
+
 ## Tests
 
 - Each file in `crates/graphpg/tests/` is an integration test against a real database. A file creates the schema it needs, guarded by an advisory lock; when you change a fixture, bump its version string so it is rebuilt.

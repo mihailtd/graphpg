@@ -1,0 +1,6 @@
+{
+  "$schema": "https://biomejs.dev/schemas/latest/schema.json",
+  "files": { "includes": ["e2e/**", "!**/node_modules", "!e2e/drizzle"] },
+  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },
+  "linter": { "enabled": true, "rules": { "recommended": true } }
+}

@@ -3,7 +3,6 @@ use crate::compiler::{CompiledOperation, CompiledQuery, SqlCompiler};
 use crate::execution::{ExecutionEngine, ExecutionError};
 use crate::planner::{PlannerError, QueryPlanner};
 use crate::server::cache::RequestCache;
-use tracing::Instrument;
 use apollo_compiler::executable::Operation;
 use apollo_compiler::response::JsonMap;
 use apollo_compiler::validation::Valid;
@@ -13,11 +12,14 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use deadpool_postgres::{CreatePoolError, ManagerConfig, Pool, PoolConfig, RecyclingMethod, Runtime};
+use deadpool_postgres::{
+    CreatePoolError, ManagerConfig, Pool, PoolConfig, RecyclingMethod, Runtime,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio_postgres::NoTls;
 use tower_http::cors::CorsLayer;
+use tracing::Instrument;
 
 const GRAPHIQL_HTML: &str = include_str!("graphiql.html");
 
@@ -42,7 +44,11 @@ pub struct GraphQLError {
 
 impl GraphQLError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into(), path: None, extensions: None }
+        Self {
+            message: message.into(),
+            path: None,
+            extensions: None,
+        }
     }
 }
 
@@ -67,9 +73,14 @@ pub(crate) fn planner_errors(err: &PlannerError) -> Vec<GraphQLError> {
 
 /// The error of a failed execution: a constraint violation with its code and input fields,
 /// or the database's message.
-pub(crate) fn execution_error(err: &ExecutionError, catalog: &DatabaseCatalog) -> (StatusCode, GraphQLError) {
+pub(crate) fn execution_error(
+    err: &ExecutionError,
+    catalog: &DatabaseCatalog,
+) -> (StatusCode, GraphQLError) {
     let path = match err {
-        ExecutionError::Mutation { field, .. } => Some(vec![serde_json::Value::String(field.clone())]),
+        ExecutionError::Mutation { field, .. } => {
+            Some(vec![serde_json::Value::String(field.clone())])
+        }
         _ => None,
     };
     match err.violation(catalog) {
@@ -82,17 +93,37 @@ pub(crate) fn execution_error(err: &ExecutionError, catalog: &DatabaseCatalog) -
             });
             let message = match err {
                 ExecutionError::Mutation { field, .. } => {
-                    format!("{} (in mutation field `{field}`; the operation was rolled back)", v.message)
+                    format!(
+                        "{} (in mutation field `{field}`; the operation was rolled back)",
+                        v.message
+                    )
                 }
                 _ => v.message,
             };
-            (StatusCode::OK, GraphQLError { message, path, extensions: Some(extensions) })
+            (
+                StatusCode::OK,
+                GraphQLError {
+                    message,
+                    path,
+                    extensions: Some(extensions),
+                },
+            )
         }
         None => {
             let rejected = matches!(err, ExecutionError::Mutation { source, .. } if matches!(**source, ExecutionError::Rejected(_)));
-            let (status, code) =
-                if rejected { (StatusCode::OK, "BAD_USER_INPUT") } else { (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR") };
-            (status, GraphQLError { message: err.to_string(), path, extensions: Some(serde_json::json!({ "code": code })) })
+            let (status, code) = if rejected {
+                (StatusCode::OK, "BAD_USER_INPUT")
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR")
+            };
+            (
+                status,
+                GraphQLError {
+                    message: err.to_string(),
+                    path,
+                    extensions: Some(serde_json::json!({ "code": code })),
+                },
+            )
         }
     }
 }
@@ -180,7 +211,13 @@ impl ServerState {
 
     /// Adds read replicas (standbys are detected by [`refresh_replicas`](Self::refresh_replicas)).
     pub fn with_replicas(mut self, pools: Vec<Pool>) -> Self {
-        self.replicas = pools.into_iter().map(|pool| Replica { pool, standby: std::sync::atomic::AtomicBool::new(false) }).collect();
+        self.replicas = pools
+            .into_iter()
+            .map(|pool| Replica {
+                pool,
+                standby: std::sync::atomic::AtomicBool::new(false),
+            })
+            .collect();
         self
     }
 
@@ -189,19 +226,32 @@ impl ServerState {
     pub async fn refresh_replicas(&self) {
         for replica in &self.replicas {
             let standby = match replica.pool.get().await {
-                Ok(client) => client.query_one("SELECT pg_is_in_recovery()", &[]).await.map(|r| r.get::<_, bool>(0)).unwrap_or(false),
+                Ok(client) => client
+                    .query_one("SELECT pg_is_in_recovery()", &[])
+                    .await
+                    .map(|r| r.get::<_, bool>(0))
+                    .unwrap_or(false),
                 Err(_) => false,
             };
-            replica.standby.store(standby, std::sync::atomic::Ordering::Relaxed);
+            replica
+                .standby
+                .store(standby, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
     /// A connection for a query: a standby replica (round-robin) that has replayed
     /// `min_lsn` when given, else the primary. Also says which it is.
-    pub async fn read_pool(&self, min_lsn: Option<&str>) -> Result<(deadpool_postgres::Object, &'static str), String> {
+    pub async fn read_pool(
+        &self,
+        min_lsn: Option<&str>,
+    ) -> Result<(deadpool_postgres::Object, &'static str), String> {
         use std::sync::atomic::Ordering;
         let n = self.replicas.len();
-        let start = if n == 0 { 0 } else { self.next_replica.fetch_add(1, Ordering::Relaxed) % n };
+        let start = if n == 0 {
+            0
+        } else {
+            self.next_replica.fetch_add(1, Ordering::Relaxed) % n
+        };
         for i in 0..n {
             let replica = &self.replicas[(start + i) % n];
             if !replica.standby.load(Ordering::Relaxed) {
@@ -214,7 +264,10 @@ impl ServerState {
             let caught_up = match min_lsn {
                 None => true,
                 Some(lsn) => client
-                    .query_one("SELECT coalesce(pg_last_wal_replay_lsn() >= $1::text::pg_lsn, false)", &[&lsn])
+                    .query_one(
+                        "SELECT coalesce(pg_last_wal_replay_lsn() >= $1::text::pg_lsn, false)",
+                        &[&lsn],
+                    )
                     .await
                     .map(|r| r.get::<_, bool>(0))
                     .unwrap_or(false),
@@ -223,7 +276,11 @@ impl ServerState {
                 return Ok((client, "replica"));
             }
         }
-        self.pool.get().await.map(|c| (c, "primary")).map_err(|err| format!("Database unavailable: {err}"))
+        self.pool
+            .get()
+            .await
+            .map(|c| (c, "primary"))
+            .map_err(|err| format!("Database unavailable: {err}"))
     }
 
     /// Serves the GraphiQL IDE at `/graphiql`, or not (the default).
@@ -239,7 +296,10 @@ impl ServerState {
     }
 
     /// The role and settings a request runs with: `None` when authentication is off.
-    pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Option<super::AuthSessionContext>, super::AuthError> {
+    pub async fn authenticate(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<Option<super::AuthSessionContext>, super::AuthError> {
         match &self.auth {
             Some(auth) => auth.authenticate(headers).await.map(Some),
             None => Ok(None),
@@ -286,12 +346,24 @@ fn graphql_headers() -> HeaderMap {
     headers
 }
 
-fn error_response(status: StatusCode, message: String, extensions: Option<serde_json::Value>) -> Response {
+fn error_response(
+    status: StatusCode,
+    message: String,
+    extensions: Option<serde_json::Value>,
+) -> Response {
     errors_response(status, vec![GraphQLError::new(message)], extensions)
 }
 
-fn errors_response(status: StatusCode, errors: Vec<GraphQLError>, extensions: Option<serde_json::Value>) -> Response {
-    let res = GraphQLResponse { errors: Some(errors), data: None, extensions };
+fn errors_response(
+    status: StatusCode,
+    errors: Vec<GraphQLError>,
+    extensions: Option<serde_json::Value>,
+) -> Response {
+    let res = GraphQLResponse {
+        errors: Some(errors),
+        data: None,
+        extensions,
+    };
     (status, graphql_headers(), Json(res)).into_response()
 }
 
@@ -333,7 +405,8 @@ fn format_sql(sql: &str) -> String {
 
 /// `extensions.sql`: the statement of a query, or the statements of each mutation field.
 pub(crate) fn debug_sql(compiled: &CompiledOperation) -> serde_json::Value {
-    let statement = |q: &CompiledQuery| serde_json::json!({ "query": format_sql(&q.sql), "params": q.params });
+    let statement =
+        |q: &CompiledQuery| serde_json::json!({ "query": format_sql(&q.sql), "params": q.params });
     match compiled {
         CompiledOperation::Query(q) => statement(q),
         CompiledOperation::Mutation(mutations) => serde_json::json!({
@@ -362,13 +435,17 @@ pub(crate) fn execute_introspection(
     variables: Option<&serde_json::Value>,
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let variables: JsonMap = match variables {
-        Some(v) if !v.is_null() => serde_json::from_value(v.clone()).map_err(|e| format!("Invalid variables: {e}"))?,
+        Some(v) if !v.is_null() => {
+            serde_json::from_value(v.clone()).map_err(|e| format!("Invalid variables: {e}"))?
+        }
         _ => JsonMap::new(),
     };
-    let to_message = |err: apollo_compiler::request::RequestError| err.to_graphql_error(&doc.sources).message;
+    let to_message =
+        |err: apollo_compiler::request::RequestError| err.to_graphql_error(&doc.sources).message;
 
     apollo_compiler::introspection::check_max_depth(doc, operation).map_err(to_message)?;
-    let variables = apollo_compiler::request::coerce_variable_values(schema, operation, &variables).map_err(to_message)?;
+    let variables = apollo_compiler::request::coerce_variable_values(schema, operation, &variables)
+        .map_err(to_message)?;
     let response = apollo_compiler::introspection::partial_execute(
         schema,
         &schema.implementers_map(),
@@ -405,7 +482,8 @@ async fn graphql_handler(
         Some(doc) => doc,
         None => {
             let parsed = tracing::info_span!("graphql.parse").in_scope(|| {
-                ExecutableDocument::parse_and_validate(&schema, &req.query, "request.graphql").map_err(|err| err.to_string())
+                ExecutableDocument::parse_and_validate(&schema, &req.query, "request.graphql")
+                    .map_err(|err| err.to_string())
             });
             match parsed {
                 Ok(doc) => {
@@ -420,14 +498,24 @@ async fn graphql_handler(
     let operation = match doc.operations.get(req.operation_name.as_deref()) {
         Ok(op) => op,
         Err(err) => {
-            return error_response(StatusCode::BAD_REQUEST, err.to_graphql_error(&doc.sources).message, None)
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                err.to_graphql_error(&doc.sources).message,
+                None,
+            )
         }
     };
-    let operation_label = operation.name.as_ref().map(|n| n.to_string()).unwrap_or_else(|| "anonymous".to_string());
+    let operation_label = operation
+        .name
+        .as_ref()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "anonymous".to_string());
 
     // Incremental Delivery (@defer and @stream) over HTTP multipart streaming
     if super::incremental::has_active_defer_or_stream(&doc, operation, req.variables.as_ref()) {
-        if let Some(inc_plan) = super::incremental::analyze_incremental(&doc, operation, req.variables.as_ref()) {
+        if let Some(inc_plan) =
+            super::incremental::analyze_incremental(&doc, operation, req.variables.as_ref())
+        {
             return super::incremental::execute_incremental_stream(
                 state,
                 doc,
@@ -435,7 +523,10 @@ async fn graphql_handler(
                 req.variables,
                 operation_label,
                 auth_ctx,
-                request_headers.get(MIN_WAL_POSITION_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string),
+                request_headers
+                    .get(MIN_WAL_POSITION_HEADER)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string),
             )
             .await;
         }
@@ -471,23 +562,42 @@ async fn graphql_handler(
     let mut extensions = serde_json::Map::new();
     if has_concrete {
         // An operation run before with the same variables reuses its compiled statements
-        let cached = state.cache.operation(&req.query, req.operation_name.as_deref(), req.variables.as_ref());
+        let cached = state.cache.operation(
+            &req.query,
+            req.operation_name.as_deref(),
+            req.variables.as_ref(),
+        );
         let cache_status = if cached.is_some() { "hit" } else { "miss" };
         let compiled = match cached {
             Some(compiled) => compiled,
             None => {
-                let span = tracing::info_span!("graphql.plan", graphql.operation = %operation_label);
+                let span =
+                    tracing::info_span!("graphql.plan", graphql.operation = %operation_label);
                 let plan = match span.in_scope(|| planner.plan_operation(operation)) {
                     Ok(p) => p,
                     Err(err) => return errors_response(StatusCode::OK, planner_errors(&err), None),
                 };
-                let mut compiled = tracing::info_span!("graphql.compile").in_scope(|| SqlCompiler::compile_operation(&plan));
+                let mut compiled = tracing::info_span!("graphql.compile")
+                    .in_scope(|| SqlCompiler::compile_operation(&plan));
                 if state.sql_comments {
-                    let kind = if operation.operation_type.is_mutation() { "mutation" } else { "query" };
-                    compiled.tag(&[("application", "graphpg"), ("graphql_operation", &operation_label), ("graphql_type", kind)]);
+                    let kind = if operation.operation_type.is_mutation() {
+                        "mutation"
+                    } else {
+                        "query"
+                    };
+                    compiled.tag(&[
+                        ("application", "graphpg"),
+                        ("graphql_operation", &operation_label),
+                        ("graphql_type", kind),
+                    ]);
                 }
                 let compiled = Arc::new(compiled);
-                state.cache.store_operation(&req.query, req.operation_name.as_deref(), req.variables.as_ref(), compiled.clone());
+                state.cache.store_operation(
+                    &req.query,
+                    req.operation_name.as_deref(),
+                    req.variables.as_ref(),
+                    compiled.clone(),
+                );
                 compiled
             }
         };
@@ -504,16 +614,27 @@ async fn graphql_handler(
         // replica when there is one, mutations on the primary
         let is_mutation = matches!(*compiled, CompiledOperation::Mutation(_));
         let acquired = if is_mutation || state.debug.explain {
-            state.pool.get().await.map(|c| (c, "primary")).map_err(|err| format!("Database unavailable: {err}"))
+            state
+                .pool
+                .get()
+                .await
+                .map(|c| (c, "primary"))
+                .map_err(|err| format!("Database unavailable: {err}"))
         } else {
-            let min_lsn = request_headers.get(MIN_WAL_POSITION_HEADER).and_then(|v| v.to_str().ok());
+            let min_lsn = request_headers
+                .get(MIN_WAL_POSITION_HEADER)
+                .and_then(|v| v.to_str().ok());
             state.read_pool(min_lsn).await
         };
         let (client, database) = match acquired {
             Ok(acquired) => acquired,
             Err(message) => {
                 tracing::error!(error = %message, "failed to acquire database connection");
-                return error_response(StatusCode::SERVICE_UNAVAILABLE, message, extensions_value(&extensions));
+                return error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    message,
+                    extensions_value(&extensions),
+                );
             }
         };
         if state.debug.sql || state.debug.explain {
@@ -524,17 +645,29 @@ async fn graphql_handler(
         // dropped mid-transaction, the connection would go back to the pool still inside it,
         // with the request's role and claims
         let span = tracing::info_span!("graphql.execute", graphql.operation = %operation_label);
-        let (explain_on, track_wal) = (state.debug.explain, is_mutation && !state.replicas.is_empty());
+        let (explain_on, track_wal) = (
+            state.debug.explain,
+            is_mutation && !state.replicas.is_empty(),
+        );
         let task = {
             let compiled = compiled.clone();
             let auth_ctx = auth_ctx.clone();
             async move {
                 let mut explain = explain_on.then(Vec::new);
-                let result = ExecutionEngine::run_with_auth(&*client, &compiled, explain.as_mut(), auth_ctx.as_ref()).await;
+                let result = ExecutionEngine::run_with_auth(
+                    &*client,
+                    &compiled,
+                    explain.as_mut(),
+                    auth_ctx.as_ref(),
+                )
+                .await;
                 // Where the primary's WAL is after the write, for reads of it from replicas
                 let mut wal = None;
                 if track_wal && result.is_ok() {
-                    if let Ok(row) = client.query_one("SELECT pg_current_wal_lsn()::text", &[]).await {
+                    if let Ok(row) = client
+                        .query_one("SELECT pg_current_wal_lsn()::text", &[])
+                        .await
+                    {
                         wal = row.get::<_, Option<String>>(0);
                     }
                 }
@@ -545,7 +678,11 @@ async fn graphql_handler(
             Ok(done) => done,
             Err(err) => {
                 tracing::error!(error = %err, "the operation's task failed");
-                return error_response(StatusCode::INTERNAL_SERVER_ERROR, "the operation failed".to_string(), extensions_value(&extensions));
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "the operation failed".to_string(),
+                    extensions_value(&extensions),
+                );
             }
         };
         wal_position = wal;
@@ -569,7 +706,10 @@ async fn graphql_handler(
         if data.contains_key(key) {
             continue;
         }
-        if let Some(v) = introspection_data.remove(key).or_else(|| sql_data.remove(key)) {
+        if let Some(v) = introspection_data
+            .remove(key)
+            .or_else(|| sql_data.remove(key))
+        {
             data.insert(key.to_string(), v);
         }
     }

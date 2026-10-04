@@ -7,7 +7,6 @@ use graphpg::schema::SchemaBuilder;
 use serde_json::json;
 use tokio_postgres::NoTls;
 
-
 async fn setup_test() -> (
     tokio_postgres::Client,
     apollo_compiler::validation::Valid<apollo_compiler::Schema>,
@@ -66,10 +65,15 @@ async fn test_fixture_field_aliases() {
         .await
         .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     // Verify aliasing matches Crystal's behavior: both aliases map to the same underlying column
-    let forums = result["data"]["forums"].as_array().expect("forums should be an array");
+    let forums = result["data"]["forums"]
+        .as_array()
+        .expect("forums should be an array");
     assert_eq!(forums.len(), 3);
 
     for item in forums {
@@ -116,7 +120,10 @@ async fn test_fixture_single_record_via_arg() {
         .await
         .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     // Returns Relay Global ID on id
     assert_eq!(
@@ -194,7 +201,10 @@ async fn test_multi_root_fields_single_query_roundtrip() {
         .await
         .expect("Execution failed");
 
-    println!("Result:\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!(
+        "Result:\n{}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
 
     // Verify all 3 root fields returned in a single data object
     let users = result["data"]["users"].as_array().expect("users array");

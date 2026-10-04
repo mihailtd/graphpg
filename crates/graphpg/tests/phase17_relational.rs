@@ -58,7 +58,9 @@ INSERT INTO categories (path, name) VALUES
 "#;
 
 async fn connect() -> tokio_postgres::Client {
-    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls).await.expect("Failed to connect to PostgreSQL");
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .expect("Failed to connect to PostgreSQL");
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             eprintln!("connection error: {}", e);
@@ -68,9 +70,15 @@ async fn connect() -> tokio_postgres::Client {
 }
 
 async fn ensure_fixture(client: &tokio_postgres::Client) {
-    client.execute("SELECT pg_advisory_lock(424248)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_lock(424248)", &[])
+        .await
+        .unwrap();
     let version: Option<String> = client
-        .query_opt("SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1", &[&SCHEMA])
+        .query_opt(
+            "SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1",
+            &[&SCHEMA],
+        )
         .await
         .unwrap()
         .and_then(|row| row.get(0));
@@ -82,7 +90,10 @@ async fn ensure_fixture(client: &tokio_postgres::Client) {
             .await
             .expect("fixture setup failed");
     }
-    client.execute("SELECT pg_advisory_unlock(424248)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_unlock(424248)", &[])
+        .await
+        .unwrap();
 }
 
 struct Env {
@@ -95,42 +106,82 @@ struct Env {
 async fn setup() -> Env {
     let client = connect().await;
     ensure_fixture(&client).await;
-    let catalog = CatalogInspector::new(&client).inspect_schema(SCHEMA).await.expect("inspection failed");
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema(SCHEMA)
+        .await
+        .expect("inspection failed");
     let sdl = SchemaBuilder::generate_sdl(&catalog);
-    let schema = SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
-    Env { client, schema, catalog, sdl }
+    let schema =
+        SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
+    Env {
+        client,
+        schema,
+        catalog,
+        sdl,
+    }
 }
 
 impl Env {
     async fn run(&self, query: &str) -> serde_json::Value {
-        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&self.schema, query, "q.graphql")
-            .unwrap_or_else(|e| panic!("validation: {e}\nquery: {query}"));
-        let plan = QueryPlanner::new(&self.catalog, SCHEMA).plan(&doc).unwrap_or_else(|e| panic!("planning: {e}"));
-        let result = ExecutionEngine::execute(&self.client, &plan).await.unwrap_or_else(|e| panic!("execution: {e}\nquery: {query}"));
+        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(
+            &self.schema,
+            query,
+            "q.graphql",
+        )
+        .unwrap_or_else(|e| panic!("validation: {e}\nquery: {query}"));
+        let plan = QueryPlanner::new(&self.catalog, SCHEMA)
+            .plan(&doc)
+            .unwrap_or_else(|e| panic!("planning: {e}"));
+        let result = ExecutionEngine::execute(&self.client, &plan)
+            .await
+            .unwrap_or_else(|e| panic!("execution: {e}\nquery: {query}"));
         result["data"].clone()
     }
 
     fn block(&self, keyword: &str, name: &str) -> String {
-        let start = self.sdl.find(&format!("{keyword} {name} ")).unwrap_or_else(|| panic!("no {keyword} {name}:\n{}", self.sdl));
-        let end = self.sdl[start..].find("\n}").map(|e| start + e + 1).unwrap_or(self.sdl.len());
+        let start = self
+            .sdl
+            .find(&format!("{keyword} {name} "))
+            .unwrap_or_else(|| panic!("no {keyword} {name}:\n{}", self.sdl));
+        let end = self.sdl[start..]
+            .find("\n}")
+            .map(|e| start + e + 1)
+            .unwrap_or(self.sdl.len());
         self.sdl[start..end].to_string()
     }
 }
 
 /// `name`s of a connection's nodes.
 fn names(data: &serde_json::Value, key: &str) -> Vec<String> {
-    data[key]["nodes"].as_array().unwrap_or_else(|| panic!("no {key} in {data}")).iter().map(|n| n["name"].as_str().unwrap().to_string()).collect()
+    data[key]["nodes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no {key} in {data}"))
+        .iter()
+        .map(|n| n["name"].as_str().unwrap().to_string())
+        .collect()
 }
 
 #[tokio::test]
 async fn test_to_many_filters() {
     let env = setup().await;
     let filter = env.block("input", "PostToManyFilter");
-    for field in ["some: PostFilter", "every: PostFilter", "none: PostFilter", "count: IntFilter", "sum: PostHavingNumbersInput"] {
+    for field in [
+        "some: PostFilter",
+        "every: PostFilter",
+        "none: PostFilter",
+        "count: IntFilter",
+        "sum: PostHavingNumbersInput",
+    ] {
         assert!(filter.contains(field), "{field} missing:\n{filter}");
     }
-    assert!(env.block("input", "ForumFilter").contains("  posts: PostToManyFilter\n"));
-    assert!(env.block("input", "ForumFilter").contains("  tags: TagToManyFilter\n"), "many-to-many too");
+    assert!(env
+        .block("input", "ForumFilter")
+        .contains("  posts: PostToManyFilter\n"));
+    assert!(
+        env.block("input", "ForumFilter")
+            .contains("  tags: TagToManyFilter\n"),
+        "many-to-many too"
+    );
 
     let data = env
         .run(
@@ -165,8 +216,16 @@ async fn test_to_many_filters() {
 async fn test_order_by_relations_counts_and_computed_columns() {
     let env = setup().await;
     let order = env.block("enum", "ForumOrderBy");
-    for value in ["OWNER_NAME_ASC", "POSTS_COUNT_DESC", "POST_TOTAL_DESC", "TAGS_COUNT_ASC"] {
-        assert!(order.contains(&format!("  {value}\n")), "{value} missing:\n{order}");
+    for value in [
+        "OWNER_NAME_ASC",
+        "POSTS_COUNT_DESC",
+        "POST_TOTAL_DESC",
+        "TAGS_COUNT_ASC",
+    ] {
+        assert!(
+            order.contains(&format!("  {value}\n")),
+            "{value} missing:\n{order}"
+        );
     }
     let data = env
         .run(
@@ -184,9 +243,15 @@ async fn test_order_by_relations_counts_and_computed_columns() {
     // Rows without a related row sort last ascending, first descending
     assert_eq!(names(&data, "byOwner"), ["Go", "Rust", "Empty"]);
     assert_eq!(names(&data, "byOwnerDesc"), ["Empty", "Rust", "Go"]);
-    assert_eq!(data["byTotal"]["nodes"], json!([{ "name": "Rust", "postTotal": "20" }, { "name": "Go", "postTotal": "1" }, { "name": "Empty", "postTotal": "0" }]));
+    assert_eq!(
+        data["byTotal"]["nodes"],
+        json!([{ "name": "Rust", "postTotal": "20" }, { "name": "Go", "postTotal": "1" }, { "name": "Empty", "postTotal": "0" }])
+    );
     assert_eq!(names(&data, "byTags"), ["Rust", "Go", "Empty"]);
-    assert_eq!(data["posts"]["nodes"], json!([{ "score": 1 }, { "score": 10 }, { "score": 7 }, { "score": 3 }]));
+    assert_eq!(
+        data["posts"]["nodes"],
+        json!([{ "score": 1 }, { "score": 10 }, { "score": 7 }, { "score": 3 }])
+    );
 
     // Cursors carry the sorted values: pages through an expression order, both ways
     for (order, expected) in [
@@ -200,15 +265,32 @@ async fn test_order_by_relations_counts_and_computed_columns() {
         loop {
             let page = env.run(&format!("{{ forumsConnection(first: 1, orderBy: [{order}]{after}) {{ nodes {{ name }} pageInfo {{ hasNextPage endCursor }} }} }}")).await;
             let page = &page["forumsConnection"];
-            seen.extend(page["nodes"].as_array().unwrap().iter().map(|n| n["name"].as_str().unwrap().to_string()));
+            seen.extend(
+                page["nodes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|n| n["name"].as_str().unwrap().to_string()),
+            );
             if !page["pageInfo"]["hasNextPage"].as_bool().unwrap() {
                 break;
             }
-            after = format!(r#", after: "{}""#, page["pageInfo"]["endCursor"].as_str().unwrap());
+            after = format!(
+                r#", after: "{}""#,
+                page["pageInfo"]["endCursor"].as_str().unwrap()
+            );
         }
         assert_eq!(seen, expected, "forward through {order}");
-        let back = env.run(&format!("{{ forumsConnection(last: 2, orderBy: [{order}]) {{ nodes {{ name }} }} }}")).await;
-        assert_eq!(names(&back, "forumsConnection"), expected[1..], "last page of {order}");
+        let back = env
+            .run(&format!(
+                "{{ forumsConnection(last: 2, orderBy: [{order}]) {{ nodes {{ name }} }} }}"
+            ))
+            .await;
+        assert_eq!(
+            names(&back, "forumsConnection"),
+            expected[1..],
+            "last page of {order}"
+        );
     }
 }
 
@@ -216,7 +298,12 @@ async fn test_order_by_relations_counts_and_computed_columns() {
 async fn test_hierarchies_from_self_references() {
     let env = setup().await;
     let staff = env.block("type", "Staff");
-    for field in ["  ancestors(", "  descendants(", "  mentorAncestors(", "  mentorDescendants("] {
+    for field in [
+        "  ancestors(",
+        "  descendants(",
+        "  mentorAncestors(",
+        "  mentorDescendants(",
+    ] {
         assert!(staff.contains(field), "{field} missing:\n{staff}");
     }
     let data = env
@@ -232,9 +319,18 @@ async fn test_hierarchies_from_self_references() {
             }"#,
         )
         .await;
-    assert_eq!(data["intern"]["ancestors"], json!([{ "name": "Dev" }, { "name": "CTO" }, { "name": "CEO" }]));
-    assert_eq!(data["intern"]["mentorAncestors"], json!([{ "name": "Dev" }, { "name": "CEO" }]));
-    assert_eq!(data["ceo"]["descendants"], json!([{ "name": "CTO" }, { "name": "Dev" }, { "name": "Intern" }]));
+    assert_eq!(
+        data["intern"]["ancestors"],
+        json!([{ "name": "Dev" }, { "name": "CTO" }, { "name": "CEO" }])
+    );
+    assert_eq!(
+        data["intern"]["mentorAncestors"],
+        json!([{ "name": "Dev" }, { "name": "CEO" }])
+    );
+    assert_eq!(
+        data["ceo"]["descendants"],
+        json!([{ "name": "CTO" }, { "name": "Dev" }, { "name": "Intern" }])
+    );
     assert_eq!(data["ceo"]["near"], json!([{ "name": "CTO" }]));
     assert_eq!(data["ceo"]["interns"], json!([{ "name": "Intern" }]));
     assert_eq!(
@@ -246,17 +342,30 @@ async fn test_hierarchies_from_self_references() {
     );
 
     // A cycle ends the walk instead of looping
-    env.client.batch_execute("BEGIN; UPDATE relational_fixture.staff SET manager_id = 4 WHERE id = 1").await.unwrap();
-    let cyclic = env.run("{ staff: staffById(id: 1) { descendants { name } ancestors { name } } }").await;
+    env.client
+        .batch_execute("BEGIN; UPDATE relational_fixture.staff SET manager_id = 4 WHERE id = 1")
+        .await
+        .unwrap();
+    let cyclic = env
+        .run("{ staff: staffById(id: 1) { descendants { name } ancestors { name } } }")
+        .await;
     env.client.batch_execute("ROLLBACK").await.unwrap();
-    assert_eq!(cyclic["staff"]["descendants"], json!([{ "name": "CTO" }, { "name": "Dev" }, { "name": "Intern" }]));
-    assert_eq!(cyclic["staff"]["ancestors"], json!([{ "name": "Intern" }, { "name": "Dev" }, { "name": "CTO" }]));
+    assert_eq!(
+        cyclic["staff"]["descendants"],
+        json!([{ "name": "CTO" }, { "name": "Dev" }, { "name": "Intern" }])
+    );
+    assert_eq!(
+        cyclic["staff"]["ancestors"],
+        json!([{ "name": "Intern" }, { "name": "Dev" }, { "name": "CTO" }])
+    );
 }
 
 #[tokio::test]
 async fn test_hierarchies_from_ltree_paths() {
     let env = setup().await;
-    assert!(env.block("input", "CategoryFilter").contains("  path: LTreeFilter\n"));
+    assert!(env
+        .block("input", "CategoryFilter")
+        .contains("  path: LTreeFilter\n"));
     let data = env
         .run(
             r#"{
@@ -269,9 +378,18 @@ async fn test_hierarchies_from_ltree_paths() {
             }"#,
         )
         .await;
-    assert_eq!(data["science"], json!({ "pathAncestors": [{ "name": "Top" }], "pathDescendants": [{ "name": "Astronomy" }] }));
-    assert_eq!(data["top"]["pathDescendants"], json!([{ "name": "Science" }, { "name": "Arts" }, { "name": "Astronomy" }]));
-    assert_eq!(data["top"]["near"], json!([{ "name": "Science" }, { "name": "Arts" }]));
+    assert_eq!(
+        data["science"],
+        json!({ "pathAncestors": [{ "name": "Top" }], "pathDescendants": [{ "name": "Astronomy" }] })
+    );
+    assert_eq!(
+        data["top"]["pathDescendants"],
+        json!([{ "name": "Science" }, { "name": "Arts" }, { "name": "Astronomy" }])
+    );
+    assert_eq!(
+        data["top"]["near"],
+        json!([{ "name": "Science" }, { "name": "Arts" }])
+    );
     assert_eq!(names(&data, "below"), ["Science", "Astronomy"]);
     assert_eq!(names(&data, "above"), ["Top", "Science", "Astronomy"]);
     assert_eq!(names(&data, "pattern"), ["Science", "Astronomy"]);

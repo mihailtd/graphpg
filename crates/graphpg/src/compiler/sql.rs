@@ -1,10 +1,13 @@
+use crate::catalog::TreeLink;
 use crate::catalog::{pg_array_literal, ExclusiveArcMetadata};
 use crate::plan::{
-    AggregatesSelections, ArgValue, BoundArg, BoundPart, RangePart, ColumnValue, CompositeSource, ConnectionSelections, FilterExpr, FunctionResult, FunctionSource, GlobalSearchBranch, GroupKey, HighlightOptions, GroupedAggregates, HavingCondition, JoinCondition, MutationKind, NodeRef, OnConflict,
-    OperationPlan, PayloadField, RelatedRows, RowPolymorphism, RowTarget, SearchOperation, SearchSelections, SelectedField, SortCompare, SortExpr, SortKey, Step, StepId, TypedFieldSet, ValueOutput,
-    TreeSource, VersionGuard, WhereCondition, WriteNode, WriteNodeKind,
+    AggregatesSelections, ArgValue, BoundArg, BoundPart, ColumnValue, CompositeSource,
+    ConnectionSelections, FilterExpr, FunctionResult, FunctionSource, GlobalSearchBranch, GroupKey,
+    GroupedAggregates, HavingCondition, HighlightOptions, JoinCondition, MutationKind, NodeRef,
+    OnConflict, OperationPlan, PayloadField, RangePart, RelatedRows, RowPolymorphism, RowTarget,
+    SearchOperation, SearchSelections, SelectedField, SortCompare, SortExpr, SortKey, Step, StepId,
+    TreeSource, TypedFieldSet, ValueOutput, VersionGuard, WhereCondition, WriteNode, WriteNodeKind,
 };
-use crate::catalog::TreeLink;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -54,7 +57,8 @@ impl JoinScope {
     /// Appends `LEFT JOIN <table> <alias> ON <on>` unless `alias` is already joined.
     fn join(&mut self, table: String, alias: &str, on: String) {
         if self.joined.insert(alias.to_string()) {
-            self.sql.push_str(&format!(" LEFT JOIN {table} {alias} ON {on}"));
+            self.sql
+                .push_str(&format!(" LEFT JOIN {table} {alias} ON {on}"));
         }
     }
 }
@@ -71,7 +75,11 @@ pub struct CompiledQuery {
 
 impl CompiledQuery {
     pub fn new(sql: String, params: Vec<String>) -> Self {
-        Self { sql, params, estimates: Vec::new() }
+        Self {
+            sql,
+            params,
+            estimates: Vec::new(),
+        }
     }
 }
 
@@ -127,7 +135,12 @@ pub struct CompiledStatement {
 
 impl CompiledStatement {
     fn new(query: CompiledQuery) -> Self {
-        Self { query, deferred: Vec::new(), strict: true, context: None }
+        Self {
+            query,
+            deferred: Vec::new(),
+            strict: true,
+            context: None,
+        }
     }
 
     fn with_context(mut self, context: Option<WriteContext>) -> Self {
@@ -167,10 +180,18 @@ impl InputRow {
         let values = node
             .values
             .iter()
-            .map(|cv| (cv.column.clone(), (!cv.value.is_null()).then(|| SqlCompiler::param_text(&cv.value))))
+            .map(|cv| {
+                (
+                    cv.column.clone(),
+                    (!cv.value.is_null()).then(|| SqlCompiler::param_text(&cv.value)),
+                )
+            })
             .chain(node.refs.iter().map(|r| (r.column.clone(), None)))
             .collect();
-        Self { path: node.path.clone(), values }
+        Self {
+            path: node.path.clone(),
+            values,
+        }
     }
 }
 
@@ -181,14 +202,19 @@ pub enum ParamSource {
     /// A text array of the values.
     Array(Vec<ValueRef>),
     /// A text array of column `column` of the rows `collect` writes returned, in order.
-    Returned { column: usize },
+    Returned {
+        column: usize,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub enum ValueRef {
     Literal(Option<String>),
     /// Column `column` of the row written or read for write node `node`.
-    Node { node: usize, column: String },
+    Node {
+        node: usize,
+        column: String,
+    },
 }
 
 /// A statement of a mutation field run before its payload.
@@ -250,10 +276,18 @@ impl CompiledOperation {
         tags.sort();
         let encoded: Vec<String> = tags
             .iter()
-            .map(|(k, v)| format!("{}='{}'", percent_encode(k), percent_encode(v).replace('\'', "\\'")))
+            .map(|(k, v)| {
+                format!(
+                    "{}='{}'",
+                    percent_encode(k),
+                    percent_encode(v).replace('\'', "\\'")
+                )
+            })
             .collect();
         let comment = format!(" /*{}*/", encoded.join(","));
-        let append = |q: &mut CompiledQuery| q.sql = format!("{}{comment}", q.sql.trim_end().trim_end_matches(';'));
+        let append = |q: &mut CompiledQuery| {
+            q.sql = format!("{}{comment}", q.sql.trim_end().trim_end_matches(';'))
+        };
         match self {
             CompiledOperation::Query(q) => append(q),
             CompiledOperation::Mutation(mutations) => {
@@ -289,7 +323,10 @@ impl SqlCompiler {
     /// root field (see [`CompiledMutation`]).
     pub fn compile_operation(plan: &OperationPlan) -> CompiledOperation {
         let is_mutation = plan.root_fields().iter().any(|(_, id)| {
-            matches!(plan.get_step(*id), Some(Step::PgMutation { .. } | Step::PgFunction { mutation: true, .. }))
+            matches!(
+                plan.get_step(*id),
+                Some(Step::PgMutation { .. } | Step::PgFunction { mutation: true, .. })
+            )
         });
         if !is_mutation {
             return CompiledOperation::Query(Self::compile(plan));
@@ -298,8 +335,12 @@ impl SqlCompiler {
             .root_fields()
             .iter()
             .filter_map(|(alias, id)| match plan.get_step(*id) {
-                Some(step @ Step::PgMutation { .. }) => Some(Self::compile_mutation(alias, step, plan)),
-                Some(step @ Step::PgFunction { mutation: true, .. }) => Some(Self::compile_function_mutation(alias, step, plan)),
+                Some(step @ Step::PgMutation { .. }) => {
+                    Some(Self::compile_mutation(alias, step, plan))
+                }
+                Some(step @ Step::PgFunction { mutation: true, .. }) => {
+                    Some(Self::compile_function_mutation(alias, step, plan))
+                }
                 _ => None,
             })
             .collect();
@@ -311,7 +352,9 @@ impl SqlCompiler {
     /// instead of building one response. `first`, `after` and `before` apply; without
     /// `first` every row is returned. `None` when the plan is not one connection.
     pub fn compile_rows(plan: &OperationPlan) -> Option<CompiledQuery> {
-        let [(_, step_id)] = plan.root_fields() else { return None };
+        let [(_, step_id)] = plan.root_fields() else {
+            return None;
+        };
         let Step::PgConnection {
             schema,
             table,
@@ -332,9 +375,19 @@ impl SqlCompiler {
             return None;
         };
         let mut params = Vec::new();
-        let mut where_clauses = Self::connection_where(table_alias, where_conditions, filter_expr.as_ref(), &None, &mut params);
+        let mut where_clauses = Self::connection_where(
+            table_alias,
+            where_conditions,
+            filter_expr.as_ref(),
+            &None,
+            &mut params,
+        );
         let legacy_key = [("id".to_string(), id_cast.clone())];
-        let key = if cursor_columns.is_empty() { &legacy_key[..] } else { &cursor_columns[..] };
+        let key = if cursor_columns.is_empty() {
+            &legacy_key[..]
+        } else {
+            &cursor_columns[..]
+        };
         let key_sort: Vec<SortKey> = key
             .iter()
             .map(|(column, cast)| SortKey {
@@ -359,17 +412,36 @@ impl SqlCompiler {
                 [_] => vec![serde_json::Value::String(Self::decode_cursor(cursor))],
                 _ => Self::decode_composite_cursor(cursor),
             };
-            where_clauses.push(Self::keyset_condition(&key_exprs, keyset, &values, after, &mut params));
+            where_clauses.push(Self::keyset_condition(
+                &key_exprs,
+                keyset,
+                &values,
+                after,
+                &mut params,
+            ));
         }
-        let order: Vec<String> =
-            keyset.iter().zip(&key_exprs).map(|(k, e)| format!("{e} {}", if k.descending { "DESC" } else { "ASC" })).collect();
+        let order: Vec<String> = keyset
+            .iter()
+            .zip(&key_exprs)
+            .map(|(k, e)| format!("{e} {}", if k.descending { "DESC" } else { "ASC" }))
+            .collect();
         let from = match source {
             Some(source) => Self::function_from(source, table_alias, &mut params),
             None => Self::from_item(schema, table, table_alias, None),
         };
-        let limit = first.map(|n| format!(" LIMIT {}", Self::bind_count(&mut params, n))).unwrap_or_default();
+        let limit = first
+            .map(|n| format!(" LIMIT {}", Self::bind_count(&mut params, n)))
+            .unwrap_or_default();
         let mut scope = JoinScope::default();
-        let node = Self::row_object(table_alias, &selections.node_fields, selections.node_polymorphism.as_ref(), "Node", &mut scope, plan, &mut params);
+        let node = Self::row_object(
+            table_alias,
+            &selections.node_fields,
+            selections.node_polymorphism.as_ref(),
+            "Node",
+            &mut scope,
+            plan,
+            &mut params,
+        );
         let order = order.join(", ");
         let sql = format!(
             "SELECT {node} AS row FROM (SELECT {table_alias}.* FROM {from}{} ORDER BY {order}{limit}) {table_alias}{} ORDER BY {order}",
@@ -382,9 +454,18 @@ impl SqlCompiler {
     /// `INSERT INTO <table> (<columns>) SELECT ... FROM <staging>`: rows staged as text
     /// (columns `c0`, `c1`, ... of `staging`, in `columns` order), converted to the columns'
     /// types as writes are.
-    pub fn import_statement(schema: &str, table: &str, columns: &[ColumnValue], staging: &str) -> String {
+    pub fn import_statement(
+        schema: &str,
+        table: &str,
+        columns: &[ColumnValue],
+        staging: &str,
+    ) -> String {
         let names: Vec<String> = columns.iter().map(|c| quote_ident(&c.column)).collect();
-        let values: Vec<String> = columns.iter().enumerate().map(|(j, c)| Self::assign_expr(&format!("_s.c{j}"), c, true)).collect();
+        let values: Vec<String> = columns
+            .iter()
+            .enumerate()
+            .map(|(j, c)| Self::assign_expr(&format!("_s.c{j}"), c, true))
+            .collect();
         format!(
             "INSERT INTO {} ({}) SELECT {} FROM {staging} _s",
             quote_qualified(schema, table),
@@ -482,13 +563,36 @@ impl SqlCompiler {
                 plan,
                 params,
             ),
-            Step::PgGlobalSearch { branches, limit, include_hits, include_score, include_has_more } => {
-                Self::compile_global_search(branches, *limit, *include_hits, *include_score, *include_has_more, plan, params)
-            }
+            Step::PgGlobalSearch {
+                branches,
+                limit,
+                include_hits,
+                include_score,
+                include_has_more,
+            } => Self::compile_global_search(
+                branches,
+                *limit,
+                *include_hits,
+                *include_score,
+                *include_has_more,
+                plan,
+                params,
+            ),
             // Mutations run as statements of their own (`compile_operation`)
             Step::PgMutation { .. } => "NULL".to_string(),
-            Step::PgFunction { schema, func_name, arguments, returns_set, unnest, result, .. } => {
-                let call = Self::unnested(Self::function_call_sql(schema, func_name, None, arguments, params), *unnest);
+            Step::PgFunction {
+                schema,
+                func_name,
+                arguments,
+                returns_set,
+                unnest,
+                result,
+                ..
+            } => {
+                let call = Self::unnested(
+                    Self::function_call_sql(schema, func_name, None, arguments, params),
+                    *unnest,
+                );
                 Self::compile_function_result(&call, *returns_set, result, plan, params)
             }
             Step::Constant { value } => match value {
@@ -496,7 +600,11 @@ impl SqlCompiler {
                 other => format!("{}::json", Self::sql_literal(&other.to_string())),
             },
             Step::FieldAccess { field_name, .. } => Self::sql_literal(field_name),
-            Step::Entities { count, groups, singles } => {
+            Step::Entities {
+                count,
+                groups,
+                singles,
+            } => {
                 // Each group joins its single-row lookup to its keys, bound as one JSON array
                 // of `{ord, k0, k1, ...}` records; the positions order the result and leave
                 // nulls for representations nothing resolved
@@ -514,11 +622,20 @@ impl SqlCompiler {
                             serde_json::Value::Object(record)
                         })
                         .collect();
-                    let keys = Self::bind_str(params, serde_json::Value::Array(records).to_string());
+                    let keys =
+                        Self::bind_str(params, serde_json::Value::Array(records).to_string());
                     let columns: Vec<String> = std::iter::once("\"ord\" int4".to_string())
-                        .chain(group.key_casts.iter().enumerate().map(|(i, cast)| format!("\"k{i}\" {cast}")))
+                        .chain(
+                            group
+                                .key_casts
+                                .iter()
+                                .enumerate()
+                                .map(|(i, cast)| format!("\"k{i}\" {cast}")),
+                        )
                         .collect();
-                    let step = plan.get_step(group.step).expect("valid step for entity group");
+                    let step = plan
+                        .get_step(group.step)
+                        .expect("valid step for entity group");
                     let lookup = Self::compile_step(step, plan, params);
                     let alias = &group.keys_alias;
                     parts.push(format!(
@@ -528,7 +645,10 @@ impl SqlCompiler {
                 }
                 for (ord, step_id) in singles {
                     let step = plan.get_step(*step_id).expect("valid step for entity");
-                    parts.push(format!("SELECT {ord}, ({})::json", Self::compile_step(step, plan, params)));
+                    parts.push(format!(
+                        "SELECT {ord}, ({})::json",
+                        Self::compile_step(step, plan, params)
+                    ));
                 }
                 if parts.is_empty() {
                     parts.push("SELECT NULL::int4, NULL::json WHERE false".to_string());
@@ -556,7 +676,12 @@ impl SqlCompiler {
 
     /// `FROM` item of a relation step: the target table, joined to its junction table for
     /// many-to-many relations.
-    fn from_item(schema: &str, table: &str, table_alias: &str, join: Option<&JoinCondition>) -> String {
+    fn from_item(
+        schema: &str,
+        table: &str,
+        table_alias: &str,
+        join: Option<&JoinCondition>,
+    ) -> String {
         let mut from = format!("{} {}", quote_qualified(schema, table), table_alias);
         if let Some(junc) = join.and_then(|j| j.junction.as_ref()) {
             let on = junc
@@ -565,7 +690,10 @@ impl SqlCompiler {
                 .map(|(jc, tc)| format!("{} = {}", col("_junc", jc), col(table_alias, tc)))
                 .collect::<Vec<_>>()
                 .join(" AND ");
-            from.push_str(&format!(" JOIN {} _junc ON {on}", quote_qualified(&junc.junction_schema, &junc.junction_table)));
+            from.push_str(&format!(
+                " JOIN {} _junc ON {on}",
+                quote_qualified(&junc.junction_schema, &junc.junction_table)
+            ));
         }
         from
     }
@@ -618,12 +746,25 @@ impl SqlCompiler {
         }
 
         let mut scope = JoinScope::default();
-        let obj = Self::row_object(table_alias, fields, polymorphism.as_ref(), "Empty", &mut scope, plan, params);
+        let obj = Self::row_object(
+            table_alias,
+            fields,
+            polymorphism.as_ref(),
+            "Empty",
+            &mut scope,
+            plan,
+            params,
+        );
         let laterals_sql = scope.sql;
 
         let where_sql = Self::where_sql(&where_clauses);
-        let order_sql = order_by.as_ref().map(|o| format!(" ORDER BY {}", o)).unwrap_or_default();
-        let offset_sql = offset.map(|o| format!(" OFFSET {}", Self::bind_count(params, o))).unwrap_or_default();
+        let order_sql = order_by
+            .as_ref()
+            .map(|o| format!(" ORDER BY {}", o))
+            .unwrap_or_default();
+        let offset_sql = offset
+            .map(|o| format!(" OFFSET {}", Self::bind_count(params, o)))
+            .unwrap_or_default();
         let from = match tree {
             Some(tree) => Self::tree_from(schema, table, table_alias, tree, params),
             None => Self::from_item(schema, table, table_alias, join_condition.as_ref()),
@@ -636,7 +777,9 @@ impl SqlCompiler {
                 "SELECT {obj} AS data FROM {from}{laterals_sql}{where_sql}{order_sql}{limit_sql}{offset_sql}"
             )
         } else {
-            let limit_sql = limit.map(|l| format!(" LIMIT {}", Self::bind_count(params, l))).unwrap_or_default();
+            let limit_sql = limit
+                .map(|l| format!(" LIMIT {}", Self::bind_count(params, l)))
+                .unwrap_or_default();
             // Aggregation order is only guaranteed with an explicit ORDER BY inside the
             // aggregate, so carry the row position out of the inner query.
             let (rn_col, agg_order) = match order_by {
@@ -660,7 +803,13 @@ impl SqlCompiler {
     /// each with its distance from it (`__depth`). A foreign key referencing the table is
     /// followed by a recursive query that stops at rows met again (`CYCLE`); an `ltree`
     /// path compares paths.
-    fn tree_from(schema: &str, table: &str, table_alias: &str, tree: &TreeSource, params: &mut Vec<String>) -> String {
+    fn tree_from(
+        schema: &str,
+        table: &str,
+        table_alias: &str,
+        tree: &TreeSource,
+        params: &mut Vec<String>,
+    ) -> String {
         let target = quote_qualified(schema, table);
         let parent = &tree.parent_alias;
         let max = tree.max_depth.map(|d| Self::bind_count(params, d));
@@ -682,11 +831,26 @@ impl SqlCompiler {
                         .join(" AND ")
                 };
                 let (anchor, recurse) = (step(parent), step("_tree"));
-                let limit = max.map(|m| format!(" WHERE _tree.\"__depth\" < {m}")).unwrap_or_default();
-                let key = tree.key.iter().map(|k| quote_ident(k)).collect::<Vec<_>>().join(", ");
+                let limit = max
+                    .map(|m| format!(" WHERE _tree.\"__depth\" < {m}"))
+                    .unwrap_or_default();
+                let key = tree
+                    .key
+                    .iter()
+                    .map(|k| quote_ident(k))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 // A cycle leads back to the row itself, which is neither above nor below it
-                let origin: Vec<String> = tree.key.iter().map(|k| format!("{} IS DISTINCT FROM {}", col("_tree", k), col(parent, k))).collect();
-                let not_origin = if origin.is_empty() { String::new() } else { format!(" AND ({})", origin.join(" OR ")) };
+                let origin: Vec<String> = tree
+                    .key
+                    .iter()
+                    .map(|k| format!("{} IS DISTINCT FROM {}", col("_tree", k), col(parent, k)))
+                    .collect();
+                let not_origin = if origin.is_empty() {
+                    String::new()
+                } else {
+                    format!(" AND ({})", origin.join(" OR "))
+                };
                 format!(
                     "(WITH RECURSIVE _tree AS (\
                         SELECT _c.*, 1 AS \"__depth\" FROM {target} _c WHERE {anchor} \
@@ -698,9 +862,14 @@ impl SqlCompiler {
             }
             TreeLink::Path(column) => {
                 let (c, p) = (col("_c", column), col(parent, column));
-                let (relation, depth) =
-                    if tree.ancestors { (format!("{c} @> {p}"), format!("nlevel({p}) - nlevel({c})")) } else { (format!("{c} <@ {p}"), format!("nlevel({c}) - nlevel({p})")) };
-                let limit = max.map(|m| format!(" AND {depth} <= {m}")).unwrap_or_default();
+                let (relation, depth) = if tree.ancestors {
+                    (format!("{c} @> {p}"), format!("nlevel({p}) - nlevel({c})"))
+                } else {
+                    (format!("{c} <@ {p}"), format!("nlevel({c}) - nlevel({p})"))
+                };
+                let limit = max
+                    .map(|m| format!(" AND {depth} <= {m}"))
+                    .unwrap_or_default();
                 format!("(SELECT _c.*, {depth} AS \"__depth\" FROM {target} _c WHERE {relation} AND {c} <> {p}{limit}) {table_alias}")
             }
         }
@@ -719,7 +888,14 @@ impl SqlCompiler {
     ) -> String {
         match polymorphism {
             Some(poly) => Self::polymorphic_object(table_alias, poly, scope, plan, params),
-            None => Self::json_object(&Self::object_fields(table_alias, fields, empty_typename, scope, plan, params)),
+            None => Self::json_object(&Self::object_fields(
+                table_alias,
+                fields,
+                empty_typename,
+                scope,
+                plan,
+                params,
+            )),
         }
     }
 
@@ -742,36 +918,67 @@ impl SqlCompiler {
         match output {
             ValueOutput::Plain => expr.to_string(),
             ValueOutput::Cast(cast) => format!("{expr}::{cast}"),
-            ValueOutput::Enum { values, list: false } => {
+            ValueOutput::Enum {
+                values,
+                list: false,
+            } => {
                 let whens: String = values
                     .iter()
-                    .map(|(label, value)| format!(" WHEN {} THEN {}", Self::sql_literal(label), Self::sql_literal(value)))
+                    .map(|(label, value)| {
+                        format!(
+                            " WHEN {} THEN {}",
+                            Self::sql_literal(label),
+                            Self::sql_literal(value)
+                        )
+                    })
                     .collect();
                 format!("CASE {expr}::text{whens} END")
             }
             ValueOutput::Enum { values, list: true } => {
-                let element = ValueOutput::Enum { values: values.clone(), list: false };
+                let element = ValueOutput::Enum {
+                    values: values.clone(),
+                    list: false,
+                };
                 list(&|e| Self::value_output(e, &element, depth + 1))
             }
-            ValueOutput::Composite { fields, list: false } => {
+            ValueOutput::Composite {
+                fields,
+                list: false,
+            } => {
                 let pairs: Vec<String> = fields
                     .iter()
                     .map(|f| match &f.source {
                         CompositeSource::Attribute { name, output } => Self::json_pair(
                             &f.field_alias,
-                            &Self::value_output(&format!("({expr}).{}", quote_ident(name)), output, depth + 1),
+                            &Self::value_output(
+                                &format!("({expr}).{}", quote_ident(name)),
+                                output,
+                                depth + 1,
+                            ),
                         ),
-                        CompositeSource::Typename(type_name) => Self::json_pair(&f.field_alias, &Self::sql_literal(type_name)),
+                        CompositeSource::Typename(type_name) => {
+                            Self::json_pair(&f.field_alias, &Self::sql_literal(type_name))
+                        }
                     })
                     .collect();
-                format!("CASE WHEN ({expr})::text IS NULL THEN NULL ELSE {} END", Self::json_object(&pairs))
+                format!(
+                    "CASE WHEN ({expr})::text IS NULL THEN NULL ELSE {} END",
+                    Self::json_object(&pairs)
+                )
             }
             ValueOutput::Template { sql, list: false } => sql.replace("{v}", &format!("({expr})")),
             ValueOutput::Template { sql, list: true } => {
-                let element = ValueOutput::Template { sql: sql.clone(), list: false };
+                let element = ValueOutput::Template {
+                    sql: sql.clone(),
+                    list: false,
+                };
                 list(&|e| Self::value_output(e, &element, depth + 1))
             }
-            ValueOutput::Range { fields, bound, list: false } => {
+            ValueOutput::Range {
+                fields,
+                bound,
+                list: false,
+            } => {
                 let r = format!("({expr})");
                 let pairs: Vec<String> = fields
                     .iter()
@@ -794,16 +1001,31 @@ impl SqlCompiler {
                         }
                     })
                     .collect();
-                let obj = if pairs.is_empty() { "'{}'::json".to_string() } else { Self::json_object(&pairs) };
+                let obj = if pairs.is_empty() {
+                    "'{}'::json".to_string()
+                } else {
+                    Self::json_object(&pairs)
+                };
                 format!("CASE WHEN {r} IS NULL THEN NULL ELSE {obj} END")
             }
-            ValueOutput::Range { fields, bound, list: true } => {
-                let element = ValueOutput::Range { fields: fields.clone(), bound: bound.clone(), list: false };
+            ValueOutput::Range {
+                fields,
+                bound,
+                list: true,
+            } => {
+                let element = ValueOutput::Range {
+                    fields: fields.clone(),
+                    bound: bound.clone(),
+                    list: false,
+                };
                 list(&|e| Self::value_output(e, &element, depth + 1))
             }
             ValueOutput::Composite { fields, list: true } => {
                 // Elements are read by subscript: `unnest` would expand a composite into columns
-                let element = ValueOutput::Composite { fields: fields.clone(), list: false };
+                let element = ValueOutput::Composite {
+                    fields: fields.clone(),
+                    list: false,
+                };
                 let i = format!("_i{depth}");
                 format!(
                     "CASE WHEN {expr} IS NULL THEN NULL ELSE (SELECT coalesce(JSON_ARRAYAGG({} ORDER BY {i} NULL ON NULL RETURNING json), '[]'::json) FROM generate_subscripts({expr}, 1) AS {i}) END",
@@ -827,10 +1049,21 @@ impl SqlCompiler {
 
         for field in fields {
             match field {
-                SelectedField::Column { field_alias, column_name, output } => {
-                    pairs.push(Self::json_pair(field_alias, &Self::value_output(&col(table_alias, column_name), output, 0)));
+                SelectedField::Column {
+                    field_alias,
+                    column_name,
+                    output,
+                } => {
+                    pairs.push(Self::json_pair(
+                        field_alias,
+                        &Self::value_output(&col(table_alias, column_name), output, 0),
+                    ));
                 }
-                SelectedField::GlobalId { field_alias, type_name, pk_column } => {
+                SelectedField::GlobalId {
+                    field_alias,
+                    type_name,
+                    pk_column,
+                } => {
                     // Relay Global ID: base64("<TypeName>:<raw_pk>")
                     // Strip newlines inserted by PostgreSQL encode(..., 'base64') for >76 char strings
                     let expr = format!(
@@ -840,25 +1073,54 @@ impl SqlCompiler {
                     );
                     pairs.push(Self::json_pair(field_alias, &expr));
                 }
-                SelectedField::Typename { field_alias, type_name } => {
+                SelectedField::Typename {
+                    field_alias,
+                    type_name,
+                } => {
                     pairs.push(Self::json_pair(field_alias, &Self::sql_literal(type_name)));
                 }
-                SelectedField::Relation { field_alias, step_id } => {
+                SelectedField::Relation {
+                    field_alias,
+                    step_id,
+                } => {
                     if let Some(child_step) = plan.get_step(*step_id) {
                         let expr = Self::relation_expr(*step_id, child_step, scope, plan, params);
                         pairs.push(Self::json_pair(field_alias, &expr));
                     }
                 }
-                SelectedField::ExclusiveArcTarget { field_alias, arc, type_fields } => {
-                    let expr = Self::exclusive_arc_expr(table_alias, arc, type_fields, plan, params);
+                SelectedField::ExclusiveArcTarget {
+                    field_alias,
+                    arc,
+                    type_fields,
+                } => {
+                    let expr =
+                        Self::exclusive_arc_expr(table_alias, arc, type_fields, plan, params);
                     pairs.push(Self::json_pair(field_alias, &expr));
                 }
-                SelectedField::OnAlias { table_alias: other_alias, field } => {
-                    let other_pairs =
-                        Self::object_fields(other_alias, std::slice::from_ref(field.as_ref()), "", scope, plan, params);
-                    pairs.extend(other_pairs.into_iter().filter(|p| !p.starts_with("'__typename': ''")));
+                SelectedField::OnAlias {
+                    table_alias: other_alias,
+                    field,
+                } => {
+                    let other_pairs = Self::object_fields(
+                        other_alias,
+                        std::slice::from_ref(field.as_ref()),
+                        "",
+                        scope,
+                        plan,
+                        params,
+                    );
+                    pairs.extend(
+                        other_pairs
+                            .into_iter()
+                            .filter(|p| !p.starts_with("'__typename': ''")),
+                    );
                 }
-                SelectedField::JoinRow { schema, table, table_alias: joined, join_columns } => {
+                SelectedField::JoinRow {
+                    schema,
+                    table,
+                    table_alias: joined,
+                    join_columns,
+                } => {
                     let on = join_columns
                         .iter()
                         .map(|(j, f)| format!("{} = {}", col(joined, j), col(table_alias, f)))
@@ -866,14 +1128,32 @@ impl SqlCompiler {
                         .join(" AND ");
                     scope.join(quote_qualified(schema, table), joined, on);
                 }
-                SelectedField::FunctionCall { field_alias, func, arguments, fields: sel_fields } => {
-                    let expr =
-                        Self::compile_function_call(&func.schema, &func.name, Some(table_alias), arguments, sel_fields, params);
+                SelectedField::FunctionCall {
+                    field_alias,
+                    func,
+                    arguments,
+                    fields: sel_fields,
+                } => {
+                    let expr = Self::compile_function_call(
+                        &func.schema,
+                        &func.name,
+                        Some(table_alias),
+                        arguments,
+                        sel_fields,
+                        params,
+                    );
                     pairs.push(Self::json_pair(field_alias, &expr));
                 }
-                SelectedField::RowVersion { field_alias, schema, table, key_columns } => {
-                    let on: Vec<String> =
-                        key_columns.iter().map(|c| format!("{} = {}", col("_rv", c), col(table_alias, c))).collect();
+                SelectedField::RowVersion {
+                    field_alias,
+                    schema,
+                    table,
+                    key_columns,
+                } => {
+                    let on: Vec<String> = key_columns
+                        .iter()
+                        .map(|c| format!("{} = {}", col("_rv", c), col(table_alias, c)))
+                        .collect();
                     let expr = format!(
                         "(SELECT _rv.xmin::text FROM {} _rv WHERE {})",
                         quote_qualified(schema, table),
@@ -885,7 +1165,10 @@ impl SqlCompiler {
         }
 
         if pairs.is_empty() {
-            pairs.push(Self::json_pair("__typename", &Self::sql_literal(empty_typename)));
+            pairs.push(Self::json_pair(
+                "__typename",
+                &Self::sql_literal(empty_typename),
+            ));
         }
 
         pairs
@@ -916,10 +1199,29 @@ impl SqlCompiler {
             ..
         } = step
         {
-            if join.unique_target && join.junction.is_none() && where_conditions.is_empty() && !join.columns.is_empty() {
-                scope.join(quote_qualified(schema, table), table_alias, Self::join_clause(table_alias, join));
-                let obj = Self::row_object(table_alias, fields, polymorphism.as_ref(), "Empty", scope, plan, params);
-                return format!("CASE WHEN {} IS NULL THEN NULL ELSE {obj} END", col(table_alias, &join.columns[0].0));
+            if join.unique_target
+                && join.junction.is_none()
+                && where_conditions.is_empty()
+                && !join.columns.is_empty()
+            {
+                scope.join(
+                    quote_qualified(schema, table),
+                    table_alias,
+                    Self::join_clause(table_alias, join),
+                );
+                let obj = Self::row_object(
+                    table_alias,
+                    fields,
+                    polymorphism.as_ref(),
+                    "Empty",
+                    scope,
+                    plan,
+                    params,
+                );
+                return format!(
+                    "CASE WHEN {} IS NULL THEN NULL ELSE {obj} END",
+                    col(table_alias, &join.columns[0].0)
+                );
             }
         }
         let alias = match scope.laterals.get(&step_id) {
@@ -927,7 +1229,9 @@ impl SqlCompiler {
             None => {
                 let alias = format!("_lat{}", scope.laterals.len());
                 let body = Self::compile_lateral_body(step, plan, params);
-                scope.sql.push_str(&format!(" LEFT JOIN LATERAL ({body}) {alias} ON true"));
+                scope
+                    .sql
+                    .push_str(&format!(" LEFT JOIN LATERAL ({body}) {alias} ON true"));
                 scope.laterals.insert(step_id, alias.clone());
                 alias
             }
@@ -945,22 +1249,48 @@ impl SqlCompiler {
     /// alone are included. Updates return the keys they touched the same way. Deletes and
     /// keyless tables build the payload from the rows the statement itself returns.
     fn compile_mutation(root_alias: &str, step: &Step, plan: &OperationPlan) -> CompiledMutation {
-        let Step::PgMutation { schema, table, table_alias, kind, many, payload, key_columns, version_guard } = step else {
+        let Step::PgMutation {
+            schema,
+            table,
+            table_alias,
+            kind,
+            many,
+            payload,
+            key_columns,
+            version_guard,
+        } = step
+        else {
             unreachable!("compile_mutation called on non-mutation step");
         };
         let target = quote_qualified(schema, table);
         // `expectedVersion` locks the row and checks its version before anything is written
-        let guard = version_guard.as_ref().map(|g| Self::compile_version_guard(schema, table, g));
+        let guard = version_guard
+            .as_ref()
+            .map(|g| Self::compile_version_guard(schema, table, g));
         let finish = |mut writes: Vec<CompiledWrite>, payload, count_param, node_paths| {
             if let Some(guard) = guard.clone() {
                 writes.insert(0, guard);
             }
-            CompiledMutation { field_alias: root_alias.to_string(), writes, payload, count_param, node_paths }
+            CompiledMutation {
+                field_alias: root_alias.to_string(),
+                writes,
+                payload,
+                count_param,
+                node_paths,
+            }
         };
         // The payload's `previous` rows come from `RETURNING OLD`
-        let previous = payload.iter().any(|f| matches!(f, PayloadField::Previous { .. }));
+        let previous = payload
+            .iter()
+            .any(|f| matches!(f, PayloadField::Previous { .. }));
 
-        let MutationKind::Insert { nodes, roots, on_conflict, .. } = kind else {
+        let MutationKind::Insert {
+            nodes,
+            roots,
+            on_conflict,
+            ..
+        } = kind
+        else {
             // Update or delete
             let context = Some(match kind {
                 MutationKind::Update { column_values, .. } => WriteContext {
@@ -971,17 +1301,41 @@ impl SqlCompiler {
                         path: if *many { "set" } else { "input" }.to_string(),
                         values: column_values
                             .iter()
-                            .map(|cv| (cv.column.clone(), (!cv.value.is_null()).then(|| Self::param_text(&cv.value))))
+                            .map(|cv| {
+                                (
+                                    cv.column.clone(),
+                                    (!cv.value.is_null()).then(|| Self::param_text(&cv.value)),
+                                )
+                            })
                             .collect(),
                     }],
                 },
-                _ => WriteContext { schema: schema.clone(), table: table.clone(), verb: WriteVerb::Delete, rows: Vec::new() },
+                _ => WriteContext {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                    verb: WriteVerb::Delete,
+                    rows: Vec::new(),
+                },
             });
             if key_columns.is_empty() || matches!(kind, MutationKind::Delete { .. }) {
                 let mut params = Vec::new();
                 let dml = Self::compile_dml(&target, table_alias, kind, key_columns, &mut params);
-                let payload = Self::returned_payload(&target, &[dml], payload, *many, table_alias, previous, plan, params);
-                return finish(Vec::new(), CompiledStatement::new(payload).with_context(context), None, Vec::new());
+                let payload = Self::returned_payload(
+                    &target,
+                    &[dml],
+                    payload,
+                    *many,
+                    table_alias,
+                    previous,
+                    plan,
+                    params,
+                );
+                return finish(
+                    Vec::new(),
+                    CompiledStatement::new(payload).with_context(context),
+                    None,
+                    Vec::new(),
+                );
             }
             let mut params = Vec::new();
             let dml = Self::compile_dml(&target, table_alias, kind, key_columns, &mut params);
@@ -990,8 +1344,11 @@ impl SqlCompiler {
                 returning.push(OLD_ROW.to_string());
             }
             let write = CompiledWrite {
-                statement: CompiledStatement::new(CompiledQuery::new(format!("{dml}{}", Self::returning_sql(&returning)), params))
-                    .with_context(context),
+                statement: CompiledStatement::new(CompiledQuery::new(
+                    format!("{dml}{}", Self::returning_sql(&returning)),
+                    params,
+                ))
+                .with_context(context),
                 returning,
                 row_nodes: Vec::new(),
                 collect: true,
@@ -999,17 +1356,34 @@ impl SqlCompiler {
                 counts: true,
                 guard: false,
             };
-            let keys = (0..key_columns.len()).map(|column| ParamSource::Returned { column }).collect();
-            let old = previous.then_some(ParamSource::Returned { column: key_columns.len() });
-            let (payload, count_param) =
-                Self::located_payload(&target, table_alias, key_columns, keys, Vec::new(), old, payload, *many, plan);
+            let keys = (0..key_columns.len())
+                .map(|column| ParamSource::Returned { column })
+                .collect();
+            let old = previous.then_some(ParamSource::Returned {
+                column: key_columns.len(),
+            });
+            let (payload, count_param) = Self::located_payload(
+                &target,
+                table_alias,
+                key_columns,
+                keys,
+                Vec::new(),
+                old,
+                payload,
+                *many,
+                plan,
+            );
             return finish(vec![write], payload, count_param, Vec::new());
         };
 
         let node_paths: Vec<String> = nodes.iter().map(|n| n.path.clone()).collect();
         // A keyless table's rows cannot be read back by key: its payload statement inserts them
         let inline_roots = on_conflict.is_none() && key_columns.is_empty();
-        let payload_keys: &[(String, Option<String>)] = if on_conflict.is_none() { key_columns } else { &[] };
+        let payload_keys: &[(String, Option<String>)] = if on_conflict.is_none() {
+            key_columns
+        } else {
+            &[]
+        };
         let mut needed = Self::needed_columns(nodes, roots, payload_keys);
         if previous {
             for &root in roots {
@@ -1024,21 +1398,52 @@ impl SqlCompiler {
             let is_root = roots.contains(&batch[0]);
             let conflict = on_conflict.as_ref().filter(|_| is_root);
             if inline_roots && is_root {
-                inline.push(Self::compile_insert_batch(nodes, &batch, None, key_columns, &mut inline_params, &mut inline_deferred));
+                inline.push(Self::compile_insert_batch(
+                    nodes,
+                    &batch,
+                    None,
+                    key_columns,
+                    &mut inline_params,
+                    &mut inline_deferred,
+                ));
                 continue;
             }
-            writes.push(Self::compile_node_write(nodes, &batch, is_root, conflict, key_columns, &needed));
+            writes.push(Self::compile_node_write(
+                nodes,
+                &batch,
+                is_root,
+                conflict,
+                key_columns,
+                &needed,
+            ));
         }
 
         if inline_roots {
-            let payload = Self::returned_payload(&target, &inline, payload, *many, table_alias, false, plan, inline_params);
+            let payload = Self::returned_payload(
+                &target,
+                &inline,
+                payload,
+                *many,
+                table_alias,
+                false,
+                plan,
+                inline_params,
+            );
             let context = WriteContext {
                 schema: schema.clone(),
                 table: table.clone(),
                 verb: WriteVerb::Insert,
-                rows: roots.iter().map(|&r| InputRow::of_node(&nodes[r])).collect(),
+                rows: roots
+                    .iter()
+                    .map(|&r| InputRow::of_node(&nodes[r]))
+                    .collect(),
             };
-            let statement = CompiledStatement { query: payload, deferred: inline_deferred, strict: true, context: Some(context) };
+            let statement = CompiledStatement {
+                query: payload,
+                deferred: inline_deferred,
+                strict: true,
+                context: Some(context),
+            };
             return finish(writes, statement, None, node_paths);
         }
 
@@ -1052,9 +1457,13 @@ impl SqlCompiler {
                     .map(|(column, _)| {
                         let values = roots
                             .iter()
-                            .map(|&r| match nodes[r].values.iter().find(|cv| &cv.column == column) {
-                                Some(cv) if !cv.value.is_null() => serde_json::Value::String(Self::param_text(&cv.value)),
-                                _ => serde_json::Value::Null,
+                            .map(|&r| {
+                                match nodes[r].values.iter().find(|cv| &cv.column == column) {
+                                    Some(cv) if !cv.value.is_null() => {
+                                        serde_json::Value::String(Self::param_text(&cv.value))
+                                    }
+                                    _ => serde_json::Value::Null,
+                                }
                             })
                             .collect();
                         Self::param_text(&pg_array_literal(&serde_json::Value::Array(values)))
@@ -1066,16 +1475,42 @@ impl SqlCompiler {
                 let keys = key_columns
                     .iter()
                     .map(|(column, _)| {
-                        ParamSource::Array(roots.iter().map(|&node| ValueRef::Node { node, column: column.clone() }).collect())
+                        ParamSource::Array(
+                            roots
+                                .iter()
+                                .map(|&node| ValueRef::Node {
+                                    node,
+                                    column: column.clone(),
+                                })
+                                .collect(),
+                        )
                     })
                     .collect();
                 (key_columns.as_slice(), keys, Vec::new())
             }
         };
         let old = previous.then(|| {
-            ParamSource::Array(roots.iter().map(|&node| ValueRef::Node { node, column: OLD_ROW.to_string() }).collect())
+            ParamSource::Array(
+                roots
+                    .iter()
+                    .map(|&node| ValueRef::Node {
+                        node,
+                        column: OLD_ROW.to_string(),
+                    })
+                    .collect(),
+            )
         });
-        let (payload, count_param) = Self::located_payload(&target, table_alias, locate, keys, literals, old, payload, *many, plan);
+        let (payload, count_param) = Self::located_payload(
+            &target,
+            table_alias,
+            locate,
+            keys,
+            literals,
+            old,
+            payload,
+            *many,
+            plan,
+        );
         finish(writes, payload, count_param, node_paths)
     }
 
@@ -1090,9 +1525,15 @@ impl SqlCompiler {
             quote_ident(&guard.column),
             quote_qualified(schema, table)
         );
-        let context = WriteContext { schema: schema.to_string(), table: table.to_string(), verb: WriteVerb::Update, rows: Vec::new() };
+        let context = WriteContext {
+            schema: schema.to_string(),
+            table: table.to_string(),
+            verb: WriteVerb::Update,
+            rows: Vec::new(),
+        };
         CompiledWrite {
-            statement: CompiledStatement::new(CompiledQuery::new(sql, params)).with_context(Some(context)),
+            statement: CompiledStatement::new(CompiledQuery::new(sql, params))
+                .with_context(Some(context)),
             returning: vec!["__current".to_string()],
             row_nodes: Vec::new(),
             collect: false,
@@ -1110,7 +1551,13 @@ impl SqlCompiler {
         }
         let cols: Vec<String> = columns
             .iter()
-            .map(|c| if c == OLD_ROW { "to_json(old)::text".to_string() } else { format!("{}::text", quote_ident(c)) })
+            .map(|c| {
+                if c == OLD_ROW {
+                    "to_json(old)::text".to_string()
+                } else {
+                    format!("{}::text", quote_ident(c))
+                }
+            })
             .collect();
         format!(" RETURNING {}", cols.join(", "))
     }
@@ -1128,13 +1575,24 @@ impl SqlCompiler {
         plan: &OperationPlan,
         mut params: Vec<String>,
     ) -> CompiledQuery {
-        let old = if previous { format!(", to_json(old) AS \"{OLD_ROW}\"") } else { String::new() };
+        let old = if previous {
+            format!(", to_json(old) AS \"{OLD_ROW}\"")
+        } else {
+            String::new()
+        };
         let mutated = match dmls {
             [] => format!("_mutated AS (SELECT * FROM {target} WHERE false)"),
             [dml] => format!("_mutated AS ({dml} RETURNING *{old})"),
             dmls => {
-                let mut ctes: Vec<String> = dmls.iter().enumerate().map(|(i, dml)| format!("_m{i} AS ({dml} RETURNING *)")).collect();
-                let union = (0..dmls.len()).map(|i| format!("SELECT * FROM _m{i}")).collect::<Vec<_>>().join(" UNION ALL ");
+                let mut ctes: Vec<String> = dmls
+                    .iter()
+                    .enumerate()
+                    .map(|(i, dml)| format!("_m{i} AS ({dml} RETURNING *)"))
+                    .collect();
+                let union = (0..dmls.len())
+                    .map(|i| format!("SELECT * FROM _m{i}"))
+                    .collect::<Vec<_>>()
+                    .join(" UNION ALL ");
                 ctes.push(format!("_mutated AS ({union})"));
                 ctes.join(", ")
             }
@@ -1193,11 +1651,16 @@ impl SqlCompiler {
                 order: " ORDER BY _o._ord".to_string(),
             }
         });
-        let count_param = payload.iter().any(|f| matches!(f, PayloadField::AffectedCount { .. })).then(|| {
-            params.push(String::new());
-            params.len() - 1
-        });
-        let count_expr = count_param.map(|i| format!("${}::text::int", i + 1)).unwrap_or_else(|| "NULL".to_string());
+        let count_param = payload
+            .iter()
+            .any(|f| matches!(f, PayloadField::AffectedCount { .. }))
+            .then(|| {
+                params.push(String::new());
+                params.len() - 1
+            });
+        let count_expr = count_param
+            .map(|i| format!("${}::text::int", i + 1))
+            .unwrap_or_else(|| "NULL".to_string());
         let source = Self::located_source(target, table_alias, locate);
         let data = Self::payload_object(
             payload,
@@ -1212,15 +1675,25 @@ impl SqlCompiler {
         );
         // Keys of rows that were not written (e.g. skipped by a trigger) read as NULL: the
         // payload leaves them out
-        let statement =
-            CompiledStatement { query: CompiledQuery::new(format!("SELECT {data} AS data"), params), deferred, strict: false, context: None };
+        let statement = CompiledStatement {
+            query: CompiledQuery::new(format!("SELECT {data} AS data"), params),
+            deferred,
+            strict: false,
+            context: None,
+        };
         (statement, count_param)
     }
 
     /// Rows of `target` located by `locate` columns, whose values are the text arrays of the
     /// first parameters, numbered in array order (`_k._ord`).
-    fn located_source(target: &str, table_alias: &str, locate: &[(String, Option<String>)]) -> String {
-        let arrays: Vec<String> = (1..=locate.len()).map(|i| format!("${i}::text::text[]")).collect();
+    fn located_source(
+        target: &str,
+        table_alias: &str,
+        locate: &[(String, Option<String>)],
+    ) -> String {
+        let arrays: Vec<String> = (1..=locate.len())
+            .map(|i| format!("${i}::text::text[]"))
+            .collect();
         let names: Vec<String> = (0..locate.len()).map(|i| format!("k{i}")).collect();
         let on: Vec<String> = locate
             .iter()
@@ -1255,28 +1728,66 @@ impl SqlCompiler {
         let pairs: Vec<String> = payload
             .iter()
             .map(|field| match field {
-                PayloadField::Previous { field_alias, fields, polymorphism, table_alias: alias } => {
-                    let Some(prev) = previous else { return Self::json_pair(field_alias, "NULL") };
+                PayloadField::Previous {
+                    field_alias,
+                    fields,
+                    polymorphism,
+                    table_alias: alias,
+                } => {
+                    let Some(prev) = previous else {
+                        return Self::json_pair(field_alias, "NULL");
+                    };
                     let mut scope = JoinScope::default();
-                    let obj = Self::row_object(alias, fields, polymorphism.as_ref(), "Payload", &mut scope, plan, params);
+                    let obj = Self::row_object(
+                        alias,
+                        fields,
+                        polymorphism.as_ref(),
+                        "Payload",
+                        &mut scope,
+                        plan,
+                        params,
+                    );
                     // A row an upsert inserted had no previous version
                     let obj = format!("CASE WHEN {} THEN {obj} END", prev.present);
                     let from = format!("{} AS {alias}{}", prev.source, scope.sql);
                     let expr = if many {
-                        format!("(SELECT {} FROM {from})", Self::json_array_agg(&obj, &prev.order, ""))
+                        format!(
+                            "(SELECT {} FROM {from})",
+                            Self::json_array_agg(&obj, &prev.order, "")
+                        )
                     } else {
                         format!("(SELECT {obj} FROM {from}{} LIMIT 1)", prev.order)
                     };
                     Self::json_pair(field_alias, &expr)
                 }
-                PayloadField::Typename { field_alias, type_name } => Self::json_pair(field_alias, &Self::sql_literal(type_name)),
-                PayloadField::AffectedCount { field_alias } => Self::json_pair(field_alias, count_expr),
-                PayloadField::Rows { field_alias, fields, polymorphism } => {
+                PayloadField::Typename {
+                    field_alias,
+                    type_name,
+                } => Self::json_pair(field_alias, &Self::sql_literal(type_name)),
+                PayloadField::AffectedCount { field_alias } => {
+                    Self::json_pair(field_alias, count_expr)
+                }
+                PayloadField::Rows {
+                    field_alias,
+                    fields,
+                    polymorphism,
+                } => {
                     let mut scope = JoinScope::default();
-                    let obj = Self::row_object(table_alias, fields, polymorphism.as_ref(), "Payload", &mut scope, plan, params);
+                    let obj = Self::row_object(
+                        table_alias,
+                        fields,
+                        polymorphism.as_ref(),
+                        "Payload",
+                        &mut scope,
+                        plan,
+                        params,
+                    );
                     let from = format!("{source}{}", scope.sql);
                     let expr = if many {
-                        format!("(SELECT {} FROM {from})", Self::json_array_agg(&obj, order_sql, ""))
+                        format!(
+                            "(SELECT {} FROM {from})",
+                            Self::json_array_agg(&obj, order_sql, "")
+                        )
                     } else {
                         format!("(SELECT {obj} FROM {from}{order_sql} LIMIT 1)")
                     };
@@ -1289,7 +1800,11 @@ impl SqlCompiler {
 
     /// Columns of each write node's row that other statements read: the columns nodes
     /// referencing it take, and the payload's key for the top-level rows.
-    fn needed_columns(nodes: &[WriteNode], roots: &[usize], payload_keys: &[(String, Option<String>)]) -> Vec<BTreeSet<String>> {
+    fn needed_columns(
+        nodes: &[WriteNode],
+        roots: &[usize],
+        payload_keys: &[(String, Option<String>)],
+    ) -> Vec<BTreeSet<String>> {
         let mut needed = vec![BTreeSet::new(); nodes.len()];
         for node in nodes {
             for r in &node.refs {
@@ -1314,7 +1829,11 @@ impl SqlCompiler {
         while changed {
             changed = false;
             for (i, node) in nodes.iter().enumerate() {
-                let deps = node.refs.iter().map(|r| r.node).chain(node.after.iter().copied());
+                let deps = node
+                    .refs
+                    .iter()
+                    .map(|r| r.node)
+                    .chain(node.after.iter().copied());
                 let l = deps.map(|d| level[d] + 1).max().unwrap_or(0);
                 if l != level[i] {
                     level[i] = l;
@@ -1323,8 +1842,12 @@ impl SqlCompiler {
             }
         }
         let columns = |node: &WriteNode| -> Vec<String> {
-            let mut cols: Vec<String> =
-                node.values.iter().map(|v| v.column.clone()).chain(node.refs.iter().map(|r| r.column.clone())).collect();
+            let mut cols: Vec<String> = node
+                .values
+                .iter()
+                .map(|v| v.column.clone())
+                .chain(node.refs.iter().map(|r| r.column.clone()))
+                .collect();
             cols.sort_unstable();
             cols
         };
@@ -1360,7 +1883,12 @@ impl SqlCompiler {
     ) -> CompiledWrite {
         let node = &nodes[batch[0]];
         let target = quote_qualified(&node.schema, &node.table);
-        let returning: Vec<String> = batch.iter().flat_map(|&n| needed[n].iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
+        let returning: Vec<String> = batch
+            .iter()
+            .flat_map(|&n| needed[n].iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let mut params = Vec::new();
         let mut deferred = Vec::new();
         let missing = if node.path.contains("connect") {
@@ -1370,52 +1898,120 @@ impl SqlCompiler {
         };
         let (sql, expect_rows) = match &node.kind {
             WriteNodeKind::Insert => {
-                let insert = Self::compile_insert_batch(nodes, batch, on_conflict, primary_key, &mut params, &mut deferred);
+                let insert = Self::compile_insert_batch(
+                    nodes,
+                    batch,
+                    on_conflict,
+                    primary_key,
+                    &mut params,
+                    &mut deferred,
+                );
                 (format!("{insert}{}", Self::returning_sql(&returning)), None)
             }
             WriteNodeKind::Lookup { key } => {
                 // A row only read is its own previous version
                 let cols: Vec<String> = returning
                     .iter()
-                    .map(|c| if c == OLD_ROW { "to_json(_l)::text".to_string() } else { format!("{}::text", quote_ident(c)) })
+                    .map(|c| {
+                        if c == OLD_ROW {
+                            "to_json(_l)::text".to_string()
+                        } else {
+                            format!("{}::text", quote_ident(c))
+                        }
+                    })
                     .collect();
                 let where_sql = Self::row_target_sql(&RowTarget::Key(key.clone()), &mut params);
-                (format!("SELECT {} FROM {target} AS _l{where_sql}", cols.join(", ")), Some(missing))
+                (
+                    format!("SELECT {} FROM {target} AS _l{where_sql}", cols.join(", ")),
+                    Some(missing),
+                )
             }
             WriteNodeKind::Update { key } => {
-                let mut set: Vec<String> =
-                    node.values.iter().map(|cv| format!("{} = {}", quote_ident(&cv.column), Self::bind_value(&mut params, cv))).collect();
+                let mut set: Vec<String> = node
+                    .values
+                    .iter()
+                    .map(|cv| {
+                        format!(
+                            "{} = {}",
+                            quote_ident(&cv.column),
+                            Self::bind_value(&mut params, cv)
+                        )
+                    })
+                    .collect();
                 set.extend(node.refs.iter().map(|r| {
                     let spec = Self::ref_spec(r);
-                    let expr = Self::deferred_value(ValueRef::Node { node: r.node, column: r.source_column.clone() }, &spec, &mut params, &mut deferred);
+                    let expr = Self::deferred_value(
+                        ValueRef::Node {
+                            node: r.node,
+                            column: r.source_column.clone(),
+                        },
+                        &spec,
+                        &mut params,
+                        &mut deferred,
+                    );
                     format!("{} = {expr}", quote_ident(&r.column))
                 }));
                 let where_sql = Self::row_target_sql(&RowTarget::Key(key.clone()), &mut params);
-                (format!("UPDATE {target} SET {}{where_sql}{}", set.join(", "), Self::returning_sql(&returning)), Some(missing))
+                (
+                    format!(
+                        "UPDATE {target} SET {}{where_sql}{}",
+                        set.join(", "),
+                        Self::returning_sql(&returning)
+                    ),
+                    Some(missing),
+                )
             }
             WriteNodeKind::Link => {
-                let insert = Self::compile_insert_batch(nodes, batch, None, primary_key, &mut params, &mut deferred);
+                let insert = Self::compile_insert_batch(
+                    nodes,
+                    batch,
+                    None,
+                    primary_key,
+                    &mut params,
+                    &mut deferred,
+                );
                 (format!("{insert} ON CONFLICT DO NOTHING"), None)
             }
-            WriteNodeKind::Detach { key, except, through } => {
+            WriteNodeKind::Detach {
+                key,
+                except,
+                through,
+            } => {
                 let mut conditions: Vec<String> = node
                     .refs
                     .iter()
                     .map(|r| {
                         let spec = Self::ref_spec(r);
-                        let expr = Self::deferred_value(ValueRef::Node { node: r.node, column: r.source_column.clone() }, &spec, &mut params, &mut deferred);
+                        let expr = Self::deferred_value(
+                            ValueRef::Node {
+                                node: r.node,
+                                column: r.source_column.clone(),
+                            },
+                            &spec,
+                            &mut params,
+                            &mut deferred,
+                        );
                         format!("{} = {expr}", col("_d", &r.column))
                     })
                     .collect();
                 // The rows `keys` identify: children directly, junction rows by their target
-                let matching = |keys: &[&Vec<WhereCondition>], params: &mut Vec<String>| -> String {
+                let matching = |keys: &[&Vec<WhereCondition>],
+                                params: &mut Vec<String>|
+                 -> String {
                     let alias = if through.is_some() { "_t" } else { "_d" };
                     let any: Vec<String> = keys
                         .iter()
                         .map(|key| {
                             let all: Vec<String> = key
                                 .iter()
-                                .map(|k| Self::compare(&col(alias, &k.column), &k.operator, Self::bind(params, &k.value), k.pg_cast.as_deref()))
+                                .map(|k| {
+                                    Self::compare(
+                                        &col(alias, &k.column),
+                                        &k.operator,
+                                        Self::bind(params, &k.value),
+                                        k.pg_cast.as_deref(),
+                                    )
+                                })
                                 .collect();
                             format!("({})", all.join(" AND "))
                         })
@@ -1424,8 +2020,16 @@ impl SqlCompiler {
                     match through {
                         None => format!("({any})"),
                         Some(t) => {
-                            let on: Vec<String> = t.columns.iter().map(|(jc, tc)| format!("{} = {}", col("_t", tc), col("_d", jc))).collect();
-                            format!("EXISTS (SELECT 1 FROM {} _t WHERE {} AND ({any}))", quote_qualified(&t.schema, &t.table), on.join(" AND "))
+                            let on: Vec<String> = t
+                                .columns
+                                .iter()
+                                .map(|(jc, tc)| format!("{} = {}", col("_t", tc), col("_d", jc)))
+                                .collect();
+                            format!(
+                                "EXISTS (SELECT 1 FROM {} _t WHERE {} AND ({any}))",
+                                quote_qualified(&t.schema, &t.table),
+                                on.join(" AND ")
+                            )
                         }
                     }
                 };
@@ -1441,8 +2045,15 @@ impl SqlCompiler {
                 let sql = match through {
                     Some(_) => format!("DELETE FROM {target} AS _d WHERE {where_sql}"),
                     None => {
-                        let set: Vec<String> = node.refs.iter().map(|r| format!("{} = NULL", quote_ident(&r.column))).collect();
-                        format!("UPDATE {target} AS _d SET {} WHERE {where_sql}", set.join(", "))
+                        let set: Vec<String> = node
+                            .refs
+                            .iter()
+                            .map(|r| format!("{} = NULL", quote_ident(&r.column)))
+                            .collect();
+                        format!(
+                            "UPDATE {target} AS _d SET {} WHERE {where_sql}",
+                            set.join(", ")
+                        )
                     }
                 };
                 (sql, None)
@@ -1458,7 +2069,13 @@ impl SqlCompiler {
                     Self::returned_columns(&returning, "_l"),
                     Self::returned_columns(&returning, "_n")
                 );
-                (sql, Some(format!("`{}` neither found nor created a `{}` row", node.path, node.table)))
+                (
+                    sql,
+                    Some(format!(
+                        "`{}` neither found nor created a `{}` row",
+                        node.path, node.table
+                    )),
+                )
             }
             WriteNodeKind::UpdateOrInsert { key } => {
                 // A child with the key is moved to the parent, or else created with it
@@ -1467,14 +2084,31 @@ impl SqlCompiler {
                     .iter()
                     .map(|r| {
                         let spec = Self::ref_spec(r);
-                        let value = ValueRef::Node { node: r.node, column: r.source_column.clone() };
-                        (r.column.clone(), Self::deferred_value(value, &spec, &mut params, &mut deferred))
+                        let value = ValueRef::Node {
+                            node: r.node,
+                            column: r.source_column.clone(),
+                        };
+                        (
+                            r.column.clone(),
+                            Self::deferred_value(value, &spec, &mut params, &mut deferred),
+                        )
                     })
                     .collect();
-                let set: Vec<String> = refs.iter().map(|(c, e)| format!("{} = {e}", quote_ident(c))).collect();
+                let set: Vec<String> = refs
+                    .iter()
+                    .map(|(c, e)| format!("{} = {e}", quote_ident(c)))
+                    .collect();
                 let where_sql = Self::key_conditions("_u", key, &mut params).join(" AND ");
-                let mut cols: Vec<String> = node.values.iter().map(|cv| quote_ident(&cv.column)).collect();
-                let mut exprs: Vec<String> = node.values.iter().map(|cv| Self::bind_value(&mut params, cv)).collect();
+                let mut cols: Vec<String> = node
+                    .values
+                    .iter()
+                    .map(|cv| quote_ident(&cv.column))
+                    .collect();
+                let mut exprs: Vec<String> = node
+                    .values
+                    .iter()
+                    .map(|cv| Self::bind_value(&mut params, cv))
+                    .collect();
                 cols.extend(refs.iter().map(|(c, _)| quote_ident(c)));
                 exprs.extend(refs.iter().map(|(_, e)| e.clone()));
                 let sql = format!(
@@ -1487,28 +2121,59 @@ impl SqlCompiler {
                     exprs.join(", "),
                     Self::returned_columns(&returning, "_n")
                 );
-                (sql, Some(format!("`{}` neither found nor created a `{}` row", node.path, node.table)))
+                (
+                    sql,
+                    Some(format!(
+                        "`{}` neither found nor created a `{}` row",
+                        node.path, node.table
+                    )),
+                )
             }
             WriteNodeKind::UpdateRelated { key } | WriteNodeKind::DeleteRelated { key } => {
                 // Only a row related to the parent: the key, and the parent's key in its refs
                 let mut conditions = Self::key_conditions("_u", key, &mut params);
                 conditions.extend(node.refs.iter().map(|r| {
                     let spec = Self::ref_spec(r);
-                    let value = ValueRef::Node { node: r.node, column: r.source_column.clone() };
-                    format!("{} = {}", col("_u", &r.column), Self::deferred_value(value, &spec, &mut params, &mut deferred))
+                    let value = ValueRef::Node {
+                        node: r.node,
+                        column: r.source_column.clone(),
+                    };
+                    format!(
+                        "{} = {}",
+                        col("_u", &r.column),
+                        Self::deferred_value(value, &spec, &mut params, &mut deferred)
+                    )
                 }));
                 let where_sql = conditions.join(" AND ");
                 let sql = if matches!(node.kind, WriteNodeKind::DeleteRelated { .. }) {
                     format!("DELETE FROM {target} AS _u WHERE {where_sql}")
                 } else {
                     let set = Self::set_list(node, key, &mut params);
-                    format!("UPDATE {target} AS _u SET {set} WHERE {where_sql}{}", Self::returning_sql(&returning))
+                    format!(
+                        "UPDATE {target} AS _u SET {set} WHERE {where_sql}{}",
+                        Self::returning_sql(&returning)
+                    )
                 };
-                (sql, Some(format!("`{}` matches no `{}` row related to it", node.path, node.table)))
+                (
+                    sql,
+                    Some(format!(
+                        "`{}` matches no `{}` row related to it",
+                        node.path, node.table
+                    )),
+                )
             }
-            WriteNodeKind::UpdateReferenced { from_schema, from_table, from_key, columns } => {
+            WriteNodeKind::UpdateReferenced {
+                from_schema,
+                from_table,
+                from_key,
+                columns,
+            } => {
                 let mut conditions = Self::key_conditions("_f", from_key, &mut params);
-                conditions.extend(columns.iter().map(|(c, f)| format!("{} = {}", col("_u", c), col("_f", f))));
+                conditions.extend(
+                    columns
+                        .iter()
+                        .map(|(c, f)| format!("{} = {}", col("_u", c), col("_f", f))),
+                );
                 let set = Self::set_list(node, &[], &mut params);
                 let sql = format!(
                     "UPDATE {target} AS _u SET {set} FROM {} AS _f WHERE {}{}",
@@ -1516,18 +2181,32 @@ impl SqlCompiler {
                     conditions.join(" AND "),
                     Self::returning_sql(&returning)
                 );
-                (sql, Some(format!("`{}`: the row refers to no `{}` row", node.path, node.table)))
+                (
+                    sql,
+                    Some(format!(
+                        "`{}`: the row refers to no `{}` row",
+                        node.path, node.table
+                    )),
+                )
             }
-            WriteNodeKind::Sync { rows, key } => (Self::compile_sync(node, rows, key, &target, &mut params, &mut deferred), None),
+            WriteNodeKind::Sync { rows, key } => (
+                Self::compile_sync(node, rows, key, &target, &mut params, &mut deferred),
+                None,
+            ),
         };
         let verb = match &node.kind {
-            WriteNodeKind::Insert | WriteNodeKind::Link | WriteNodeKind::LookupOrInsert { .. } | WriteNodeKind::UpdateOrInsert { .. } => {
-                Some(WriteVerb::Insert)
+            WriteNodeKind::Insert
+            | WriteNodeKind::Link
+            | WriteNodeKind::LookupOrInsert { .. }
+            | WriteNodeKind::UpdateOrInsert { .. } => Some(WriteVerb::Insert),
+            WriteNodeKind::Update { .. }
+            | WriteNodeKind::UpdateRelated { .. }
+            | WriteNodeKind::UpdateReferenced { .. }
+            | WriteNodeKind::Sync { .. } => Some(WriteVerb::Update),
+            WriteNodeKind::Detach {
+                through: Some(_), ..
             }
-            WriteNodeKind::Update { .. } | WriteNodeKind::UpdateRelated { .. } | WriteNodeKind::UpdateReferenced { .. } | WriteNodeKind::Sync { .. } => {
-                Some(WriteVerb::Update)
-            }
-            WriteNodeKind::Detach { through: Some(_), .. } | WriteNodeKind::DeleteRelated { .. } => Some(WriteVerb::Delete),
+            | WriteNodeKind::DeleteRelated { .. } => Some(WriteVerb::Delete),
             WriteNodeKind::Detach { through: None, .. } => Some(WriteVerb::Update),
             WriteNodeKind::Lookup { .. } => None,
         };
@@ -1537,14 +2216,35 @@ impl SqlCompiler {
                 .enumerate()
                 .map(|(i, values)| InputRow {
                     path: format!("{}[{i}]", node.path),
-                    values: values.iter().map(|cv| (cv.column.clone(), (!cv.value.is_null()).then(|| Self::param_text(&cv.value)))).collect(),
+                    values: values
+                        .iter()
+                        .map(|cv| {
+                            (
+                                cv.column.clone(),
+                                (!cv.value.is_null()).then(|| Self::param_text(&cv.value)),
+                            )
+                        })
+                        .collect(),
                 })
                 .collect(),
-            _ => batch.iter().map(|&n| InputRow::of_node(&nodes[n])).collect(),
+            _ => batch
+                .iter()
+                .map(|&n| InputRow::of_node(&nodes[n]))
+                .collect(),
         };
-        let context = verb.map(|verb| WriteContext { schema: node.schema.clone(), table: node.table.clone(), verb, rows });
+        let context = verb.map(|verb| WriteContext {
+            schema: node.schema.clone(),
+            table: node.table.clone(),
+            verb,
+            rows,
+        });
         CompiledWrite {
-            statement: CompiledStatement { query: CompiledQuery::new(sql, params), deferred, strict: true, context },
+            statement: CompiledStatement {
+                query: CompiledQuery::new(sql, params),
+                deferred,
+                strict: true,
+                context,
+            },
             returning,
             row_nodes: batch.to_vec(),
             collect: false,
@@ -1555,9 +2255,20 @@ impl SqlCompiler {
     }
 
     /// `alias."column" = $n::type` conditions of a key.
-    fn key_conditions(alias: &str, key: &[WhereCondition], params: &mut Vec<String>) -> Vec<String> {
+    fn key_conditions(
+        alias: &str,
+        key: &[WhereCondition],
+        params: &mut Vec<String>,
+    ) -> Vec<String> {
         key.iter()
-            .map(|k| Self::compare(&col(alias, &k.column), &k.operator, Self::bind(params, &k.value), k.pg_cast.as_deref()))
+            .map(|k| {
+                Self::compare(
+                    &col(alias, &k.column),
+                    &k.operator,
+                    Self::bind(params, &k.value),
+                    k.pg_cast.as_deref(),
+                )
+            })
             .collect()
     }
 
@@ -1569,19 +2280,45 @@ impl SqlCompiler {
         }
         columns
             .iter()
-            .map(|c| if c == OLD_ROW { format!("to_json({alias})::text AS \"{OLD_ROW}\"") } else { format!("{}::text AS {}", col(alias, c), quote_ident(c)) })
+            .map(|c| {
+                if c == OLD_ROW {
+                    format!("to_json({alias})::text AS \"{OLD_ROW}\"")
+                } else {
+                    format!("{}::text AS {}", col(alias, c), quote_ident(c))
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ")
     }
 
     /// ` ("a", "b")` and `$1::text::int4, ...` of the values and references of an inserted node.
-    fn insert_columns(node: &WriteNode, params: &mut Vec<String>, deferred: &mut Vec<(usize, ParamSource)>) -> (String, String) {
-        let mut cols: Vec<String> = node.values.iter().map(|cv| quote_ident(&cv.column)).collect();
-        let mut exprs: Vec<String> = node.values.iter().map(|cv| Self::bind_value(params, cv)).collect();
+    fn insert_columns(
+        node: &WriteNode,
+        params: &mut Vec<String>,
+        deferred: &mut Vec<(usize, ParamSource)>,
+    ) -> (String, String) {
+        let mut cols: Vec<String> = node
+            .values
+            .iter()
+            .map(|cv| quote_ident(&cv.column))
+            .collect();
+        let mut exprs: Vec<String> = node
+            .values
+            .iter()
+            .map(|cv| Self::bind_value(params, cv))
+            .collect();
         for r in &node.refs {
             cols.push(quote_ident(&r.column));
-            let value = ValueRef::Node { node: r.node, column: r.source_column.clone() };
-            exprs.push(Self::deferred_value(value, &Self::ref_spec(r), params, deferred));
+            let value = ValueRef::Node {
+                node: r.node,
+                column: r.source_column.clone(),
+            };
+            exprs.push(Self::deferred_value(
+                value,
+                &Self::ref_spec(r),
+                params,
+                deferred,
+            ));
         }
         if cols.is_empty() {
             return (String::new(), String::new());
@@ -1596,7 +2333,17 @@ impl SqlCompiler {
             let column = key.first().map(|k| k.column.clone()).unwrap_or_default();
             return format!("{0} = _u.{0}", quote_ident(&column));
         }
-        node.values.iter().map(|cv| format!("{} = {}", quote_ident(&cv.column), Self::bind_value(params, cv))).collect::<Vec<_>>().join(", ")
+        node.values
+            .iter()
+            .map(|cv| {
+                format!(
+                    "{} = {}",
+                    quote_ident(&cv.column),
+                    Self::bind_value(params, cv)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// `sync`: one `MERGE` making the children of a parent (whose key the node's `refs`
@@ -1615,7 +2362,10 @@ impl SqlCompiler {
         let mut specs: Vec<ColumnValue> = Vec::new();
         for cv in rows.iter().flatten() {
             if !specs.iter().any(|s| s.column == cv.column) {
-                specs.push(ColumnValue { value: serde_json::Value::Null, ..cv.clone() });
+                specs.push(ColumnValue {
+                    value: serde_json::Value::Null,
+                    ..cv.clone()
+                });
             }
         }
         // The rows, one text array per column, unnested in step
@@ -1624,27 +2374,45 @@ impl SqlCompiler {
             let items: Vec<serde_json::Value> = rows
                 .iter()
                 .map(|r| match r.iter().find(|cv| cv.column == spec.column) {
-                    Some(cv) if !cv.value.is_null() => serde_json::Value::String(Self::param_text(&cv.value)),
+                    Some(cv) if !cv.value.is_null() => {
+                        serde_json::Value::String(Self::param_text(&cv.value))
+                    }
                     _ => serde_json::Value::Null,
                 })
                 .collect();
-            arrays.push(format!("${}::text::text[]", Self::bind(params, &pg_array_literal(&serde_json::Value::Array(items)))));
+            arrays.push(format!(
+                "${}::text::text[]",
+                Self::bind(params, &pg_array_literal(&serde_json::Value::Array(items)))
+            ));
         }
         let names: Vec<String> = (0..specs.len()).map(|j| format!("c{j}")).collect();
         let source = if specs.is_empty() {
             format!("(SELECT FROM generate_series(1, {})) AS _s", rows.len())
         } else {
-            format!("(SELECT * FROM unnest({}) AS _v({})) AS _s", arrays.join(", "), names.join(", "))
+            format!(
+                "(SELECT * FROM unnest({}) AS _v({})) AS _s",
+                arrays.join(", "),
+                names.join(", ")
+            )
         };
         let refs: Vec<(String, String)> = node
             .refs
             .iter()
             .map(|r| {
-                let value = ValueRef::Node { node: r.node, column: r.source_column.clone() };
-                (r.column.clone(), Self::deferred_value(value, &Self::ref_spec(r), params, deferred))
+                let value = ValueRef::Node {
+                    node: r.node,
+                    column: r.source_column.clone(),
+                };
+                (
+                    r.column.clone(),
+                    Self::deferred_value(value, &Self::ref_spec(r), params, deferred),
+                )
             })
             .collect();
-        let of_parent: Vec<String> = refs.iter().map(|(c, e)| format!("{} = {e}", col("_t", c))).collect();
+        let of_parent: Vec<String> = refs
+            .iter()
+            .map(|(c, e)| format!("{} = {e}", col("_t", c)))
+            .collect();
         let source_col = |column: &str| specs.iter().position(|s| s.column == column);
         // Rows match children by key; rows without it are new
         let key_match: Vec<String> = key
@@ -1657,15 +2425,25 @@ impl SqlCompiler {
                 None => "false".to_string(),
             })
             .collect();
-        let on = key_match.iter().chain(&of_parent).cloned().collect::<Vec<_>>().join(" AND ");
-        let assign = |j: usize, spec: &ColumnValue| Self::assign_expr(&format!("_s.c{j}"), spec, true);
+        let on = key_match
+            .iter()
+            .chain(&of_parent)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let assign =
+            |j: usize, spec: &ColumnValue| Self::assign_expr(&format!("_s.c{j}"), spec, true);
         let updates: Vec<String> = specs
             .iter()
             .enumerate()
             .filter(|(_, s)| !key.iter().any(|(k, _)| *k == s.column))
             .map(|(j, s)| format!("{} = {}", quote_ident(&s.column), assign(j, s)))
             .collect();
-        let matched = if updates.is_empty() { "DO NOTHING".to_string() } else { format!("UPDATE SET {}", updates.join(", ")) };
+        let matched = if updates.is_empty() {
+            "DO NOTHING".to_string()
+        } else {
+            format!("UPDATE SET {}", updates.join(", "))
+        };
         let insert = |skip_key: bool| {
             let mut cols = Vec::new();
             let mut values = Vec::new();
@@ -1680,18 +2458,35 @@ impl SqlCompiler {
                 cols.push(quote_ident(c));
                 values.push(e.clone());
             }
-            format!("INSERT ({}) VALUES ({})", cols.join(", "), values.join(", "))
+            format!(
+                "INSERT ({}) VALUES ({})",
+                cols.join(", "),
+                values.join(", ")
+            )
         };
         // Rows leaving the key out take its default
         let keyed: Vec<usize> = key.iter().filter_map(|(k, _)| source_col(k)).collect();
         let mut clauses = vec![format!("WHEN MATCHED THEN {matched}")];
         if !keyed.is_empty() {
-            let unkeyed = keyed.iter().map(|j| format!("_s.c{j} IS NULL")).collect::<Vec<_>>().join(" AND ");
-            clauses.push(format!("WHEN NOT MATCHED BY TARGET AND {unkeyed} THEN {}", insert(true)));
+            let unkeyed = keyed
+                .iter()
+                .map(|j| format!("_s.c{j} IS NULL"))
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            clauses.push(format!(
+                "WHEN NOT MATCHED BY TARGET AND {unkeyed} THEN {}",
+                insert(true)
+            ));
         }
         clauses.push(format!("WHEN NOT MATCHED BY TARGET THEN {}", insert(false)));
-        clauses.push(format!("WHEN NOT MATCHED BY SOURCE AND {} THEN DELETE", of_parent.join(" AND ")));
-        format!("MERGE INTO {target} AS _t USING {source} ON {on} {}", clauses.join(" "))
+        clauses.push(format!(
+            "WHEN NOT MATCHED BY SOURCE AND {} THEN DELETE",
+            of_parent.join(" AND ")
+        ));
+        format!(
+            "MERGE INTO {target} AS _t USING {source} ON {on} {}",
+            clauses.join(" ")
+        )
     }
 
     /// Column assignment spec of a node reference (its value comes later).
@@ -1706,7 +2501,12 @@ impl SqlCompiler {
     }
 
     /// Assignment of a value known only when the statement runs.
-    fn deferred_value(value: ValueRef, spec: &ColumnValue, params: &mut Vec<String>, deferred: &mut Vec<(usize, ParamSource)>) -> String {
+    fn deferred_value(
+        value: ValueRef,
+        spec: &ColumnValue,
+        params: &mut Vec<String>,
+        deferred: &mut Vec<(usize, ParamSource)>,
+    ) -> String {
         let idx = Self::bind_str(params, String::new());
         deferred.push((idx - 1, ParamSource::Value(value)));
         Self::assign_expr(&format!("${idx}::text"), spec, false)
@@ -1728,21 +2528,33 @@ impl SqlCompiler {
         let specs: Vec<ColumnValue> = first
             .values
             .iter()
-            .map(|v| ColumnValue { value: serde_json::Value::Null, ..v.clone() })
+            .map(|v| ColumnValue {
+                value: serde_json::Value::Null,
+                ..v.clone()
+            })
             .chain(first.refs.iter().map(Self::ref_spec))
             .collect();
         let columns: Vec<&str> = specs.iter().map(|s| s.column.as_str()).collect();
-        let conflict = on_conflict.map(|oc| Self::on_conflict_sql(oc, &columns, primary_key)).unwrap_or_default();
+        let conflict = on_conflict
+            .map(|oc| Self::on_conflict_sql(oc, &columns, primary_key))
+            .unwrap_or_default();
         let value_of = |node: &WriteNode, column: &str| -> ValueRef {
             if let Some(v) = node.values.iter().find(|v| v.column == column) {
                 return ValueRef::Literal((!v.value.is_null()).then(|| Self::param_text(&v.value)));
             }
             match node.refs.iter().find(|r| r.column == column) {
-                Some(r) => ValueRef::Node { node: r.node, column: r.source_column.clone() },
+                Some(r) => ValueRef::Node {
+                    node: r.node,
+                    column: r.source_column.clone(),
+                },
                 None => ValueRef::Literal(None),
             }
         };
-        let col_names = columns.iter().map(|c| quote_ident(c)).collect::<Vec<_>>().join(", ");
+        let col_names = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         if let [only] = batch {
             if specs.is_empty() {
@@ -1760,16 +2572,25 @@ impl SqlCompiler {
                     node_ref => Self::deferred_value(node_ref, spec, params, deferred),
                 })
                 .collect();
-            return format!("INSERT INTO {target} ({col_names}) VALUES ({}){conflict}", exprs.join(", "));
+            return format!(
+                "INSERT INTO {target} ({col_names}) VALUES ({}){conflict}",
+                exprs.join(", ")
+            );
         }
 
         if specs.is_empty() {
-            return format!("INSERT INTO {target} SELECT FROM generate_series(1, {}){conflict}", batch.len());
+            return format!(
+                "INSERT INTO {target} SELECT FROM generate_series(1, {}){conflict}",
+                batch.len()
+            );
         }
         let mut arrays = Vec::new();
         let mut exprs = Vec::new();
         for (j, spec) in specs.iter().enumerate() {
-            let values: Vec<ValueRef> = batch.iter().map(|&n| value_of(&nodes[n], &spec.column)).collect();
+            let values: Vec<ValueRef> = batch
+                .iter()
+                .map(|&n| value_of(&nodes[n], &spec.column))
+                .collect();
             let idx = if values.iter().all(|v| matches!(v, ValueRef::Literal(_))) {
                 let items = values
                     .into_iter()
@@ -1806,19 +2627,32 @@ impl SqlCompiler {
         params: &mut Vec<String>,
     ) -> String {
         match kind {
-            MutationKind::Update { target: rows, column_values } => {
+            MutationKind::Update {
+                target: rows,
+                column_values,
+            } => {
                 // An empty input still has to find (and return) the rows
                 let set_exprs = if column_values.is_empty() {
                     let touched = match rows {
                         RowTarget::Key(key) => key.first().map(|k| k.column.as_str()),
                         RowTarget::Filter(_) => None,
                     };
-                    let first = quote_ident(touched.or(key_columns.first().map(|(c, _)| c.as_str())).unwrap_or_default());
+                    let first = quote_ident(
+                        touched
+                            .or(key_columns.first().map(|(c, _)| c.as_str()))
+                            .unwrap_or_default(),
+                    );
                     format!("{first} = {first}")
                 } else {
                     column_values
                         .iter()
-                        .map(|cv| format!("{} = {}", quote_ident(&cv.column), Self::bind_value(params, cv)))
+                        .map(|cv| {
+                            format!(
+                                "{} = {}",
+                                quote_ident(&cv.column),
+                                Self::bind_value(params, cv)
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join(", ")
                 };
@@ -1840,22 +2674,40 @@ impl SqlCompiler {
                 .iter()
                 .map(|k| {
                     let idx = Self::bind(params, &k.value);
-                    Self::compare(&quote_ident(&k.column), &k.operator, idx, k.pg_cast.as_deref())
+                    Self::compare(
+                        &quote_ident(&k.column),
+                        &k.operator,
+                        idx,
+                        k.pg_cast.as_deref(),
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join(" AND "),
             RowTarget::Filter(Some(f)) => Self::compile_filter_expr(f, params),
             RowTarget::Filter(None) => String::new(),
         };
-        if condition.is_empty() { String::new() } else { format!(" WHERE {condition}") }
+        if condition.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {condition}")
+        }
     }
 
     /// ` ON CONFLICT (<key>) DO UPDATE SET ...` for rows setting `columns`: the configured
     /// columns take the proposed row's values, by default the ones set apart from the
     /// conflict key and the primary key (an upsert on another key does not re-key the row).
     /// With nothing to update the conflicting row is left alone (`DO NOTHING`).
-    fn on_conflict_sql(oc: &OnConflict, columns: &[&str], primary_key: &[(String, Option<String>)]) -> String {
-        let key = oc.columns.iter().map(|(c, _)| quote_ident(c)).collect::<Vec<_>>().join(", ");
+    fn on_conflict_sql(
+        oc: &OnConflict,
+        columns: &[&str],
+        primary_key: &[(String, Option<String>)],
+    ) -> String {
+        let key = oc
+            .columns
+            .iter()
+            .map(|(c, _)| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
         let is_key = |c: &str| oc.columns.iter().chain(primary_key).any(|(k, _)| k == c);
         let update: Vec<&str> = match &oc.update {
             Some(cols) => cols.iter().map(String::as_str).collect(),
@@ -1864,7 +2716,11 @@ impl SqlCompiler {
         if oc.do_nothing || update.is_empty() {
             return format!(" ON CONFLICT ({key}) DO NOTHING");
         }
-        let set = update.iter().map(|c| format!("{0} = EXCLUDED.{0}", quote_ident(c))).collect::<Vec<_>>().join(", ");
+        let set = update
+            .iter()
+            .map(|c| format!("{0} = EXCLUDED.{0}", quote_ident(c)))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(" ON CONFLICT ({key}) DO UPDATE SET {set}")
     }
 
@@ -1892,12 +2748,14 @@ impl SqlCompiler {
         // Estimated totals are read from statistics or a separate EXPLAIN: a connection
         // selecting nothing else reads no rows, and binds no conditions
         let estimating = ESTIMATING.with(|e| *e.borrow()) && join_condition.is_none();
-        let needs_page = selections.include_edges || selections.include_nodes || selections.include_page_info;
-        let totals: Vec<(String, bool)> = if selections.total_counts.is_empty() && selections.include_total_count {
-            vec![("totalCount".to_string(), selections.estimate_total)]
-        } else {
-            selections.total_counts.clone()
-        };
+        let needs_page =
+            selections.include_edges || selections.include_nodes || selections.include_page_info;
+        let totals: Vec<(String, bool)> =
+            if selections.total_counts.is_empty() && selections.include_total_count {
+                vec![("totalCount".to_string(), selections.estimate_total)]
+            } else {
+                selections.total_counts.clone()
+            };
         let only_estimates = estimating
             && !needs_page
             && selections.aggregates.is_empty()
@@ -1909,14 +2767,25 @@ impl SqlCompiler {
         let mut where_clauses = if only_estimates {
             Vec::new()
         } else {
-            Self::connection_where(table_alias, where_conditions, filter_expr, join_condition, params)
+            Self::connection_where(
+                table_alias,
+                where_conditions,
+                filter_expr,
+                join_condition,
+                params,
+            )
         };
-        let unconditioned = where_conditions.is_empty() && filter_expr.is_none() && source.is_none();
+        let unconditioned =
+            where_conditions.is_empty() && filter_expr.is_none() && source.is_none();
 
         // 3. Keyset order and cursor conditions (after / before). Plans without a sort
         // order by the table's key.
         let legacy_key = [("id".to_string(), id_cast.map(str::to_string))];
-        let key = if cursor_columns.is_empty() { &legacy_key[..] } else { cursor_columns };
+        let key = if cursor_columns.is_empty() {
+            &legacy_key[..]
+        } else {
+            cursor_columns
+        };
         let key_sort: Vec<SortKey>;
         let keyset = if sort.is_empty() {
             key_sort = key
@@ -1951,23 +2820,47 @@ impl SqlCompiler {
                 .map(|k| {
                     let c = col(table_alias, &k.column);
                     match (k.truncate.as_deref(), k.is_date) {
-                        (Some(unit), false) if unit != "bin" => format!("date_trunc('{unit}', {c})"),
-                        (Some(unit), true) if unit != "bin" => format!("date_trunc('{unit}', {c}::timestamp)::date"),
+                        (Some(unit), false) if unit != "bin" => {
+                            format!("date_trunc('{unit}', {c})")
+                        }
+                        (Some(unit), true) if unit != "bin" => {
+                            format!("date_trunc('{unit}', {c}::timestamp)::date")
+                        }
                         _ => c,
                     }
                 })
                 .collect();
-            let partition = if partition.is_empty() { String::new() } else { format!("PARTITION BY {} ", partition.join(", ")) };
-            let order: Vec<String> =
-                keyset.iter().zip(&key_exprs).map(|(k, e)| format!("{e} {}", if k.descending { "DESC" } else { "ASC" })).collect();
-            let over = format!("OVER ({partition}ORDER BY {} ROWS UNBOUNDED PRECEDING)", order.join(", "));
+            let partition = if partition.is_empty() {
+                String::new()
+            } else {
+                format!("PARTITION BY {} ", partition.join(", "))
+            };
+            let order: Vec<String> = keyset
+                .iter()
+                .zip(&key_exprs)
+                .map(|(k, e)| format!("{e} {}", if k.descending { "DESC" } else { "ASC" }))
+                .collect();
+            let over = format!(
+                "OVER ({partition}ORDER BY {} ROWS UNBOUNDED PRECEDING)",
+                order.join(", ")
+            );
             if w.function == "running_sum" {
                 let mut fields = Vec::new();
                 for (j, f) in w.fields.iter().enumerate() {
-                    window_cols.push(format!("sum({}) {over} AS \"__w{i}_{j}\"", col(table_alias, &f.column_name)));
-                    fields.push(Self::json_pair(&f.field_alias, &format!("{table_alias}.\"__w{i}_{j}\"")));
+                    window_cols.push(format!(
+                        "sum({}) {over} AS \"__w{i}_{j}\"",
+                        col(table_alias, &f.column_name)
+                    ));
+                    fields.push(Self::json_pair(
+                        &f.field_alias,
+                        &format!("{table_alias}.\"__w{i}_{j}\""),
+                    ));
                 }
-                let obj = if fields.is_empty() { "'{}'::json".to_string() } else { Self::json_object(&fields) };
+                let obj = if fields.is_empty() {
+                    "'{}'::json".to_string()
+                } else {
+                    Self::json_object(&fields)
+                };
                 window_pairs.push(Self::json_pair(&w.field_alias, &obj));
             } else {
                 // Ranks compare the `orderBy` values only (row numbers follow the whole order),
@@ -1976,22 +2869,36 @@ impl SqlCompiler {
                     over.replace(" ROWS UNBOUNDED PRECEDING", "")
                 } else {
                     let ranked: Vec<&String> = order.iter().take(w.rank_keys).collect();
-                    format!("OVER ({partition}ORDER BY {})", ranked.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
+                    format!(
+                        "OVER ({partition}ORDER BY {})",
+                        ranked
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
                 };
                 window_cols.push(format!("{}() {over} AS \"__w{i}\"", w.function));
-                window_pairs.push(Self::json_pair(&w.field_alias, &format!("{table_alias}.\"__w{i}\"")));
+                window_pairs.push(Self::json_pair(
+                    &w.field_alias,
+                    &format!("{table_alias}.\"__w{i}\""),
+                ));
             }
         }
         let base_where = where_clauses.len();
 
         for (cursor, after) in [(after, true), (before, false)] {
-            let Some(cursor) = cursor.as_ref().filter(|_| !only_estimates) else { continue };
+            let Some(cursor) = cursor.as_ref().filter(|_| !only_estimates) else {
+                continue;
+            };
             // Single-column keysets use the raw value as cursor; others a JSON array
             let values = match keyset {
                 [_] => vec![serde_json::Value::String(Self::decode_cursor(cursor))],
                 _ => Self::decode_composite_cursor(cursor),
             };
-            where_clauses.push(Self::keyset_condition(&key_exprs, keyset, &values, after, params));
+            where_clauses.push(Self::keyset_condition(
+                &key_exprs, keyset, &values, after, params,
+            ));
         }
 
         let where_sql = Self::where_sql(&where_clauses);
@@ -2002,23 +2909,45 @@ impl SqlCompiler {
         let order_items: Vec<String> = keyset
             .iter()
             .zip(&key_exprs)
-            .map(|(k, e)| format!("{e} {}", if k.descending != backward { "DESC" } else { "ASC" }))
+            .map(|(k, e)| {
+                format!(
+                    "{e} {}",
+                    if k.descending != backward {
+                        "DESC"
+                    } else {
+                        "ASC"
+                    }
+                )
+            })
             .collect();
         let order_by_sql = format!("ORDER BY {}", order_items.join(", "));
-        let rn_order = if backward { " ORDER BY rn DESC" } else { " ORDER BY rn" };
+        let rn_order = if backward {
+            " ORDER BY rn DESC"
+        } else {
+            " ORDER BY rn"
+        };
 
         // `offset` skips rows past the cursor (or the start), in the direction read
         let offset = offset.filter(|&o| o > 0);
         let skipped = offset.is_some();
         // Sizes are bound only when a page is read: a parameter the SQL leaves out is an error
-        let mut bind_size = |n: usize| if needs_page { Self::bind_count(params, n) } else { String::new() };
+        let mut bind_size = |n: usize| {
+            if needs_page {
+                Self::bind_count(params, n)
+            } else {
+                String::new()
+            }
+        };
         let limit_val = bind_size(first.or(last).unwrap_or(100));
         // `first` and `last` together: the last `last` rows of the first `first` (Relay)
         let tail = first.and(last).map(&mut bind_size);
         let has_more = format!("(count(rn) > {limit_val})");
         let (has_next, has_prev) = match &tail {
             _ if backward => ((before.is_some() || skipped).to_string(), has_more),
-            Some(last) if !(after.is_some() || skipped) => (has_more, format!("(least(count(rn), {limit_val}) > {last})")),
+            Some(last) if !(after.is_some() || skipped) => (
+                has_more,
+                format!("(least(count(rn), {limit_val}) > {last})"),
+            ),
             _ => (has_more, (after.is_some() || skipped).to_string()),
         };
 
@@ -2043,9 +2972,13 @@ impl SqlCompiler {
                 format!("json_build_array({})::text", texts.join(", "))
             }
         };
-        let cursor_expr = format!("translate(encode(convert_to({cursor_value}, 'UTF8'), 'base64'), chr(10), '')");
+        let cursor_expr =
+            format!("translate(encode(convert_to({cursor_value}, 'UTF8'), 'base64'), chr(10), '')");
 
-        let mut edge_pairs = vec![Self::json_pair("cursor", &cursor_expr), Self::json_pair("node", &node_obj)];
+        let mut edge_pairs = vec![
+            Self::json_pair("cursor", &cursor_expr),
+            Self::json_pair("node", &node_obj),
+        ];
         edge_pairs.extend(window_pairs);
         let edge_obj = Self::json_object(&edge_pairs);
 
@@ -2094,14 +3027,25 @@ impl SqlCompiler {
             } else {
                 // The planner's estimate of the rows matching the conditions, from EXPLAIN
                 let mut estimate_params = Vec::new();
-                let clauses = Self::connection_where(table_alias, where_conditions, filter_expr, join_condition, &mut estimate_params);
+                let clauses = Self::connection_where(
+                    table_alias,
+                    where_conditions,
+                    filter_expr,
+                    join_condition,
+                    &mut estimate_params,
+                );
                 let from = match source {
                     Some(source) => Self::function_from(source, table_alias, &mut estimate_params),
                     None => Self::from_item(schema, table, table_alias, None),
                 };
                 let sql = format!("SELECT 1 FROM {from}{}", Self::where_sql(&clauses));
                 let param = Self::bind_str(params, String::new());
-                ESTIMATES.with(|e| e.borrow_mut().push(Estimate { param: param - 1, query: CompiledQuery::new(sql, estimate_params) }));
+                ESTIMATES.with(|e| {
+                    e.borrow_mut().push(Estimate {
+                        param: param - 1,
+                        query: CompiledQuery::new(sql, estimate_params),
+                    })
+                });
                 format!("${param}::text::int8")
             };
             outer_pairs.push(Self::json_pair(key, &format!("({estimate})::int")));
@@ -2109,12 +3053,22 @@ impl SqlCompiler {
 
         for (i, aggs) in selections.aggregates.iter().enumerate() {
             let agg_pairs = Self::aggregate_pairs(aggs, table_alias, params);
-            let obj = if agg_pairs.is_empty() { "'{}'::json".to_string() } else { Self::json_object(&agg_pairs) };
+            let obj = if agg_pairs.is_empty() {
+                "'{}'::json".to_string()
+            } else {
+                Self::json_object(&agg_pairs)
+            };
             stats_cols.push((obj, format!("__aggs{i}")));
-            outer_pairs.push(Self::json_pair(&aggs.field_alias, &stats_ref(&format!("__aggs{i}"))));
+            outer_pairs.push(Self::json_pair(
+                &aggs.field_alias,
+                &stats_ref(&format!("__aggs{i}")),
+            ));
         }
         for (i, grouped) in selections.grouped.iter().enumerate() {
-            outer_pairs.push(Self::json_pair(&grouped.field_alias, &stats_ref(&format!("__g{i}"))));
+            outer_pairs.push(Self::json_pair(
+                &grouped.field_alias,
+                &stats_ref(&format!("__g{i}")),
+            ));
         }
 
         if selections.include_page_info {
@@ -2150,12 +3104,25 @@ impl SqlCompiler {
         }
 
         let stats_from = if !selections.grouped.is_empty() {
-            Some(Self::grouped_stats(&selections.grouped, &stats_cols, table_alias, &from, &where_sql, params))
+            Some(Self::grouped_stats(
+                &selections.grouped,
+                &stats_cols,
+                table_alias,
+                &from,
+                &where_sql,
+                params,
+            ))
         } else if stats_cols.is_empty() {
             None
         } else {
-            let cols: Vec<String> = stats_cols.iter().map(|(expr, name)| format!("{expr} AS \"{name}\"")).collect();
-            Some(format!("(SELECT {} FROM {from}{where_sql}) _stats", cols.join(", ")))
+            let cols: Vec<String> = stats_cols
+                .iter()
+                .map(|(expr, name)| format!("{expr} AS \"{name}\""))
+                .collect();
+            Some(format!(
+                "(SELECT {} FROM {from}{where_sql}) _stats",
+                cols.join(", ")
+            ))
         };
         if !needs_page {
             let from = stats_from.map(|s| format!(" FROM {s}")).unwrap_or_default();
@@ -2183,8 +3150,14 @@ impl SqlCompiler {
                     Self::where_sql(&where_clauses[base_where..]),
                 )
             };
-            let offset_sql = offset.map(|o| format!(" OFFSET {}", Self::bind_count(params, o))).unwrap_or_default();
-            let row_count = if tail.is_some() { " count(*) OVER () AS n," } else { "" };
+            let offset_sql = offset
+                .map(|o| format!(" OFFSET {}", Self::bind_count(params, o)))
+                .unwrap_or_default();
+            let row_count = if tail.is_some() {
+                " count(*) OVER () AS n,"
+            } else {
+                ""
+            };
             format!(
                 "(SELECT {} FROM {stats_prefix}(\
                     SELECT \
@@ -2231,17 +3204,27 @@ impl SqlCompiler {
     /// JSON pairs of the aggregate objects of `aggs` over the rows of `table_alias` (in an
     /// aggregate query). min/max of a range read its bounds; every aggregate takes the
     /// selection's filter (`FILTER (WHERE ...)`).
-    fn aggregate_pairs(aggs: &AggregatesSelections, table_alias: &str, params: &mut Vec<String>) -> Vec<String> {
+    fn aggregate_pairs(
+        aggs: &AggregatesSelections,
+        table_alias: &str,
+        params: &mut Vec<String>,
+    ) -> Vec<String> {
         let filter = match &aggs.filter {
             Some(f) => {
                 let f_sql = Self::compile_filter_expr(f, params);
-                if f_sql.is_empty() { String::new() } else { format!(" FILTER (WHERE {f_sql})") }
+                if f_sql.is_empty() {
+                    String::new()
+                } else {
+                    format!(" FILTER (WHERE {f_sql})")
+                }
             }
             None => String::new(),
         };
         let mut pairs = Vec::new();
         for part in &aggs.parts {
-            let fraction = part.fraction.map(|f| Self::bind(params, &serde_json::json!(f)));
+            let fraction = part
+                .fraction
+                .map(|f| Self::bind(params, &serde_json::json!(f)));
             let fields: Vec<String> = part
                 .fields
                 .iter()
@@ -2267,7 +3250,11 @@ impl SqlCompiler {
                     Self::json_pair(&f.field_alias, &expr)
                 })
                 .collect();
-            let obj = if fields.is_empty() { "'{}'::json".to_string() } else { Self::json_object(&fields) };
+            let obj = if fields.is_empty() {
+                "'{}'::json".to_string()
+            } else {
+                Self::json_object(&fields)
+            };
             pairs.push(Self::json_pair(&part.field_alias, &obj));
         }
         pairs
@@ -2278,18 +3265,37 @@ impl SqlCompiler {
     fn empty_group(g: &GroupedAggregates, key: &str) -> String {
         let mut pairs = Vec::new();
         if g.include_keys {
-            pairs.push(Self::json_pair("keys", &format!("JSON_ARRAY({key} NULL ON NULL RETURNING json)")));
+            pairs.push(Self::json_pair(
+                "keys",
+                &format!("JSON_ARRAY({key} NULL ON NULL RETURNING json)"),
+            ));
         }
         if g.include_count {
             pairs.push(Self::json_pair("count", "0"));
         }
         for part in &g.aggregates.parts {
-            let value = if part.function == "count_distinct" { "0" } else { "NULL" };
-            let fields: Vec<String> = part.fields.iter().map(|f| Self::json_pair(&f.field_alias, value)).collect();
-            let obj = if fields.is_empty() { "'{}'::json".to_string() } else { Self::json_object(&fields) };
+            let value = if part.function == "count_distinct" {
+                "0"
+            } else {
+                "NULL"
+            };
+            let fields: Vec<String> = part
+                .fields
+                .iter()
+                .map(|f| Self::json_pair(&f.field_alias, value))
+                .collect();
+            let obj = if fields.is_empty() {
+                "'{}'::json".to_string()
+            } else {
+                Self::json_object(&fields)
+            };
             pairs.push(Self::json_pair(&part.field_alias, &obj));
         }
-        if pairs.is_empty() { "'{}'::json".to_string() } else { Self::json_object(&pairs) }
+        if pairs.is_empty() {
+            "'{}'::json".to_string()
+        } else {
+            Self::json_object(&pairs)
+        }
     }
 
     /// The `_stats` row of a connection with `groupedAggregates`: one scan of the filtered
@@ -2307,7 +3313,11 @@ impl SqlCompiler {
         // Grouping expressions, each written once: the select list and GROUP BY must match
         let key_expr = |key: &GroupKey, g: &GroupedAggregates, params: &mut Vec<String>| {
             let c = col(table_alias, &key.column);
-            let mut tz = || g.time_zone.as_ref().map(|tz| format!(", ${}::text", Self::bind_str(params, tz.clone())));
+            let mut tz = || {
+                g.time_zone
+                    .as_ref()
+                    .map(|tz| format!(", ${}::text", Self::bind_str(params, tz.clone())))
+            };
             match (key.truncate.as_deref(), key.is_date) {
                 (None, _) => c,
                 (Some("bin"), _) => {
@@ -2315,7 +3325,9 @@ impl SqlCompiler {
                     let width = Self::bind_str(params, bins.width.clone());
                     let ty = key.sql_type.as_deref().unwrap_or("timestamptz");
                     let origin = match &bins.origin {
-                        Some(origin) => format!("${}::text::{ty}", Self::bind_str(params, origin.clone())),
+                        Some(origin) => {
+                            format!("${}::text::{ty}", Self::bind_str(params, origin.clone()))
+                        }
                         None => format!("'2000-01-01'::{ty}"),
                     };
                     format!("date_bin(${width}::text::interval, {c}, {origin})")
@@ -2345,28 +3357,72 @@ impl SqlCompiler {
         // `GROUPING(a, b, c)` sets a bit, first argument highest, for each expression the
         // row is not grouped by
         let n = exprs.len();
-        let mask = |set: &[usize]| (0..n).filter(|j| !set.contains(j)).map(|j| 1u64 << (n - 1 - j)).sum::<u64>();
+        let mask = |set: &[usize]| {
+            (0..n)
+                .filter(|j| !set.contains(j))
+                .map(|j| 1u64 << (n - 1 - j))
+                .sum::<u64>()
+        };
         let all = mask(&[]);
 
         let mut inner = vec![format!("GROUPING({}) AS \"__set\"", exprs.join(", "))];
-        inner.extend(exprs.iter().enumerate().map(|(j, e)| format!("{e} AS \"__k{j}\"")));
-        inner.extend(stats_cols.iter().map(|(expr, name)| format!("{expr} AS \"{name}\"")));
-        let mut outer: Vec<String> =
-            stats_cols.iter().map(|(_, name)| format!("any_value(\"{name}\") FILTER (WHERE \"__set\" = {all}) AS \"{name}\"")).collect();
-        let mut finals: Vec<String> = stats_cols.iter().map(|(_, name)| format!("_s.\"{name}\"")).collect();
+        inner.extend(
+            exprs
+                .iter()
+                .enumerate()
+                .map(|(j, e)| format!("{e} AS \"__k{j}\"")),
+        );
+        inner.extend(
+            stats_cols
+                .iter()
+                .map(|(expr, name)| format!("{expr} AS \"{name}\"")),
+        );
+        let mut outer: Vec<String> = stats_cols
+            .iter()
+            .map(|(_, name)| {
+                format!("any_value(\"{name}\") FILTER (WHERE \"__set\" = {all}) AS \"{name}\"")
+            })
+            .collect();
+        let mut finals: Vec<String> = stats_cols
+            .iter()
+            .map(|(_, name)| format!("_s.\"{name}\""))
+            .collect();
         for (i, (g, set)) in grouped.iter().zip(&sets).enumerate() {
             let mut pairs = Vec::new();
             if g.include_keys {
-                let keys: Vec<String> = g.keys.iter().zip(set).map(|(k, &j)| Self::value_output(&exprs[j], &k.output, 0)).collect();
-                pairs.push(Self::json_pair("keys", &format!("JSON_ARRAY({} NULL ON NULL RETURNING json)", keys.join(", "))));
+                let keys: Vec<String> = g
+                    .keys
+                    .iter()
+                    .zip(set)
+                    .map(|(k, &j)| Self::value_output(&exprs[j], &k.output, 0))
+                    .collect();
+                pairs.push(Self::json_pair(
+                    "keys",
+                    &format!(
+                        "JSON_ARRAY({} NULL ON NULL RETURNING json)",
+                        keys.join(", ")
+                    ),
+                ));
             }
             if g.include_count {
                 pairs.push(Self::json_pair("count", "count(*)"));
             }
             pairs.extend(Self::aggregate_pairs(&g.aggregates, table_alias, params));
-            let group = if pairs.is_empty() { "'{}'::json".to_string() } else { Self::json_object(&pairs) };
-            let having: Vec<String> = g.having.iter().map(|h| Self::having_sql(h, table_alias, params)).collect();
-            let having = if having.is_empty() { "true".to_string() } else { having.join(" AND ") };
+            let group = if pairs.is_empty() {
+                "'{}'::json".to_string()
+            } else {
+                Self::json_object(&pairs)
+            };
+            let having: Vec<String> = g
+                .having
+                .iter()
+                .map(|h| Self::having_sql(h, table_alias, params))
+                .collect();
+            let having = if having.is_empty() {
+                "true".to_string()
+            } else {
+                having.join(" AND ")
+            };
             inner.push(format!("{group} AS \"__g{i}\""));
             inner.push(format!("{having} AS \"__h{i}\""));
             let order: Vec<String> = set.iter().map(|j| format!("\"__k{j}\"")).collect();
@@ -2384,17 +3440,29 @@ impl SqlCompiler {
             let j = set[0];
             outer.push(format!("JSON_ARRAYAGG(\"__k{j}\" ORDER BY \"__k{j}\" RETURNING json) {rows} AS \"__gk{i}\""));
             let key = &g.keys[0];
-            let ty = key.sql_type.clone().unwrap_or_else(|| "timestamptz".to_string());
+            let ty = key
+                .sql_type
+                .clone()
+                .unwrap_or_else(|| "timestamptz".to_string());
             let step = match key.truncate.as_deref() {
-                Some("bin") => format!("${}::text::interval", Self::bind_str(params, g.bins.as_ref().expect("binned").width.clone())),
+                Some("bin") => format!(
+                    "${}::text::interval",
+                    Self::bind_str(params, g.bins.as_ref().expect("binned").width.clone())
+                ),
                 Some("quarter") => "interval '3 months'".to_string(),
                 Some(unit) => format!("interval '1 {unit}'"),
                 None => unreachable!("fillGaps needs a truncated key"),
             };
             // Series of dates run in timestamps; truncated times step in the time zone
-            let (series_ty, back) = if key.is_date { ("timestamp".to_string(), "::date") } else { (ty.clone(), "") };
+            let (series_ty, back) = if key.is_date {
+                ("timestamp".to_string(), "::date")
+            } else {
+                (ty.clone(), "")
+            };
             let tz = match (&g.time_zone, ty.as_str()) {
-                (Some(tz), "timestamptz") => format!(", ${}::text", Self::bind_str(params, tz.clone())),
+                (Some(tz), "timestamptz") => {
+                    format!(", ${}::text", Self::bind_str(params, tz.clone()))
+                }
                 _ => String::new(),
             };
             let empty = Self::empty_group(g, &format!("_ser.k{back}"));
@@ -2416,7 +3484,13 @@ impl SqlCompiler {
             grouping_sets.push("()".to_string());
         }
         for set in &sets {
-            let s = format!("({})", set.iter().map(|&j| exprs[j].as_str()).collect::<Vec<_>>().join(", "));
+            let s = format!(
+                "({})",
+                set.iter()
+                    .map(|&j| exprs[j].as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             if !grouping_sets.contains(&s) {
                 grouping_sets.push(s);
             }
@@ -2436,7 +3510,8 @@ impl SqlCompiler {
             Some(c) => format!("({}({}))::numeric", h.function, col(table_alias, c)),
             None => "count(*)::numeric".to_string(),
         };
-        let mut value = |v: &serde_json::Value| format!("${}::text::numeric", Self::bind(params, v));
+        let mut value =
+            |v: &serde_json::Value| format!("${}::text::numeric", Self::bind(params, v));
         match h.operator.as_str() {
             "IS NULL" | "IS NOT NULL" => format!("{expr} {}", h.operator),
             "IN" | "NOT IN" if h.values.is_empty() => (h.operator == "NOT IN").to_string(),
@@ -2467,7 +3542,10 @@ impl SqlCompiler {
     ) -> String {
         let a = table_alias;
         let target = quote_qualified(schema, table);
-        let mut where_clauses: Vec<String> = where_conditions.iter().map(|c| Self::where_clause(a, c, params)).collect();
+        let mut where_clauses: Vec<String> = where_conditions
+            .iter()
+            .map(|c| Self::where_clause(a, c, params))
+            .collect();
         if let Some(f) = filter_expr {
             let f_sql = Self::compile_filter_expr(f, params);
             if !f_sql.is_empty() {
@@ -2476,23 +3554,53 @@ impl SqlCompiler {
         }
         let page_limit = limit + 1;
         let limit_sql = Self::bind_count(params, limit);
-        let Ranking { cte, from, rank, direction, score, extra } =
-            Self::ranking(&target, a, search, &mut where_clauses, selections.highlight.as_ref(), page_limit, params);
+        let Ranking {
+            cte,
+            from,
+            rank,
+            direction,
+            score,
+            extra,
+        } = Self::ranking(
+            &target,
+            a,
+            search,
+            &mut where_clauses,
+            selections.highlight.as_ref(),
+            page_limit,
+            params,
+        );
         let where_sql = Self::where_sql(&where_clauses);
 
         let mut scope = JoinScope::default();
-        let node_obj = Self::row_object(a, &selections.node_fields, selections.node_polymorphism.as_ref(), "Node", &mut scope, plan, params);
+        let node_obj = Self::row_object(
+            a,
+            &selections.node_fields,
+            selections.node_polymorphism.as_ref(),
+            "Node",
+            &mut scope,
+            plan,
+            params,
+        );
         let laterals = scope.sql;
         let mut hit_pairs = vec![Self::json_pair("node", &node_obj)];
         if selections.include_score {
             hit_pairs.insert(0, Self::json_pair("score", &format!("{a}.__score")));
         }
         if let Some(h) = &selections.highlight {
-            let value = if extra.iter().any(|e| e.ends_with("\"__headline\"")) { format!("{a}.\"__headline\"") } else { "NULL".to_string() };
+            let value = if extra.iter().any(|e| e.ends_with("\"__headline\"")) {
+                format!("{a}.\"__headline\"")
+            } else {
+                "NULL".to_string()
+            };
             hit_pairs.push(Self::json_pair(&h.field_alias, &value));
         }
         if let Some(alias) = &selections.distance {
-            let value = if extra.iter().any(|e| e.ends_with("\"__distance\"")) { format!("{a}.\"__distance\"") } else { "NULL".to_string() };
+            let value = if extra.iter().any(|e| e.ends_with("\"__distance\"")) {
+                format!("{a}.\"__distance\"")
+            } else {
+                "NULL".to_string()
+            };
             hit_pairs.push(Self::json_pair(alias, &value));
         }
         let extra = extra.iter().map(|e| format!(", {e}")).collect::<String>();
@@ -2500,10 +3608,16 @@ impl SqlCompiler {
 
         let mut pairs = Vec::new();
         if selections.include_hits {
-            pairs.push(Self::json_pair("hits", &Self::json_array_agg("hit", " ORDER BY rn", &format!("rn <= {limit_sql}"))));
+            pairs.push(Self::json_pair(
+                "hits",
+                &Self::json_array_agg("hit", " ORDER BY rn", &format!("rn <= {limit_sql}")),
+            ));
         }
         if selections.include_has_more {
-            pairs.push(Self::json_pair("hasMore", &format!("(count(rn) > {limit_sql})")));
+            pairs.push(Self::json_pair(
+                "hasMore",
+                &format!("(count(rn) > {limit_sql})"),
+            ));
         }
         if pairs.is_empty() {
             pairs.push(Self::json_pair("__typename", "'SearchResults'"));
@@ -2535,9 +3649,14 @@ impl SqlCompiler {
         page_limit: usize,
         params: &mut Vec<String>,
     ) -> Ranking {
-        let text = |params: &mut Vec<String>, value: &str| format!("${}::text", Self::bind_str(params, value.to_string()));
+        let text = |params: &mut Vec<String>, value: &str| {
+            format!("${}::text", Self::bind_str(params, value.to_string()))
+        };
         let vector = |params: &mut Vec<String>, v: &[f64]| {
-            let literal = format!("[{}]", v.iter().map(f64::to_string).collect::<Vec<_>>().join(","));
+            let literal = format!(
+                "[{}]",
+                v.iter().map(f64::to_string).collect::<Vec<_>>().join(",")
+            );
             format!("${}::text::vector", Self::bind_str(params, literal))
         };
         // Distance operator and similarity (higher is closer) of a pgvector opclass
@@ -2551,7 +3670,12 @@ impl SqlCompiler {
 
         // (CTE, FROM item, rank expression, rank direction, score expression)
         let (cte, from, rank, direction, score) = match search {
-            SearchOperation::FullText { document, config, source, query } => {
+            SearchOperation::FullText {
+                document,
+                config,
+                source,
+                query,
+            } => {
                 // The document and its text are over the table's own columns, the only ones
                 // in scope where they are evaluated
                 let q = text(params, query);
@@ -2561,29 +3685,59 @@ impl SqlCompiler {
                 };
                 where_clauses.push(format!("({document}) @@ {tsquery}"));
                 if let (Some(h), Some(source)) = (highlight, source) {
-                    let mut options = vec![format!("StartSel={}", h.start_sel), format!("StopSel={}", h.stop_sel)];
+                    let mut options = vec![
+                        format!("StartSel={}", h.start_sel),
+                        format!("StopSel={}", h.stop_sel),
+                    ];
                     options.extend(h.max_words.map(|n| format!("MaxWords={n}")));
                     options.extend(h.min_words.map(|n| format!("MinWords={n}")));
                     options.extend(h.max_fragments.map(|n| format!("MaxFragments={n}")));
                     let options = Self::bind_str(params, options.join(", "));
-                    let config = config.as_ref().map(|c| format!("{c}, ")).unwrap_or_default();
+                    let config = config
+                        .as_ref()
+                        .map(|c| format!("{c}, "))
+                        .unwrap_or_default();
                     extra.push(format!("ts_headline({config}{source}, {tsquery}, ${options}::text) AS \"__headline\""));
                 }
                 let rank = format!("ts_rank({document}, {tsquery})");
-                (String::new(), format!("{target} {a}"), rank.clone(), "DESC", format!("{rank}::float8"))
+                (
+                    String::new(),
+                    format!("{target} {a}"),
+                    rank.clone(),
+                    "DESC",
+                    format!("{rank}::float8"),
+                )
             }
-            SearchOperation::Nearest { column, geography, near, max_distance } => {
+            SearchOperation::Nearest {
+                column,
+                geography,
+                near,
+                max_distance,
+            } => {
                 let c = col(a, column);
                 let cast = if *geography { "::geography" } else { "" };
-                let g = format!("ST_GeomFromGeoJSON(${}::text){cast}", Self::bind_str(params, near.clone()));
+                let g = format!(
+                    "ST_GeomFromGeoJSON(${}::text){cast}",
+                    Self::bind_str(params, near.clone())
+                );
                 if let Some(max) = max_distance {
                     let max = Self::bind(params, &serde_json::json!(max));
                     where_clauses.push(format!("ST_DWithin({c}, {g}, ${max}::text::float8)"));
                 }
                 extra.push(format!("ST_Distance({c}, {g})::float8 AS \"__distance\""));
-                (String::new(), format!("{target} {a}"), format!("{c} <-> {g}"), "ASC", format!("(1.0 / (1.0 + ST_Distance({c}, {g})))::float8"))
+                (
+                    String::new(),
+                    format!("{target} {a}"),
+                    format!("{c} <-> {g}"),
+                    "ASC",
+                    format!("(1.0 / (1.0 + ST_Distance({c}, {g})))::float8"),
+                )
             }
-            SearchOperation::Fuzzy { column, query, min_similarity } => {
+            SearchOperation::Fuzzy {
+                column,
+                query,
+                min_similarity,
+            } => {
                 // Word similarity: how well the query matches some part of the value, so a
                 // partly typed "Ada Lov" matches "Ada Lovelace". `%>` (a trigram index finds the
                 // matches) and `<->>` (1 - word similarity: a GiST index returns the nearest
@@ -2595,9 +3749,20 @@ impl SqlCompiler {
                     let min = Self::bind(params, &serde_json::json!(min));
                     where_clauses.push(format!("word_similarity({q}, {c}) >= ${min}::text::real"));
                 }
-                (String::new(), format!("{target} {a}"), format!("{c} <->> {q}"), "ASC", format!("word_similarity({q}, {c})::numeric::float8"))
+                (
+                    String::new(),
+                    format!("{target} {a}"),
+                    format!("{c} <->> {q}"),
+                    "ASC",
+                    format!("word_similarity({q}, {c})::numeric::float8"),
+                )
             }
-            SearchOperation::Semantic { column, vector: v, min_score, opclass } => {
+            SearchOperation::Semantic {
+                column,
+                vector: v,
+                min_score,
+                opclass,
+            } => {
                 let c = col(a, column);
                 let v = vector(params, v);
                 let (op, similarity) = vector_ops(opclass, &c, &v);
@@ -2605,13 +3770,25 @@ impl SqlCompiler {
                     let min = Self::bind(params, &serde_json::json!(min));
                     where_clauses.push(format!("{similarity} >= ${min}::text::float8"));
                 }
-                (String::new(), format!("{target} {a}"), format!("{c} {op} {v}"), "ASC", format!("{similarity}::float8"))
+                (
+                    String::new(),
+                    format!("{target} {a}"),
+                    format!("{c} {op} {v}"),
+                    "ASC",
+                    format!("{similarity}::float8"),
+                )
             }
             SearchOperation::Bm25 { column, query } => {
                 let c = col(a, if column.is_empty() { "id" } else { column });
                 let q = text(params, query);
                 where_clauses.push(format!("{c} @@@ paradedb.parse({q})"));
-                (String::new(), format!("{target} {a}"), format!("paradedb.score({c})"), "DESC", format!("paradedb.score({c})::float8"))
+                (
+                    String::new(),
+                    format!("{target} {a}"),
+                    format!("paradedb.score({c})"),
+                    "DESC",
+                    format!("paradedb.score({c})::float8"),
+                )
             }
             SearchOperation::Hybrid {
                 key_column,
@@ -2636,12 +3813,24 @@ impl SqlCompiler {
                 let vector_rank = format!("{} {op} {v}", col(a, vector_column));
                 let lexical_col = col(a, lexical_column);
                 let (lexical_match, lexical_rank) = if *is_bm25 {
-                    (format!("{key} @@@ paradedb.parse({q})"), format!("paradedb.score({key}) DESC"))
+                    (
+                        format!("{key} @@@ paradedb.parse({q})"),
+                        format!("paradedb.score({key}) DESC"),
+                    )
                 } else {
-                    (format!("{lexical_col} %> {q}"), format!("{lexical_col} <->> {q}"))
+                    (
+                        format!("{lexical_col} %> {q}"),
+                        format!("{lexical_col} <->> {q}"),
+                    )
                 };
                 let vector_where = Self::where_sql(where_clauses);
-                let lexical_where = Self::where_sql(&where_clauses.iter().cloned().chain([lexical_match]).collect::<Vec<_>>());
+                let lexical_where = Self::where_sql(
+                    &where_clauses
+                        .iter()
+                        .cloned()
+                        .chain([lexical_match])
+                        .collect::<Vec<_>>(),
+                );
                 where_clauses.clear();
                 let candidates = Self::bind_count(params, page_limit.max(50));
                 let rrf_k = Self::bind_count(params, *rrf_k);
@@ -2662,10 +3851,23 @@ impl SqlCompiler {
                     ) "
                 );
                 let from = format!("_hybrid_scored _hs JOIN {target} {a} ON {key} = _hs._key");
-                (cte, from, "_hs.rrf_score".to_string(), "DESC", "_hs.rrf_score::float8".to_string())
+                (
+                    cte,
+                    from,
+                    "_hs.rrf_score".to_string(),
+                    "DESC",
+                    "_hs.rrf_score::float8".to_string(),
+                )
             }
         };
-        Ranking { cte, from, rank, direction, score, extra }
+        Ranking {
+            cte,
+            from,
+            rank,
+            direction,
+            score,
+            extra,
+        }
     }
 
     /// `globalSearch`: each table's best `limit + 1` matches (by its own index), merged by
@@ -2685,9 +3887,31 @@ impl SqlCompiler {
             let a = &b.table_alias;
             let target = quote_qualified(&b.schema, &b.table);
             let mut where_clauses = Vec::new();
-            let Ranking { from, rank, direction, score, .. } = Self::ranking(&target, a, &b.search, &mut where_clauses, None, limit + 1, params);
+            let Ranking {
+                from,
+                rank,
+                direction,
+                score,
+                ..
+            } = Self::ranking(
+                &target,
+                a,
+                &b.search,
+                &mut where_clauses,
+                None,
+                limit + 1,
+                params,
+            );
             let mut scope = JoinScope::default();
-            let node = Self::row_object(a, &b.node_fields, b.node_polymorphism.as_ref(), "Node", &mut scope, plan, params);
+            let node = Self::row_object(
+                a,
+                &b.node_fields,
+                b.node_polymorphism.as_ref(),
+                "Node",
+                &mut scope,
+                plan,
+                params,
+            );
             parts.push(format!(
                 "(SELECT {a}.__score AS score, {node} AS node FROM (\
                     SELECT {a}.*, {score} AS __score FROM {from}{} ORDER BY {rank} {direction} LIMIT {limit_sql} + 1\
@@ -2702,11 +3926,18 @@ impl SqlCompiler {
         }
         let mut pairs = Vec::new();
         if include_hits {
-            let hits = Self::json_array_agg(&Self::json_object(&hit), " ORDER BY rn", &format!("rn <= {limit_sql}"));
+            let hits = Self::json_array_agg(
+                &Self::json_object(&hit),
+                " ORDER BY rn",
+                &format!("rn <= {limit_sql}"),
+            );
             pairs.push(Self::json_pair("hits", &hits));
         }
         if include_has_more {
-            pairs.push(Self::json_pair("hasMore", &format!("(count(*) > {limit_sql})")));
+            pairs.push(Self::json_pair(
+                "hasMore",
+                &format!("(count(*) > {limit_sql})"),
+            ));
         }
         if pairs.is_empty() {
             pairs.push(Self::json_pair("__typename", "'GlobalSearchResults'"));
@@ -2722,12 +3953,25 @@ impl SqlCompiler {
 
     /// JSON object for one concrete type of a union, read from `set.table_alias`.
     /// A type with no selected fields (only other types were spread) is `{}`.
-    fn typed_object(set: &TypedFieldSet, scope: &mut JoinScope, plan: &OperationPlan, params: &mut Vec<String>) -> String {
+    fn typed_object(
+        set: &TypedFieldSet,
+        scope: &mut JoinScope,
+        plan: &OperationPlan,
+        params: &mut Vec<String>,
+    ) -> String {
         if set.polymorphism.is_none() && set.fields.is_empty() {
             return "'{}'::json".to_string();
         }
         let poly = set.polymorphism.as_deref();
-        Self::row_object(&set.table_alias, &set.fields, poly, &set.type_name, scope, plan, params)
+        Self::row_object(
+            &set.table_alias,
+            &set.fields,
+            poly,
+            &set.type_name,
+            scope,
+            plan,
+            params,
+        )
     }
 
     /// JSON of a polymorphic row read from `table_alias`, resolved to its concrete type as a
@@ -2748,12 +3992,22 @@ impl SqlCompiler {
     ) -> String {
         let mut whens = Vec::new();
         let (subject, fallback) = match poly {
-            RowPolymorphism::SingleTableInheritance { discriminator_column, variants, fallback } => {
+            RowPolymorphism::SingleTableInheritance {
+                discriminator_column,
+                variants,
+                fallback,
+            } => {
                 for branch in variants {
                     let obj = Self::typed_object(&branch.set, scope, plan, params);
-                    whens.push(format!("WHEN {} THEN {obj}", Self::sql_literal(&branch.discriminator_value)));
+                    whens.push(format!(
+                        "WHEN {} THEN {obj}",
+                        Self::sql_literal(&branch.discriminator_value)
+                    ));
                 }
-                (format!(" {}::text", col(table_alias, discriminator_column)), fallback)
+                (
+                    format!(" {}::text", col(table_alias, discriminator_column)),
+                    fallback,
+                )
             }
             RowPolymorphism::ConcreteTableInheritance { children, fallback } => {
                 for child in children {
@@ -2766,8 +4020,15 @@ impl SqlCompiler {
                         .join(" AND ");
                     scope.join(quote_qualified(&child.schema, &child.table), alias, on);
                     let obj = Self::typed_object(&child.set, scope, plan, params);
-                    let present = child.join_columns.first().map(|(c, _)| c.as_str()).unwrap_or("id");
-                    whens.push(format!("WHEN {} IS NOT NULL THEN {obj}", col(alias, present)));
+                    let present = child
+                        .join_columns
+                        .first()
+                        .map(|(c, _)| c.as_str())
+                        .unwrap_or("id");
+                    whens.push(format!(
+                        "WHEN {} IS NOT NULL THEN {obj}",
+                        col(alias, present)
+                    ));
                 }
                 (String::new(), fallback)
             }
@@ -2796,25 +4057,26 @@ impl SqlCompiler {
         let mut whens = Vec::new();
         for (i, (arc_col, schema, table, key)) in arc.branches("public").enumerate() {
             let type_name = arc.target_type_name(i);
-            let (sub_alias, obj, laterals) = match type_fields.iter().find(|t| t.type_name == type_name) {
-                Some(set) => {
-                    // The branch is its own subquery, so it gets its own join scope
-                    let mut scope = JoinScope::default();
-                    let obj = Self::typed_object(set, &mut scope, plan, params);
-                    (set.table_alias.clone(), obj, scope.sql)
-                }
-                // Plans without per-type selections: typename + key only
-                None if type_fields.is_empty() => {
-                    let alias = format!("sub_arc_{i}");
-                    let obj = format!(
-                        "JSON_OBJECT('__typename': {}, 'id': {} RETURNING json)",
-                        Self::sql_literal(&type_name),
-                        col(&alias, key)
-                    );
-                    (alias, obj, String::new())
-                }
-                None => continue,
-            };
+            let (sub_alias, obj, laterals) =
+                match type_fields.iter().find(|t| t.type_name == type_name) {
+                    Some(set) => {
+                        // The branch is its own subquery, so it gets its own join scope
+                        let mut scope = JoinScope::default();
+                        let obj = Self::typed_object(set, &mut scope, plan, params);
+                        (set.table_alias.clone(), obj, scope.sql)
+                    }
+                    // Plans without per-type selections: typename + key only
+                    None if type_fields.is_empty() => {
+                        let alias = format!("sub_arc_{i}");
+                        let obj = format!(
+                            "JSON_OBJECT('__typename': {}, 'id': {} RETURNING json)",
+                            Self::sql_literal(&type_name),
+                            col(&alias, key)
+                        );
+                        (alias, obj, String::new())
+                    }
+                    None => continue,
+                };
             whens.push(format!(
                 "WHEN {} IS NOT NULL THEN (SELECT {obj} FROM {} {sub_alias}{laterals} WHERE {} = {})",
                 col(table_alias, arc_col),
@@ -2904,7 +4166,9 @@ impl SqlCompiler {
             (Some(ty), true, false) => format!("json_populate_record(NULL::{ty}, {text}::json)"),
             // Geometries are written from GeoJSON
             (Some(ty), false, false) if ty == "geometry" => format!("ST_GeomFromGeoJSON({text})"),
-            (Some(ty), false, false) if ty == "geography" => format!("ST_GeomFromGeoJSON({text})::geography"),
+            (Some(ty), false, false) if ty == "geography" => {
+                format!("ST_GeomFromGeoJSON({text})::geography")
+            }
             (Some(ty), false, false) => format!("{text}::{ty}"),
             (None, _, _) => text.to_string(),
         };
@@ -2938,7 +4202,12 @@ impl SqlCompiler {
 
     fn where_clause(table_alias: &str, cond: &WhereCondition, params: &mut Vec<String>) -> String {
         let idx = Self::bind(params, &cond.value);
-        Self::compare(&col(table_alias, &cond.column), &cond.operator, idx, cond.pg_cast.as_deref())
+        Self::compare(
+            &col(table_alias, &cond.column),
+            &cond.operator,
+            idx,
+            cond.pg_cast.as_deref(),
+        )
     }
 
     /// FK join to the parent row. Both sides share a type, so no casts — keeps the
@@ -2953,12 +4222,18 @@ impl SqlCompiler {
             None => join
                 .columns
                 .iter()
-                .map(|(cc, pc)| format!("{} = {}", col(table_alias, cc), col(&join.parent_alias, pc)))
+                .map(|(cc, pc)| {
+                    format!("{} = {}", col(table_alias, cc), col(&join.parent_alias, pc))
+                })
                 .collect(),
         };
         let mut pairs = pairs;
         if let Some((cc, pc)) = &join.period {
-            pairs.push(format!("{} && {}", col(table_alias, cc), col(&join.parent_alias, pc)));
+            pairs.push(format!(
+                "{} && {}",
+                col(table_alias, cc),
+                col(&join.parent_alias, pc)
+            ));
         }
         pairs.join(" AND ")
     }
@@ -2988,18 +4263,35 @@ impl SqlCompiler {
                     format!("NULL::{}", cv.pg_cast.as_deref().unwrap_or("text"))
                 }
                 ArgValue::Value(cv) => Self::bind_value(params, cv),
-                ArgValue::Row { alias, schema, table, columns } => {
+                ArgValue::Row {
+                    alias,
+                    schema,
+                    table,
+                    columns,
+                } => {
                     let values: Vec<String> = columns.iter().map(|c| col(alias, c)).collect();
-                    format!("ROW({})::{}", values.join(", "), quote_qualified(schema, table))
+                    format!(
+                        "ROW({})::{}",
+                        values.join(", "),
+                        quote_qualified(schema, table)
+                    )
                 }
             })
             .collect();
-        format!("{}({})", quote_qualified(schema, func_name), args.join(", "))
+        format!(
+            "{}({})",
+            quote_qualified(schema, func_name),
+            args.join(", ")
+        )
     }
 
     /// The rows of a call returning them as an array.
     fn unnested(call: String, unnest: bool) -> String {
-        if unnest { format!("unnest({call})") } else { call }
+        if unnest {
+            format!("unnest({call})")
+        } else {
+            call
+        }
     }
 
     /// `(SELECT <json array of rows> FROM "schema"."func"(args) f)`: a mounted function's rows.
@@ -3012,15 +4304,31 @@ impl SqlCompiler {
         params: &mut Vec<String>,
     ) -> String {
         let call = Self::function_call_sql(schema, func_name, parent_alias, arguments, params);
-        format!("(SELECT COALESCE(JSON_ARRAYAGG({} RETURNING json), '[]'::json) FROM {call} f)", Self::function_row_object(fields))
+        format!(
+            "(SELECT COALESCE(JSON_ARRAYAGG({} RETURNING json), '[]'::json) FROM {call} f)",
+            Self::function_row_object(fields)
+        )
     }
 
     /// The rows of a connection over a function, aliased `table_alias`. With `ordinality`
     /// they are numbered in the order the function returns them (`__ord`); without, the
     /// call stays a plain `FROM` item, which PostgreSQL can inline (a simple `LANGUAGE sql`
     /// function becomes part of the query, and its tables' indexes serve the filters).
-    fn function_from(source: &FunctionSource, table_alias: &str, params: &mut Vec<String>) -> String {
-        let call = Self::unnested(Self::function_call_sql(&source.schema, &source.func_name, None, &source.arguments, params), source.unnest);
+    fn function_from(
+        source: &FunctionSource,
+        table_alias: &str,
+        params: &mut Vec<String>,
+    ) -> String {
+        let call = Self::unnested(
+            Self::function_call_sql(
+                &source.schema,
+                &source.func_name,
+                None,
+                &source.arguments,
+                params,
+            ),
+            source.unnest,
+        );
         if source.ordinality {
             format!("(SELECT _r.*, row_number() OVER () AS \"__ord\" FROM {call} _r) {table_alias}")
         } else {
@@ -3041,7 +4349,10 @@ impl SqlCompiler {
             FunctionResult::Value(output) => {
                 let value = Self::value_output("_f.v", output, 0);
                 if returns_set {
-                    format!("(SELECT {} FROM (SELECT {call} AS v) _f)", Self::json_array_agg(&value, "", ""))
+                    format!(
+                        "(SELECT {} FROM (SELECT {call} AS v) _f)",
+                        Self::json_array_agg(&value, "", "")
+                    )
                 } else {
                     format!("(SELECT {value} FROM (SELECT {call} AS v) _f)")
                 }
@@ -3050,17 +4361,37 @@ impl SqlCompiler {
             FunctionResult::Record(fields) => {
                 let obj = Self::function_row_object(fields);
                 if returns_set {
-                    format!("(SELECT {} FROM {call} f)", Self::json_array_agg(&obj, "", ""))
+                    format!(
+                        "(SELECT {} FROM {call} f)",
+                        Self::json_array_agg(&obj, "", "")
+                    )
                 } else {
                     format!("(SELECT {obj} FROM {call} f LIMIT 1)")
                 }
             }
-            FunctionResult::Rows { table_alias, fields, polymorphism, key_columns, .. } => {
+            FunctionResult::Rows {
+                table_alias,
+                fields,
+                polymorphism,
+                key_columns,
+                ..
+            } => {
                 let mut scope = JoinScope::default();
-                let obj = Self::row_object(table_alias, fields, polymorphism.as_ref(), "Node", &mut scope, plan, params);
+                let obj = Self::row_object(
+                    table_alias,
+                    fields,
+                    polymorphism.as_ref(),
+                    "Node",
+                    &mut scope,
+                    plan,
+                    params,
+                );
                 let from = format!("{call} {table_alias}{}", scope.sql);
                 if returns_set {
-                    format!("(SELECT {} FROM {from})", Self::json_array_agg(&obj, "", ""))
+                    format!(
+                        "(SELECT {} FROM {from})",
+                        Self::json_array_agg(&obj, "", "")
+                    )
                 } else {
                     // A function returning no row yields one of NULLs: it has no key
                     let present = match key_columns.first() {
@@ -3076,8 +4407,21 @@ impl SqlCompiler {
     /// A `VOLATILE` function as a mutation field. Rows of a table with a key are read back
     /// by key in a statement of their own, so their relations see what the function wrote;
     /// other results are read from the call itself.
-    fn compile_function_mutation(root_alias: &str, step: &Step, plan: &OperationPlan) -> CompiledMutation {
-        let Step::PgFunction { schema, func_name, arguments, returns_set, unnest, result, .. } = step else {
+    fn compile_function_mutation(
+        root_alias: &str,
+        step: &Step,
+        plan: &OperationPlan,
+    ) -> CompiledMutation {
+        let Step::PgFunction {
+            schema,
+            func_name,
+            arguments,
+            returns_set,
+            unnest,
+            result,
+            ..
+        } = step
+        else {
             unreachable!("compile_function_mutation called on another step");
         };
         let mutation = |writes, payload| CompiledMutation {
@@ -3097,35 +4441,85 @@ impl SqlCompiler {
             guard: false,
         };
         let mut params = Vec::new();
-        let call = Self::unnested(Self::function_call_sql(schema, func_name, None, arguments, &mut params), *unnest);
+        let call = Self::unnested(
+            Self::function_call_sql(schema, func_name, None, arguments, &mut params),
+            *unnest,
+        );
         match result {
             FunctionResult::Void => {
-                let payload = CompiledQuery::new("SELECT 'true'::json AS data".to_string(), Vec::new());
-                mutation(vec![write(format!("SELECT {call}"), params, Vec::new())], CompiledStatement::new(payload))
+                let payload =
+                    CompiledQuery::new("SELECT 'true'::json AS data".to_string(), Vec::new());
+                mutation(
+                    vec![write(format!("SELECT {call}"), params, Vec::new())],
+                    CompiledStatement::new(payload),
+                )
             }
-            FunctionResult::Rows { schema, table, table_alias, fields, polymorphism, key_columns } if !key_columns.is_empty() => {
-                let keys: Vec<String> = key_columns.iter().map(|(c, _)| format!("{}::text", col("_r", c))).collect();
+            FunctionResult::Rows {
+                schema,
+                table,
+                table_alias,
+                fields,
+                polymorphism,
+                key_columns,
+            } if !key_columns.is_empty() => {
+                let keys: Vec<String> = key_columns
+                    .iter()
+                    .map(|(c, _)| format!("{}::text", col("_r", c)))
+                    .collect();
                 let returning = key_columns.iter().map(|(c, _)| c.clone()).collect();
-                let written = write(format!("SELECT {} FROM {call} _r", keys.join(", ")), params, returning);
+                let written = write(
+                    format!("SELECT {} FROM {call} _r", keys.join(", ")),
+                    params,
+                    returning,
+                );
 
                 let mut params = vec![String::new(); key_columns.len()];
-                let deferred = (0..key_columns.len()).map(|column| (column, ParamSource::Returned { column })).collect();
-                let source = Self::located_source(&quote_qualified(schema, table), table_alias, key_columns);
+                let deferred = (0..key_columns.len())
+                    .map(|column| (column, ParamSource::Returned { column }))
+                    .collect();
+                let source =
+                    Self::located_source(&quote_qualified(schema, table), table_alias, key_columns);
                 let mut scope = JoinScope::default();
-                let obj = Self::row_object(table_alias, fields, polymorphism.as_ref(), "Payload", &mut scope, plan, &mut params);
+                let obj = Self::row_object(
+                    table_alias,
+                    fields,
+                    polymorphism.as_ref(),
+                    "Payload",
+                    &mut scope,
+                    plan,
+                    &mut params,
+                );
                 let from = format!("{source}{}", scope.sql);
                 let data = if *returns_set {
-                    format!("(SELECT {} FROM {from})", Self::json_array_agg(&obj, " ORDER BY _k._ord", ""))
+                    format!(
+                        "(SELECT {} FROM {from})",
+                        Self::json_array_agg(&obj, " ORDER BY _k._ord", "")
+                    )
                 } else {
                     format!("(SELECT {obj} FROM {from} ORDER BY _k._ord LIMIT 1)")
                 };
                 let query = CompiledQuery::new(format!("SELECT {data} AS data"), params);
-                mutation(vec![written], CompiledStatement { query, deferred, strict: false, context: None })
+                mutation(
+                    vec![written],
+                    CompiledStatement {
+                        query,
+                        deferred,
+                        strict: false,
+                        context: None,
+                    },
+                )
             }
             _ => {
                 // A value is JSON only inside the response object: here it stands alone
-                let data = Self::compile_function_result(&call, *returns_set, result, plan, &mut params);
-                mutation(Vec::new(), CompiledStatement::new(CompiledQuery::new(format!("SELECT to_json({data}) AS data"), params)))
+                let data =
+                    Self::compile_function_result(&call, *returns_set, result, plan, &mut params);
+                mutation(
+                    Vec::new(),
+                    CompiledStatement::new(CompiledQuery::new(
+                        format!("SELECT to_json({data}) AS data"),
+                        params,
+                    )),
+                )
             }
         }
     }
@@ -3136,12 +4530,18 @@ impl SqlCompiler {
         let pairs: Vec<String> = fields
             .iter()
             .filter_map(|f| match f {
-                SelectedField::Column { field_alias, column_name, output } => {
-                    Some(Self::json_pair(field_alias, &Self::value_output(&col("f", column_name), output, 0)))
-                }
-                SelectedField::Typename { field_alias, type_name } => {
-                    Some(Self::json_pair(field_alias, &Self::sql_literal(type_name)))
-                }
+                SelectedField::Column {
+                    field_alias,
+                    column_name,
+                    output,
+                } => Some(Self::json_pair(
+                    field_alias,
+                    &Self::value_output(&col("f", column_name), output, 0),
+                )),
+                SelectedField::Typename {
+                    field_alias,
+                    type_name,
+                } => Some(Self::json_pair(field_alias, &Self::sql_literal(type_name))),
                 _ => None,
             })
             .collect();
@@ -3198,7 +4598,11 @@ impl SqlCompiler {
                         })
                         .collect();
                     let op = if *is_not { "NOT IN" } else { "IN" };
-                    format!("{} {op} ({})", col(table_alias, column), placeholders.join(", "))
+                    format!(
+                        "{} {op} ({})",
+                        col(table_alias, column),
+                        placeholders.join(", ")
+                    )
                 }
             }
             FilterExpr::IsNull {
@@ -3252,9 +4656,17 @@ impl SqlCompiler {
                         clauses.push(f_sql);
                     }
                 }
-                format!("EXISTS (SELECT 1 FROM {from} WHERE {})", clauses.join(" AND "))
+                format!(
+                    "EXISTS (SELECT 1 FROM {from} WHERE {})",
+                    clauses.join(" AND ")
+                )
             }
-            FilterExpr::Template { column, table_alias, sql, values } => {
+            FilterExpr::Template {
+                column,
+                table_alias,
+                sql,
+                values,
+            } => {
                 let mut out = sql.replace("{c}", &col(table_alias, column));
                 for (i, value) in values.iter().enumerate() {
                     let idx = Self::bind(params, value);
@@ -3270,15 +4682,25 @@ impl SqlCompiler {
                     format!("({inner_sql}) IS NOT TRUE")
                 }
             }
-            FilterExpr::RelatedAggregate { related, function, column, operator, values } => {
+            FilterExpr::RelatedAggregate {
+                related,
+                function,
+                column,
+                operator,
+                values,
+            } => {
                 let (from, clauses) = Self::related_rows(related);
                 let arg = match column {
                     Some(c) => col(&related.alias, c),
                     None => "*".to_string(),
                 };
                 // count(*) of no rows is 0; sums and averages of no rows are NULL
-                let expr = format!("(SELECT {function}({arg}) FROM {from} WHERE {})::numeric", clauses.join(" AND "));
-                let mut value = |v: &serde_json::Value| format!("${}::text::numeric", Self::bind(params, v));
+                let expr = format!(
+                    "(SELECT {function}({arg}) FROM {from} WHERE {})::numeric",
+                    clauses.join(" AND ")
+                );
+                let mut value =
+                    |v: &serde_json::Value| format!("${}::text::numeric", Self::bind(params, v));
                 match operator.as_str() {
                     "IS NULL" | "IS NOT NULL" => format!("{expr} {operator}"),
                     "IN" | "NOT IN" if values.is_empty() => (operator == "NOT IN").to_string(),
@@ -3297,8 +4719,17 @@ impl SqlCompiler {
     pub fn sort_expression(alias: &str, key: &SortKey) -> String {
         match &key.expr {
             None => col(alias, &key.column),
-            Some(SortExpr::Related { schema, table, columns, period, column }) => {
-                let mut on: Vec<String> = columns.iter().map(|(t, c)| format!("{} = {}", col("_so", t), col(alias, c))).collect();
+            Some(SortExpr::Related {
+                schema,
+                table,
+                columns,
+                period,
+                column,
+            }) => {
+                let mut on: Vec<String> = columns
+                    .iter()
+                    .map(|(t, c)| format!("{} = {}", col("_so", t), col(alias, c)))
+                    .collect();
                 let mut order = String::new();
                 if let Some((t, c)) = period {
                     on.push(format!("{} && {}", col("_so", t), col(alias, c)));
@@ -3312,13 +4743,31 @@ impl SqlCompiler {
                 )
             }
             Some(SortExpr::Count { related }) => {
-                let related = RelatedRows { parent_alias: alias.to_string(), alias: "_so".to_string(), ..related.clone() };
+                let related = RelatedRows {
+                    parent_alias: alias.to_string(),
+                    alias: "_so".to_string(),
+                    ..related.clone()
+                };
                 let (from, clauses) = Self::related_rows(&related);
-                format!("(SELECT count(*) FROM {from} WHERE {})", clauses.join(" AND "))
+                format!(
+                    "(SELECT count(*) FROM {from} WHERE {})",
+                    clauses.join(" AND ")
+                )
             }
-            Some(SortExpr::Function { schema, name, row_schema, row_table, columns }) => {
+            Some(SortExpr::Function {
+                schema,
+                name,
+                row_schema,
+                row_table,
+                columns,
+            }) => {
                 let values: Vec<String> = columns.iter().map(|c| col(alias, c)).collect();
-                format!("{}(ROW({})::{})", quote_qualified(schema, name), values.join(", "), quote_qualified(row_schema, row_table))
+                format!(
+                    "{}(ROW({})::{})",
+                    quote_qualified(schema, name),
+                    values.join(", "),
+                    quote_qualified(row_schema, row_table)
+                )
             }
         }
     }
@@ -3327,25 +4776,42 @@ impl SqlCompiler {
     /// subquery.
     fn related_rows(related: &RelatedRows) -> (String, Vec<String>) {
         let alias = &related.alias;
-        let mut from = format!("{} {alias}", quote_qualified(&related.schema, &related.table));
+        let mut from = format!(
+            "{} {alias}",
+            quote_qualified(&related.schema, &related.table)
+        );
         let mut clauses: Vec<String> = Vec::new();
         match &related.junction {
             Some(j) => {
                 let junction = format!("{alias}_j");
-                let on: Vec<String> = j.target.iter().map(|(jc, tc)| format!("{} = {}", col(&junction, jc), col(alias, tc))).collect();
+                let on: Vec<String> = j
+                    .target
+                    .iter()
+                    .map(|(jc, tc)| format!("{} = {}", col(&junction, jc), col(alias, tc)))
+                    .collect();
                 from.push_str(&format!(
                     " JOIN {} {junction} ON {}",
                     quote_qualified(&j.junction_schema, &j.junction_table),
                     on.join(" AND ")
                 ));
-                clauses.extend(j.source.iter().map(|(jc, pc)| format!("{} = {}", col(&junction, jc), col(&related.parent_alias, pc))));
+                clauses.extend(j.source.iter().map(|(jc, pc)| {
+                    format!(
+                        "{} = {}",
+                        col(&junction, jc),
+                        col(&related.parent_alias, pc)
+                    )
+                }));
             }
-            None => {
-                clauses.extend(related.columns.iter().map(|(rc, pc)| format!("{} = {}", col(alias, rc), col(&related.parent_alias, pc))))
-            }
+            None => clauses.extend(related.columns.iter().map(|(rc, pc)| {
+                format!("{} = {}", col(alias, rc), col(&related.parent_alias, pc))
+            })),
         }
         if let Some((rc, pc)) = &related.period {
-            clauses.push(format!("{} && {}", col(alias, rc), col(&related.parent_alias, pc)));
+            clauses.push(format!(
+                "{} && {}",
+                col(alias, rc),
+                col(&related.parent_alias, pc)
+            ));
         }
         if clauses.is_empty() {
             clauses.push("true".to_string());
@@ -3393,7 +4859,12 @@ impl SqlCompiler {
             let values: Vec<&str> = bound.iter().flatten().map(String::as_str).collect();
             return match (exprs, values.as_slice()) {
                 ([e], [v]) => format!("{e} {} {v}", op(&keys[0])),
-                _ => format!("ROW({}) {} ROW({})", exprs.join(", "), op(&keys[0]), values.join(", ")),
+                _ => format!(
+                    "ROW({}) {} ROW({})",
+                    exprs.join(", "),
+                    op(&keys[0]),
+                    values.join(", ")
+                ),
             };
         }
 
@@ -3409,8 +4880,16 @@ impl SqlCompiler {
                 (false, None) => Some(format!("{e} IS NOT NULL")),
             };
             if let Some(beyond) = beyond {
-                let parts: Vec<&str> = equal.iter().map(String::as_str).chain([beyond.as_str()]).collect();
-                terms.push(if parts.len() == 1 { beyond.clone() } else { format!("({})", parts.join(" AND ")) });
+                let parts: Vec<&str> = equal
+                    .iter()
+                    .map(String::as_str)
+                    .chain([beyond.as_str()])
+                    .collect();
+                terms.push(if parts.len() == 1 {
+                    beyond.clone()
+                } else {
+                    format!("({})", parts.join(" AND "))
+                });
             }
             equal.push(match v {
                 Some(v) => format!("{e} = {v}"),
@@ -3469,15 +4948,29 @@ mod tests {
     fn quotes_identifiers() {
         assert_eq!(quote_ident("users"), "\"users\"");
         assert_eq!(quote_ident("we\"ird"), "\"we\"\"ird\"");
-        assert_eq!(quote_qualified("App Public", "Users"), "\"App Public\".\"Users\"");
+        assert_eq!(
+            quote_qualified("App Public", "Users"),
+            "\"App Public\".\"Users\""
+        );
     }
 
     #[test]
     fn tags_statements_with_sqlcommenter_comments() {
-        let mut op = CompiledOperation::Query(CompiledQuery::new("SELECT 1 AS data;".to_string(), Vec::new()));
-        op.tag(&[("graphql_operation", "Get Users*/--"), ("application", "graphpg")]);
-        let CompiledOperation::Query(q) = op else { unreachable!() };
-        assert_eq!(q.sql, "SELECT 1 AS data /*application='graphpg',graphql_operation='Get%20Users%2A%2F--'*/");
+        let mut op = CompiledOperation::Query(CompiledQuery::new(
+            "SELECT 1 AS data;".to_string(),
+            Vec::new(),
+        ));
+        op.tag(&[
+            ("graphql_operation", "Get Users*/--"),
+            ("application", "graphpg"),
+        ]);
+        let CompiledOperation::Query(q) = op else {
+            unreachable!()
+        };
+        assert_eq!(
+            q.sql,
+            "SELECT 1 AS data /*application='graphpg',graphql_operation='Get%20Users%2A%2F--'*/"
+        );
     }
 
     #[test]

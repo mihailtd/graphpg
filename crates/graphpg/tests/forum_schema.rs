@@ -3,7 +3,6 @@ use graphpg::catalog::CatalogInspector;
 use graphpg::schema::SchemaBuilder;
 use tokio_postgres::NoTls;
 
-
 #[tokio::test]
 async fn test_introspect_and_generate_schema_from_forum_database() {
     common::ensure_forum_fixture().await;
@@ -28,29 +27,60 @@ async fn test_introspect_and_generate_schema_from_forum_database() {
     assert!(!catalog.tables.is_empty(), "Expected tables in app_public");
 
     // Verify key tables exist
-    let user_table = catalog.find_table("app_public", "users").expect("users table should exist");
+    let user_table = catalog
+        .find_table("app_public", "users")
+        .expect("users table should exist");
     assert_eq!(user_table.primary_key, vec!["id"]);
 
-    let forum_table = catalog.find_table("app_public", "forums").expect("forums table should exist");
+    let forum_table = catalog
+        .find_table("app_public", "forums")
+        .expect("forums table should exist");
     assert_eq!(forum_table.primary_key, vec!["id"]);
 
-    let message_table = catalog.find_table("app_public", "messages").expect("messages table should exist");
+    let message_table = catalog
+        .find_table("app_public", "messages")
+        .expect("messages table should exist");
     assert_eq!(message_table.primary_key, vec!["id"]);
-    assert_eq!(message_table.foreign_keys.len(), 2, "Expected 2 foreign keys on messages");
+    assert_eq!(
+        message_table.foreign_keys.len(),
+        2,
+        "Expected 2 foreign keys on messages"
+    );
 
     // 2. Build GraphQL Schema via apollo-compiler
-    let valid_schema = SchemaBuilder::build(&catalog).expect("Failed to build valid GraphQL schema");
+    let valid_schema =
+        SchemaBuilder::build(&catalog).expect("Failed to build valid GraphQL schema");
 
     // 3. Verify types exist in apollo-compiler schema
     let schema_ref = valid_schema.as_ref();
-    assert!(schema_ref.get_object("User").is_some(), "User GraphQL type should exist");
-    assert!(schema_ref.get_object("Forum").is_some(), "Forum GraphQL type should exist");
-    assert!(schema_ref.get_object("Message").is_some(), "Message GraphQL type should exist");
+    assert!(
+        schema_ref.get_object("User").is_some(),
+        "User GraphQL type should exist"
+    );
+    assert!(
+        schema_ref.get_object("Forum").is_some(),
+        "Forum GraphQL type should exist"
+    );
+    assert!(
+        schema_ref.get_object("Message").is_some(),
+        "Message GraphQL type should exist"
+    );
 
-    let query_type = schema_ref.get_object("Query").expect("Query root type should exist");
-    assert!(query_type.fields.contains_key("users"), "Query.users field should exist");
-    assert!(query_type.fields.contains_key("user"), "Query.user(id:) field should exist");
-    assert!(query_type.fields.contains_key("messages"), "Query.messages field should exist");
+    let query_type = schema_ref
+        .get_object("Query")
+        .expect("Query root type should exist");
+    assert!(
+        query_type.fields.contains_key("users"),
+        "Query.users field should exist"
+    );
+    assert!(
+        query_type.fields.contains_key("user"),
+        "Query.user(id:) field should exist"
+    );
+    assert!(
+        query_type.fields.contains_key("messages"),
+        "Query.messages field should exist"
+    );
 
     // 4. Validate GraphQL query AST with apollo-compiler against our generated schema
     let test_query = r#"

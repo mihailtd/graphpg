@@ -1,0 +1,22 @@
+{
+  "name": "graphpg-workspace",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "moon run graphpg:build",
+    "test": "moon run graphpg:test e2e:test",
+    "test:rust": "moon run graphpg:test",
+    "test:e2e": "moon run e2e:test",
+    "lint": "moon run :lint",
+    "check": "moon run :typecheck :lint :format :test",
+    "db:generate": "moon run e2e:generate",
+    "db:up": "docker compose up -d --wait postgres",
+    "typecheck": "moon run :typecheck",
+    "format": "moon run :format",
+    "fix": "moon run :fix",
+    "verify": "moon run :typecheck :lint :format"
+  }
+}

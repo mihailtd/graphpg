@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://moonrepo.dev/schemas/workspace.json
+projects:
+  graphpg: crates/graphpg
+  e2e: e2e
+
+vcs:
+  client: git
+  defaultBranch: main

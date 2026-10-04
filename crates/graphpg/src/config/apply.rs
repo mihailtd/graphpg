@@ -8,7 +8,9 @@
 //!
 //! Both validate every reference and return all problems at once.
 use super::models::{EngineConfig, Operation};
-use crate::catalog::{is_graphql_name, DatabaseCatalog, ForeignKeyMetadata, SearchLimits, TableMetadata};
+use crate::catalog::{
+    is_graphql_name, DatabaseCatalog, ForeignKeyMetadata, SearchLimits, TableMetadata,
+};
 
 type Errors = Vec<String>;
 
@@ -31,13 +33,24 @@ fn resolve_name<'a>(
     kind: &str,
 ) -> Result<usize, String> {
     let matches: Vec<(usize, &str)> = match name.split_once('.') {
-        Some((schema, object)) => objects.enumerate().filter(|(_, (s, n))| *s == schema && *n == object).map(|(i, (s, _))| (i, s)).collect(),
-        None => objects.enumerate().filter(|(_, (_, n))| *n == name).map(|(i, (s, _))| (i, s)).collect(),
+        Some((schema, object)) => objects
+            .enumerate()
+            .filter(|(_, (s, n))| *s == schema && *n == object)
+            .map(|(i, (s, _))| (i, s))
+            .collect(),
+        None => objects
+            .enumerate()
+            .filter(|(_, (_, n))| *n == name)
+            .map(|(i, (s, _))| (i, s))
+            .collect(),
     };
     match matches.as_slice() {
         [] => Err(format!("no {kind} `{name}` in the inspected schemas")),
         [(i, _)] => Ok(*i),
-        many => match many.iter().find(|(_, s)| config.schemas.first().is_some_and(|d| d == s)) {
+        many => match many
+            .iter()
+            .find(|(_, s)| config.schemas.first().is_some_and(|d| d == s))
+        {
             Some((i, _)) => Ok(*i),
             None => {
                 let schemas: Vec<&str> = many.iter().map(|(_, s)| *s).collect();
@@ -49,26 +62,63 @@ fn resolve_name<'a>(
 
 const RELATION: &str = "table, view, materialized view or foreign table";
 
-fn table_index(catalog: &DatabaseCatalog, config: &EngineConfig, name: &str, kind: &str) -> Result<usize, String> {
-    resolve_name(catalog.tables.iter().map(|t| (t.schema.as_str(), t.name.as_str())), config, name, kind)
+fn table_index(
+    catalog: &DatabaseCatalog,
+    config: &EngineConfig,
+    name: &str,
+    kind: &str,
+) -> Result<usize, String> {
+    resolve_name(
+        catalog
+            .tables
+            .iter()
+            .map(|t| (t.schema.as_str(), t.name.as_str())),
+        config,
+        name,
+        kind,
+    )
 }
 
 /// The relation an `entities` key names.
-fn find_table<'c>(catalog: &'c DatabaseCatalog, config: &EngineConfig, name: &str) -> Result<&'c TableMetadata, String> {
+fn find_table<'c>(
+    catalog: &'c DatabaseCatalog,
+    config: &EngineConfig,
+    name: &str,
+) -> Result<&'c TableMetadata, String> {
     table_index(catalog, config, name, RELATION).map(|i| &catalog.tables[i])
 }
 
-fn find_table_mut<'c>(catalog: &'c mut DatabaseCatalog, config: &EngineConfig, name: &str) -> Result<&'c mut TableMetadata, String> {
+fn find_table_mut<'c>(
+    catalog: &'c mut DatabaseCatalog,
+    config: &EngineConfig,
+    name: &str,
+) -> Result<&'c mut TableMetadata, String> {
     table_index(catalog, config, name, RELATION).map(|i| &mut catalog.tables[i])
 }
 
 /// The relation a reference (a foreign key target, a mount parent) names.
-fn find_relation<'c>(catalog: &'c DatabaseCatalog, config: &EngineConfig, name: &str) -> Result<&'c TableMetadata, String> {
+fn find_relation<'c>(
+    catalog: &'c DatabaseCatalog,
+    config: &EngineConfig,
+    name: &str,
+) -> Result<&'c TableMetadata, String> {
     table_index(catalog, config, name, "relation").map(|i| &catalog.tables[i])
 }
 
-fn function_index(catalog: &DatabaseCatalog, config: &EngineConfig, name: &str) -> Result<usize, String> {
-    resolve_name(catalog.functions.iter().map(|f| (f.schema.as_str(), f.name.as_str())), config, name, "function")
+fn function_index(
+    catalog: &DatabaseCatalog,
+    config: &EngineConfig,
+    name: &str,
+) -> Result<usize, String> {
+    resolve_name(
+        catalog
+            .functions
+            .iter()
+            .map(|f| (f.schema.as_str(), f.name.as_str())),
+        config,
+        name,
+        "function",
+    )
 }
 
 /// Declared keys, virtual foreign keys and function mounts.
@@ -102,7 +152,11 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
             ));
             continue;
         }
-        let missing: Vec<&String> = entity.primary_key.iter().filter(|c| table.get_column(c).is_none()).collect();
+        let missing: Vec<&String> = entity
+            .primary_key
+            .iter()
+            .filter(|c| table.get_column(c).is_none())
+            .collect();
         if !missing.is_empty() {
             for c in missing {
                 errors.push(format!("{path}.primary_key: no column `{c}`"));
@@ -118,9 +172,15 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
     for (name, entity) in &config.entities {
         for (fk_name, fk) in &entity.foreign_keys {
             let path = format!("entities.{name}.foreign_keys.{fk_name}");
-            let Ok(table) = find_table(catalog, config, name) else { continue };
+            let Ok(table) = find_table(catalog, config, name) else {
+                continue;
+            };
             let declares = !fk.columns.is_empty() || fk.references.is_some();
-            if table.foreign_keys.iter().any(|f| &f.constraint_name == fk_name) {
+            if table
+                .foreign_keys
+                .iter()
+                .any(|f| &f.constraint_name == fk_name)
+            {
                 if declares {
                     errors.push(format!(
                         "{path}: `{fk_name}` is an existing constraint; `columns` and `references` only declare new foreign keys"
@@ -148,8 +208,11 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
                     continue;
                 }
             };
-            let foreign_columns =
-                if reference.columns.is_empty() { target.primary_key.clone() } else { reference.columns.clone() };
+            let foreign_columns = if reference.columns.is_empty() {
+                target.primary_key.clone()
+            } else {
+                reference.columns.clone()
+            };
             if foreign_columns.is_empty() {
                 errors.push(format!(
                     "{path}.references.columns: `{}` has no primary key, name the referenced columns",
@@ -159,7 +222,10 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
             }
             for c in &foreign_columns {
                 if target.get_column(c).is_none() {
-                    errors.push(format!("{path}.references.columns: no column `{c}` in `{}`", reference.table));
+                    errors.push(format!(
+                        "{path}.references.columns: no column `{c}` in `{}`",
+                        reference.table
+                    ));
                     ok = false;
                 }
             }
@@ -195,7 +261,9 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
 
     for (name, function) in &config.functions {
         let path = format!("functions.{name}");
-        let Some(mount) = &function.mount else { continue };
+        let Some(mount) = &function.mount else {
+            continue;
+        };
         let idx = match function_index(catalog, config, name) {
             Ok(idx) => idx,
             Err(err) => {
@@ -205,7 +273,10 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
         };
         let func = &catalog.functions[idx];
         if func.row_argument {
-            errors.push(format!("{path}.mount: `{name}` takes a row of `{}`, so it is already a field of its type", func.parent_table.as_deref().unwrap_or("?")));
+            errors.push(format!(
+                "{path}.mount: `{name}` takes a row of `{}`, so it is already a field of its type",
+                func.parent_table.as_deref().unwrap_or("?")
+            ));
             continue;
         }
         if !mount.omit && !(func.returns_record() && func.returns_set && !func.volatile) {
@@ -243,11 +314,15 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
             let mut ok = true;
             for (arg, column) in &mount.arguments {
                 if !func.arguments.iter().any(|a| &a.name == arg) {
-                    errors.push(format!("{path}.mount.arguments: `{name}` has no argument `{arg}`"));
+                    errors.push(format!(
+                        "{path}.mount.arguments: `{name}` has no argument `{arg}`"
+                    ));
                     ok = false;
                 }
                 if parent.get_column(column).is_none() {
-                    errors.push(format!("{path}.mount.arguments.{arg}: no column `{column}` in `{on}`"));
+                    errors.push(format!(
+                        "{path}.mount.arguments.{arg}: no column `{column}` in `{on}`"
+                    ));
                     ok = false;
                 }
             }
@@ -257,7 +332,12 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
             // In argument order
             func.arguments
                 .iter()
-                .filter_map(|a| mount.arguments.get(&a.name).map(|c| (a.name.clone(), c.clone())))
+                .filter_map(|a| {
+                    mount
+                        .arguments
+                        .get(&a.name)
+                        .map(|c| (a.name.clone(), c.clone()))
+                })
                 .collect()
         } else if func.parent_table.as_deref() == Some(parent.name.as_str())
             && func.parent_schema.as_deref().unwrap_or(&func.schema) == parent.schema
@@ -267,7 +347,9 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
             match (func.arguments.first(), parent.primary_key.as_slice()) {
                 (Some(arg), [pk]) => vec![(arg.name.clone(), pk.clone())],
                 (None, _) => {
-                    errors.push(format!("{path}.mount: `{name}` takes no arguments to pass the parent row in"));
+                    errors.push(format!(
+                        "{path}.mount: `{name}` takes no arguments to pass the parent row in"
+                    ));
                     continue;
                 }
                 _ => {
@@ -286,21 +368,33 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> 
         func.mounted_field_name.clear();
     }
 
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 /// Names, descriptions, omitted fields, operations and types.
-pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &EngineConfig) -> Result<(), Errors> {
+pub fn apply_presentation(
+    catalog: &mut DatabaseCatalog,
+    config: &EngineConfig,
+) -> Result<(), Errors> {
     let mut errors = Errors::new();
     let mut omitted = Vec::new();
 
     let defaults = SearchLimits::default();
     let max = config.search.max_limit.unwrap_or(defaults.max);
-    let default = config.search.default_limit.unwrap_or(defaults.default.min(max));
+    let default = config
+        .search
+        .default_limit
+        .unwrap_or(defaults.default.min(max));
     if max == 0 {
         errors.push("search.max_limit: must be at least 1".to_string());
     } else if default == 0 || default > max {
-        errors.push(format!("search.default_limit: must be between 1 and search.max_limit ({max})"));
+        errors.push(format!(
+            "search.default_limit: must be between 1 and search.max_limit ({max})"
+        ));
     } else {
         catalog.search_limits = SearchLimits { default, max };
     }
@@ -403,14 +497,24 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &EngineConfig) 
         for (fk_name, fk) in &entity.foreign_keys {
             let fk_path = format!("{path}.foreign_keys.{fk_name}");
             // Missing virtual keys were reported by `apply_structure`
-            let Some(meta) = table.foreign_keys.iter_mut().find(|f| &f.constraint_name == fk_name) else { continue };
+            let Some(meta) = table
+                .foreign_keys
+                .iter_mut()
+                .find(|f| &f.constraint_name == fk_name)
+            else {
+                continue;
+            };
             if let Some(field_name) = &fk.field_name {
                 if check_name(&mut errors, &format!("{fk_path}.field_name"), field_name) {
                     meta.field_name = Some(field_name.clone());
                 }
             }
             if let Some(reverse) = &fk.reverse_field_name {
-                if check_name(&mut errors, &format!("{fk_path}.reverse_field_name"), reverse) {
+                if check_name(
+                    &mut errors,
+                    &format!("{fk_path}.reverse_field_name"),
+                    reverse,
+                ) {
                     meta.reverse_field_name = Some(reverse.clone());
                 }
             }
@@ -422,7 +526,10 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &EngineConfig) 
     for (name, function) in &config.functions {
         let path = format!("functions.{name}");
         let idx = function_index(catalog, config, name).ok();
-        if let Some(func) = idx.map(|i| &mut catalog.functions[i]).filter(|f| f.row_argument) {
+        if let Some(func) = idx
+            .map(|i| &mut catalog.functions[i])
+            .filter(|f| f.row_argument)
+        {
             // A computed column: `field_name` and `omit` are about its field on the table's type
             if let Some(field_name) = &function.field_name {
                 if check_name(&mut errors, &format!("{path}.field_name"), field_name) {
@@ -455,7 +562,9 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &EngineConfig) 
             }
             func.omit_root |= function.omit;
             if let Some(field_name) = function.mount.as_ref().and_then(|m| m.field_name.as_ref()) {
-                if func.parent_table.is_some() && check_name(&mut errors, &format!("{path}.mount.field_name"), field_name) {
+                if func.parent_table.is_some()
+                    && check_name(&mut errors, &format!("{path}.mount.field_name"), field_name)
+                {
                     func.mounted_field_name = field_name.clone();
                 }
             }
@@ -496,9 +605,15 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &EngineConfig) 
                 }
             }
             if !ty.attributes.is_empty() {
-                errors.push(format!("{path}.attributes: `{name}` is an enum; attributes apply to composite types"));
+                errors.push(format!(
+                    "{path}.attributes: `{name}` is an enum; attributes apply to composite types"
+                ));
             }
-        } else if let Some(c) = catalog.composites.iter_mut().find(|c| &c.config_name == name) {
+        } else if let Some(c) = catalog
+            .composites
+            .iter_mut()
+            .find(|c| &c.config_name == name)
+        {
             if let Some(type_name) = &ty.type_name {
                 if check_name(&mut errors, &format!("{path}.type_name"), type_name) {
                     c.type_name = type_name.clone();
@@ -509,11 +624,17 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &EngineConfig) 
             }
             for (attr_name, attr) in &ty.attributes {
                 let Some(a) = c.attributes.iter_mut().find(|a| &a.name == attr_name) else {
-                    errors.push(format!("{path}.attributes: `{name}` has no attribute `{attr_name}`"));
+                    errors.push(format!(
+                        "{path}.attributes: `{name}` has no attribute `{attr_name}`"
+                    ));
                     continue;
                 };
                 if let Some(field_name) = &attr.field_name {
-                    if check_name(&mut errors, &format!("{path}.attributes.{attr_name}.field_name"), field_name) {
+                    if check_name(
+                        &mut errors,
+                        &format!("{path}.attributes.{attr_name}.field_name"),
+                        field_name,
+                    ) {
                         a.field_name = field_name.clone();
                     }
                 }
@@ -522,7 +643,9 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &EngineConfig) 
                 }
             }
             if !ty.values.is_empty() {
-                errors.push(format!("{path}.values: `{name}` is a composite type; values apply to enums"));
+                errors.push(format!(
+                    "{path}.values: `{name}` is a composite type; values apply to enums"
+                ));
             }
         } else if let Some(d) = catalog.domains.iter_mut().find(|d| &d.config_name == name) {
             if let Some(type_name) = &ty.type_name {
@@ -547,5 +670,9 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &EngineConfig) 
         catalog.remove_table(&schema, &table);
     }
     catalog.invalidate_index();
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }

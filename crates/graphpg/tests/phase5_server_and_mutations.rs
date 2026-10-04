@@ -11,7 +11,6 @@ use std::sync::Arc;
 use tokio_postgres::NoTls;
 use tower::ServiceExt;
 
-
 async fn setup_test() -> (
     tokio_postgres::Client,
     apollo_compiler::validation::Valid<apollo_compiler::Schema>,
@@ -63,7 +62,10 @@ fn server_state_with_debug(
 }
 
 /// POSTs a GraphQL request body to the router and returns (status, json).
-async fn post_graphql(app: &axum::Router, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+async fn post_graphql(
+    app: &axum::Router,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
     let request = Request::builder()
         .method("POST")
         .uri("/graphql")
@@ -101,9 +103,14 @@ async fn test_mutation_lifecycle_create_update_delete() {
 
     let planner = QueryPlanner::new(&catalog, "app_public");
     let plan = planner.plan(&doc).expect("Planning failed");
-    let create_res = ExecutionEngine::execute(&client, &plan).await.expect("Execution failed");
+    let create_res = ExecutionEngine::execute(&client, &plan)
+        .await
+        .expect("Execution failed");
 
-    println!("Create result:\n{}", serde_json::to_string_pretty(&create_res).unwrap());
+    println!(
+        "Create result:\n{}",
+        serde_json::to_string_pretty(&create_res).unwrap()
+    );
     let forum = &create_res["data"]["createForum"]["forum"];
     assert_eq!(forum["name"], "Rust Engine Forum");
     let created_id = forum["id"].as_str().expect("id string").to_string();
@@ -131,9 +138,14 @@ async fn test_mutation_lifecycle_create_update_delete() {
     .expect("Validation failed");
 
     let plan_upd = planner.plan(&doc_upd).expect("Planning failed");
-    let update_res = ExecutionEngine::execute(&client, &plan_upd).await.expect("Execution failed");
+    let update_res = ExecutionEngine::execute(&client, &plan_upd)
+        .await
+        .expect("Execution failed");
 
-    println!("Update result:\n{}", serde_json::to_string_pretty(&update_res).unwrap());
+    println!(
+        "Update result:\n{}",
+        serde_json::to_string_pretty(&update_res).unwrap()
+    );
     assert_eq!(
         update_res["data"]["updateForum"]["forum"]["name"],
         "Rust Engine Forum Updated"
@@ -161,13 +173,15 @@ async fn test_mutation_lifecycle_create_update_delete() {
     .expect("Validation failed");
 
     let plan_del = planner.plan(&doc_del).expect("Planning failed");
-    let delete_res = ExecutionEngine::execute(&client, &plan_del).await.expect("Execution failed");
+    let delete_res = ExecutionEngine::execute(&client, &plan_del)
+        .await
+        .expect("Execution failed");
 
-    println!("Delete result:\n{}", serde_json::to_string_pretty(&delete_res).unwrap());
-    assert_eq!(
-        delete_res["data"]["deleteForum"]["forum"]["id"],
-        created_id
+    println!(
+        "Delete result:\n{}",
+        serde_json::to_string_pretty(&delete_res).unwrap()
     );
+    assert_eq!(delete_res["data"]["deleteForum"]["forum"]["id"], created_id);
 
     // 4. VERIFY RECORD IS GONE (Query returns null)
     let verify_query = format!(
@@ -190,7 +204,9 @@ async fn test_mutation_lifecycle_create_update_delete() {
     .expect("Validation failed");
 
     let plan_check = planner.plan(&doc_check).expect("Planning failed");
-    let check_res = ExecutionEngine::execute(&client, &plan_check).await.expect("Execution failed");
+    let check_res = ExecutionEngine::execute(&client, &plan_check)
+        .await
+        .expect("Execution failed");
 
     assert_eq!(check_res["data"]["forum"], serde_json::Value::Null);
 }
@@ -242,13 +258,21 @@ async fn test_http_graphql_query_execution() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // Verify Apollo Client 4 compliant Content-Type header
-    let content_type = response.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(content_type.contains("application/graphql-response+json"));
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    println!("HTTP GraphQL Response:\n{}", serde_json::to_string_pretty(&json).unwrap());
+    println!(
+        "HTTP GraphQL Response:\n{}",
+        serde_json::to_string_pretty(&json).unwrap()
+    );
 
     let forums = json["data"]["forums"].as_array().expect("forums array");
     assert!(!forums.is_empty());
@@ -281,7 +305,10 @@ async fn test_http_graphql_validation_error() {
 
     let errors = json["errors"].as_array().expect("errors array");
     assert!(!errors.is_empty());
-    assert!(errors[0]["message"].as_str().unwrap().contains("nonExistentField123"));
+    assert!(errors[0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("nonExistentField123"));
 }
 
 #[tokio::test]
@@ -305,21 +332,31 @@ async fn test_http_concurrent_requests_share_pool() {
             let response = app.oneshot(request).await.unwrap();
             let status = response.status();
             let body = response.into_body().collect().await.unwrap().to_bytes();
-            (status, serde_json::from_slice::<serde_json::Value>(&body).unwrap())
+            (
+                status,
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            )
         }
     });
 
     for (status, json) in spawn_and_join(requests).await {
         assert_eq!(status, StatusCode::OK, "{json}");
         // Other tests in this file create and delete forums concurrently: check the seeded ones.
-        let names: Vec<&str> = json["data"]["forums"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = json["data"]["forums"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["name"].as_str().unwrap())
+            .collect();
         for seeded in ["Cats", "Dogs", "Postgres"] {
             assert!(names.contains(&seeded), "{seeded} missing: {json}");
         }
     }
 }
 
-async fn spawn_and_join<F: std::future::Future + Send + 'static>(futs: impl Iterator<Item = F>) -> Vec<F::Output>
+async fn spawn_and_join<F: std::future::Future + Send + 'static>(
+    futs: impl Iterator<Item = F>,
+) -> Vec<F::Output>
 where
     F::Output: Send + 'static,
 {
@@ -361,7 +398,12 @@ async fn test_http_introspection_and_mixed_root_fields() {
     assert_eq!(json["data"]["__typename"], "Query");
     assert_eq!(json["data"]["forumType"]["name"], "Forum");
     // Other tests of this file create (and delete) forums concurrently: the fixture's are there
-    let names: Vec<&str> = json["data"]["forums"].as_array().unwrap().iter().filter_map(|f| f["name"].as_str()).collect();
+    let names: Vec<&str> = json["data"]["forums"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f["name"].as_str())
+        .collect();
     for name in ["Cats", "Dogs", "Postgres"] {
         assert!(names.contains(&name), "{names:?}");
     }
@@ -373,7 +415,11 @@ async fn test_http_operation_name_selects_operation() {
     let app = create_router(server_state(schema, catalog, 2));
 
     let query = "query A { forums { name } } query B { users { username } }";
-    let (status, json) = post_graphql(&app, serde_json::json!({ "query": query, "operationName": "B" })).await;
+    let (status, json) = post_graphql(
+        &app,
+        serde_json::json!({ "query": query, "operationName": "B" }),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{json}");
     assert!(json["data"]["users"].is_array(), "{json}");
     assert!(json["data"].get("forums").is_none(), "{json}");
@@ -388,7 +434,10 @@ async fn test_http_debug_sql_extension() {
     let (_, json) = post_graphql(&app, serde_json::json!({ "query": "{ forums { name } }" })).await;
     assert!(json.get("extensions").is_none(), "{json}");
 
-    let debug = DebugOptions { sql: true, explain: false };
+    let debug = DebugOptions {
+        sql: true,
+        explain: false,
+    };
     let app = create_router(server_state_with_debug(schema, catalog, 2, debug));
     let (status, json) = post_graphql(
         &app,
@@ -399,28 +448,46 @@ async fn test_http_debug_sql_extension() {
     assert_eq!(status, StatusCode::OK, "{json}");
     assert_eq!(json["data"]["message"]["forum"]["name"], "Cats");
 
-    let sql = json["extensions"]["sql"]["query"].as_str().expect("sql.query");
+    let sql = json["extensions"]["sql"]["query"]
+        .as_str()
+        .expect("sql.query");
     // Pretty-printed for humans, so compare with whitespace collapsed
     let collapsed = sql.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(collapsed.contains("LEFT JOIN \"app_public\".\"forums\""), "{sql}");
+    assert!(
+        collapsed.contains("LEFT JOIN \"app_public\".\"forums\""),
+        "{sql}"
+    );
     assert!(sql.contains('\n'), "SQL should be pretty-printed: {sql}");
-    assert_eq!(json["extensions"]["sql"]["params"], serde_json::json!(["ca70ca70-0000-0000-0000-cec111a0ca70"]));
+    assert_eq!(
+        json["extensions"]["sql"]["params"],
+        serde_json::json!(["ca70ca70-0000-0000-0000-cec111a0ca70"])
+    );
     assert!(json["extensions"].get("explain").is_none(), "{json}");
 }
 
 #[tokio::test]
 async fn test_http_debug_explain_extension() {
     let (client, schema, catalog) = setup_test().await;
-    let debug = DebugOptions { sql: false, explain: true };
+    let debug = DebugOptions {
+        sql: false,
+        explain: true,
+    };
     let app = create_router(server_state_with_debug(schema, catalog, 2, debug));
 
-    let (status, json) = post_graphql(&app, serde_json::json!({ "query": "{ forums { name } }" })).await;
+    let (status, json) =
+        post_graphql(&app, serde_json::json!({ "query": "{ forums { name } }" })).await;
     println!("{}", serde_json::to_string_pretty(&json).unwrap());
     assert_eq!(status, StatusCode::OK, "{json}");
     // explain implies sql
     assert!(json["extensions"]["sql"]["query"].is_string(), "{json}");
-    let explain = json["extensions"]["explain"].as_array().expect("explain lines");
-    let text = explain.iter().filter_map(|l| l.as_str()).collect::<Vec<_>>().join("\n");
+    let explain = json["extensions"]["explain"]
+        .as_array()
+        .expect("explain lines");
+    let text = explain
+        .iter()
+        .filter_map(|l| l.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(text.contains("Execution Time"), "{text}");
     assert!(text.contains("Serialization"), "{text}");
 
@@ -435,7 +502,10 @@ async fn test_http_debug_explain_extension() {
     assert!(json["extensions"]["explain"].is_array(), "{json}");
 
     let count: i64 = client
-        .query_one("SELECT count(*) FROM app_public.forums WHERE name = $1", &[&name])
+        .query_one(
+            "SELECT count(*) FROM app_public.forums WHERE name = $1",
+            &[&name],
+        )
         .await
         .unwrap()
         .get(0);
@@ -451,16 +521,39 @@ async fn test_graphiql_page_served() {
     let (_client, schema, catalog) = setup_test().await;
     // Off by default: a development tool
     let off = create_router(server_state(schema.clone(), catalog.clone(), 1));
-    let request = Request::builder().method("GET").uri("/graphiql").body(Body::empty()).unwrap();
-    assert_eq!(off.oneshot(request).await.unwrap().status(), StatusCode::NOT_FOUND);
+    let request = Request::builder()
+        .method("GET")
+        .uri("/graphiql")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        off.oneshot(request).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
 
-    let state = ServerState::new(create_pool(common::db_url(), 1).expect("pool"), schema, catalog, "app_public".to_string(), DebugOptions::default());
+    let state = ServerState::new(
+        create_pool(common::db_url(), 1).expect("pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    );
     let app = create_router(Arc::new(state.with_graphiql(true)));
 
-    let request = Request::builder().method("GET").uri("/graphiql").body(Body::empty()).unwrap();
+    let request = Request::builder()
+        .method("GET")
+        .uri("/graphiql")
+        .body(Body::empty())
+        .unwrap();
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let content_type = response.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap().to_string();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
     assert!(content_type.starts_with("text/html"), "{content_type}");
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let html = String::from_utf8_lossy(&body);

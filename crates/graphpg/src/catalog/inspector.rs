@@ -1,6 +1,7 @@
 use super::models::{
-    table_to_type_name, ColumnMetadata, ConstraintKind, ConstraintMetadata, CtiChild, CtiKind, CtiMetadata, DatabaseCatalog, ForeignKeyMetadata, Operations, PgType,
-    RelationKind, StiMetadata, StiVariant, TableMetadata, TypeLimits, UniqueKey,
+    table_to_type_name, ColumnMetadata, ConstraintKind, ConstraintMetadata, CtiChild, CtiKind,
+    CtiMetadata, DatabaseCatalog, ForeignKeyMetadata, Operations, PgType, RelationKind,
+    StiMetadata, StiVariant, TableMetadata, TypeLimits, UniqueKey,
 };
 use crate::compiler::quote_ident;
 use crate::config::EngineConfig;
@@ -58,7 +59,11 @@ const TYPE_JOINS: &str = "JOIN pg_type bt ON bt.oid = CASE WHEN t.typtype = 'd' 
 /// Type from the [`TYPE_COLUMNS`] starting at column `at`.
 fn type_from_row(row: &tokio_postgres::Row, at: usize) -> PgType {
     match row.get::<_, Option<String>>(at + 3) {
-        Some(elem) => PgType::Array(Box::new(column_type(&elem, row.get(at + 4), row.get(at + 5)))),
+        Some(elem) => PgType::Array(Box::new(column_type(
+            &elem,
+            row.get(at + 4),
+            row.get(at + 5),
+        ))),
         None => column_type(row.get(at), row.get(at + 1), row.get(at + 2)),
     }
 }
@@ -95,7 +100,11 @@ impl<'a> CatalogInspector<'a> {
     /// The schemas to inspect: the config's `schemas` when it names any (as it always does
     /// once [`ConfigOverrides`](crate::config::ConfigOverrides) resolved it), else
     /// `schema_name`.
-    pub fn effective_schemas<'s>(&self, schema_name: &'s str, config: &'s EngineConfig) -> Vec<&'s str> {
+    pub fn effective_schemas<'s>(
+        &self,
+        schema_name: &'s str,
+        config: &'s EngineConfig,
+    ) -> Vec<&'s str> {
         if !config.schemas.is_empty() {
             config.schemas.iter().map(|s| s.as_str()).collect()
         } else if !schema_name.is_empty() {
@@ -107,12 +116,17 @@ impl<'a> CatalogInspector<'a> {
 
     /// Inspects `schema_name` without an engine config.
     pub async fn inspect_schema(&self, schema_name: &str) -> Result<DatabaseCatalog, CatalogError> {
-        self.inspect_schema_with_config(schema_name, &EngineConfig::default()).await
+        self.inspect_schema_with_config(schema_name, &EngineConfig::default())
+            .await
     }
 
     /// Inspects `schema_names` without an engine config.
-    pub async fn inspect_schemas(&self, schema_names: &[&str]) -> Result<DatabaseCatalog, CatalogError> {
-        self.inspect_schemas_with_config(schema_names, &EngineConfig::default()).await
+    pub async fn inspect_schemas(
+        &self,
+        schema_names: &[&str],
+    ) -> Result<DatabaseCatalog, CatalogError> {
+        self.inspect_schemas_with_config(schema_names, &EngineConfig::default())
+            .await
     }
 
     /// Inspects `schema_names` and applies `config`: the catalog the GraphQL schema is built from.
@@ -138,7 +152,11 @@ impl<'a> CatalogInspector<'a> {
     /// Everything detected from the database (plus the keys, relations and function mounts the
     /// config declares), before GraphQL names are assigned. This is the catalog the config's
     /// JSON Schema is generated from, since the config refers to database object names.
-    pub async fn inspect_base(&self, schema_names: &[&str], config: &EngineConfig) -> Result<DatabaseCatalog, CatalogError> {
+    pub async fn inspect_base(
+        &self,
+        schema_names: &[&str],
+        config: &EngineConfig,
+    ) -> Result<DatabaseCatalog, CatalogError> {
         let (extensions, installed) = self.extension_filter(config).await?;
         let mut catalog = DatabaseCatalog::default();
         catalog.extensions = installed;
@@ -152,9 +170,13 @@ impl<'a> CatalogInspector<'a> {
         let pruning_role = config.rbac.role.as_deref().filter(|_| config.rbac.enabled);
         if let Some(role) = pruning_role {
             let safe_role = role.replace('"', "\"\"");
-            self.client.batch_execute(&format!("SET ROLE \"{safe_role}\";")).await?;
+            self.client
+                .batch_execute(&format!("SET ROLE \"{safe_role}\";"))
+                .await?;
         }
-        let detected = self.inspect_detected(schema_names, &extensions, config, &mut catalog).await;
+        let detected = self
+            .inspect_detected(schema_names, &extensions, config, &mut catalog)
+            .await;
         if pruning_role.is_some() {
             self.client.batch_execute("RESET ROLE;").await?;
         }
@@ -171,9 +193,12 @@ impl<'a> CatalogInspector<'a> {
         config: &EngineConfig,
         catalog: &mut DatabaseCatalog,
     ) -> Result<(), CatalogError> {
-        catalog.tables = self.inspect_relations(schema_names, extensions, catalog.server_version, config).await?;
+        catalog.tables = self
+            .inspect_relations(schema_names, extensions, catalog.server_version, config)
+            .await?;
         self.inspect_check_enums(schema_names, catalog).await?;
-        self.inspect_functions(schema_names, extensions, catalog).await?;
+        self.inspect_functions(schema_names, extensions, catalog)
+            .await?;
         self.inspect_value_types(catalog).await?;
 
         // Keys and relations the database cannot declare (views), and function mounts, feed
@@ -191,11 +216,19 @@ impl<'a> CatalogInspector<'a> {
     /// keys no index leads with (to-many relation fields and relation filters then scan the
     /// referencing table), tables without a primary key, and orderable columns no index
     /// leads with (ordering a connection by them sorts every matching row).
-    pub async fn advise(&self, schema_name: &str, catalog: &DatabaseCatalog) -> Result<Vec<Advice>, CatalogError> {
+    pub async fn advise(
+        &self,
+        schema_name: &str,
+        catalog: &DatabaseCatalog,
+    ) -> Result<Vec<Advice>, CatalogError> {
         self.advise_schemas(&[schema_name], catalog).await
     }
 
-    pub async fn advise_schemas(&self, schema_names: &[&str], catalog: &DatabaseCatalog) -> Result<Vec<Advice>, CatalogError> {
+    pub async fn advise_schemas(
+        &self,
+        schema_names: &[&str],
+        catalog: &DatabaseCatalog,
+    ) -> Result<Vec<Advice>, CatalogError> {
         let mut advice = Vec::new();
         let rows = self
             .client
@@ -217,8 +250,13 @@ impl<'a> CatalogInspector<'a> {
             )
             .await?;
         for row in rows {
-            let (table, constraint, columns): (String, String, Vec<String>) = (row.get(0), row.get(1), row.get(2));
-            let cols = columns.iter().map(|c| quote_ident(c)).collect::<Vec<_>>().join(", ");
+            let (table, constraint, columns): (String, String, Vec<String>) =
+                (row.get(0), row.get(1), row.get(2));
+            let cols = columns
+                .iter()
+                .map(|c| quote_ident(c))
+                .collect::<Vec<_>>()
+                .join(", ");
             advice.push(Advice {
                 level: AdviceLevel::Warning,
                 message: format!(
@@ -228,7 +266,14 @@ impl<'a> CatalogInspector<'a> {
                 ),
             });
         }
-        for t in catalog.tables.iter().filter(|t| t.primary_key.is_empty() && matches!(t.kind, super::models::RelationKind::Table | super::models::RelationKind::PartitionedTable)) {
+        for t in catalog.tables.iter().filter(|t| {
+            t.primary_key.is_empty()
+                && matches!(
+                    t.kind,
+                    super::models::RelationKind::Table
+                        | super::models::RelationKind::PartitionedTable
+                )
+        }) {
             advice.push(Advice {
                 level: AdviceLevel::Warning,
                 message: format!(
@@ -252,13 +297,23 @@ impl<'a> CatalogInspector<'a> {
             .await?;
         let mut leading: HashMap<(String, String), Vec<String>> = HashMap::new();
         for row in rows {
-            leading.entry((row.get(0), row.get(1))).or_default().push(row.get(2));
+            leading
+                .entry((row.get(0), row.get(1)))
+                .or_default()
+                .push(row.get(2));
         }
-        for t in catalog.tables.iter().filter(|t| matches!(t.kind, super::models::RelationKind::Table | super::models::RelationKind::PartitionedTable)) {
+        for t in catalog.tables.iter().filter(|t| {
+            matches!(
+                t.kind,
+                super::models::RelationKind::Table | super::models::RelationKind::PartitionedTable
+            )
+        }) {
             let indexed = leading.get(&(t.schema.clone(), t.name.clone()));
             let unindexed: Vec<&str> = t
                 .visible_columns()
-                .filter(|c| c.pg_type.is_orderable() && !indexed.is_some_and(|i| i.contains(&c.name)))
+                .filter(|c| {
+                    c.pg_type.is_orderable() && !indexed.is_some_and(|i| i.contains(&c.name))
+                })
                 .map(|c| c.name.as_str())
                 .collect();
             if !unindexed.is_empty() && t.operations.connection {
@@ -276,9 +331,17 @@ impl<'a> CatalogInspector<'a> {
     }
 
     /// Validates `extensions.expose` against the installed extensions.
-    async fn extension_filter(&self, config: &EngineConfig) -> Result<(ExtensionFilter, Vec<String>), CatalogError> {
-        let installed: Vec<String> =
-            self.client.query("SELECT extname::text FROM pg_extension ORDER BY 1", &[]).await?.iter().map(|r| r.get(0)).collect();
+    async fn extension_filter(
+        &self,
+        config: &EngineConfig,
+    ) -> Result<(ExtensionFilter, Vec<String>), CatalogError> {
+        let installed: Vec<String> = self
+            .client
+            .query("SELECT extname::text FROM pg_extension ORDER BY 1", &[])
+            .await?
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
         let errors: Vec<String> = config
             .extensions
             .expose
@@ -289,7 +352,10 @@ impl<'a> CatalogInspector<'a> {
         if !errors.is_empty() {
             return Err(CatalogError::Config(errors));
         }
-        let filter = ExtensionFilter { all: config.extensions.exposes_all(), names: config.extensions.expose.clone() };
+        let filter = ExtensionFilter {
+            all: config.extensions.exposes_all(),
+            names: config.extensions.expose.clone(),
+        };
         Ok((filter, installed))
     }
 
@@ -326,13 +392,21 @@ impl<'a> CatalogInspector<'a> {
              ORDER BY n.nspname, c.relname",
             not_extension_owned("pg_class", "c.oid")
         );
-        let rel_rows = self.client.query(&rel_query, &[&schemas_vec, &extensions.all, &extensions.names]).await?;
+        let rel_rows = self
+            .client
+            .query(
+                &rel_query,
+                &[&schemas_vec, &extensions.all, &extensions.names],
+            )
+            .await?;
 
         let mut tables: Vec<TableMetadata> = Vec::with_capacity(rel_rows.len());
         let mut by_oid: HashMap<u32, usize> = HashMap::new();
         for row in rel_rows {
             let oid: u32 = row.get(0);
-            let Some(kind) = RelationKind::from_relkind(row.get(2)) else { continue };
+            let Some(kind) = RelationKind::from_relkind(row.get(2)) else {
+                continue;
+            };
             let updatable: i32 = row.get(4);
             let can_select: bool = row.get(5);
             let can_insert: bool = row.get(6);
@@ -429,7 +503,9 @@ impl<'a> CatalogInspector<'a> {
                  ORDER BY a.attrelid, a.attnum");
         let col_rows = self.client.query(&col_query, &[&schemas_vec]).await?;
         for row in col_rows {
-            let Some(&idx) = by_oid.get(&row.get::<_, u32>(0)) else { continue };
+            let Some(&idx) = by_oid.get(&row.get::<_, u32>(0)) else {
+                continue;
+            };
             let pg_type = type_from_row(&row, 2);
             let generated: String = row.get(10);
             let identity: String = row.get(11);
@@ -439,11 +515,23 @@ impl<'a> CatalogInspector<'a> {
                 (false, "d") => Some("generated by default as identity".to_string()),
                 (false, _) => row.get(9),
             };
-            let generation: Option<String> = if generated.is_empty() { None } else { row.get(9) };
+            let generation: Option<String> = if generated.is_empty() {
+                None
+            } else {
+                row.get(9)
+            };
             let col_can_select: bool = row.get(15);
             let col_can_write: bool = row.get(16);
-            let omit = if config.rbac.enabled { !col_can_select } else { false };
-            let readonly = if config.rbac.enabled { !col_can_write } else { false };
+            let omit = if config.rbac.enabled {
+                !col_can_select
+            } else {
+                false
+            };
+            let readonly = if config.rbac.enabled {
+                !col_can_write
+            } else {
+                false
+            };
             tables[idx].columns.push(ColumnMetadata {
                 name: row.get(1),
                 is_nullable: !row.get::<_, bool>(8),
@@ -458,14 +546,20 @@ impl<'a> CatalogInspector<'a> {
                 omit,
                 readonly,
                 enum_key: enum_key_of(&pg_type),
-                domain: row.get::<_, Option<String>>(13).filter(|_| pg_type.is_scalar_base()),
+                domain: row
+                    .get::<_, Option<String>>(13)
+                    .filter(|_| pg_type.is_scalar_base()),
                 pg_type,
             });
         }
 
         // Constraints: primary and foreign keys (columns in key order), unique, check and
         // exclusion constraints
-        let period = if server_version >= 180000 { "con.conperiod" } else { "false" };
+        let period = if server_version >= 180000 {
+            "con.conperiod"
+        } else {
+            "false"
+        };
         let con_rows = self
             .client
             .query(
@@ -489,7 +583,9 @@ impl<'a> CatalogInspector<'a> {
             )
             .await?;
         for row in con_rows {
-            let Some(&idx) = by_oid.get(&row.get::<_, u32>(0)) else { continue };
+            let Some(&idx) = by_oid.get(&row.get::<_, u32>(0)) else {
+                continue;
+            };
             let table = &mut tables[idx];
             let columns: Vec<String> = row.get(3);
             let kind = match row.get::<_, &str>(2) {
@@ -499,7 +595,8 @@ impl<'a> CatalogInspector<'a> {
                 "c" => ConstraintKind::Check,
                 _ => ConstraintKind::Exclusion,
             };
-            let references = (kind == ConstraintKind::ForeignKey).then(|| (row.get::<_, String>(4), row.get::<_, String>(5)));
+            let references = (kind == ConstraintKind::ForeignKey)
+                .then(|| (row.get::<_, String>(4), row.get::<_, String>(5)));
             table.constraints.push(ConstraintMetadata {
                 name: row.get(1),
                 kind,
@@ -551,7 +648,9 @@ impl<'a> CatalogInspector<'a> {
             )
             .await?;
         for row in index_rows {
-            let Some(&idx) = by_oid.get(&row.get::<_, u32>(0)) else { continue };
+            let Some(&idx) = by_oid.get(&row.get::<_, u32>(0)) else {
+                continue;
+            };
             let table = &mut tables[idx];
             let definition: String = row.get(2);
             let columns = index_columns(&definition, table);
@@ -588,21 +687,36 @@ impl<'a> CatalogInspector<'a> {
             )
             .await?;
         for row in unique_rows {
-            let Some(&idx) = by_oid.get(&row.get::<_, u32>(0)) else { continue };
+            let Some(&idx) = by_oid.get(&row.get::<_, u32>(0)) else {
+                continue;
+            };
             let columns: Vec<String> = row.get(3);
             let table = &mut tables[idx];
             // An index repeating another key's columns (e.g. a unique index beside the constraint)
-            if columns.is_empty() || table.unique_keys.iter().any(|k| same_columns(&k.columns, &columns)) {
+            if columns.is_empty()
+                || table
+                    .unique_keys
+                    .iter()
+                    .any(|k| same_columns(&k.columns, &columns))
+            {
                 continue;
             }
-            table.unique_keys.push(UniqueKey { name: row.get(1), is_primary: row.get(2), columns });
+            table.unique_keys.push(UniqueKey {
+                name: row.get(1),
+                is_primary: row.get(2),
+                columns,
+            });
         }
         Ok(tables)
     }
 
     /// Text columns closed by a single-column `CHECK` value list (`status IN ('draft', 'active')`)
     /// become enums. The first such constraint of a column wins.
-    async fn inspect_check_enums(&self, schema_names: &[&str], catalog: &mut DatabaseCatalog) -> Result<(), CatalogError> {
+    async fn inspect_check_enums(
+        &self,
+        schema_names: &[&str],
+        catalog: &mut DatabaseCatalog,
+    ) -> Result<(), CatalogError> {
         let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
         let rows = self
             .client
@@ -618,8 +732,11 @@ impl<'a> CatalogInspector<'a> {
             )
             .await?;
         for row in rows {
-            let (schema, table, column, def): (String, String, String, String) = (row.get(0), row.get(1), row.get(2), row.get(3));
-            let Some(values) = parse_check_value_list(&def) else { continue };
+            let (schema, table, column, def): (String, String, String, String) =
+                (row.get(0), row.get(1), row.get(2), row.get(3));
+            let Some(values) = parse_check_value_list(&def) else {
+                continue;
+            };
             let Some(col) = catalog
                 .tables
                 .iter_mut()
@@ -628,7 +745,10 @@ impl<'a> CatalogInspector<'a> {
             else {
                 continue;
             };
-            let text_like = matches!(col.pg_type, PgType::Text | PgType::Varchar | PgType::Char | PgType::Citext);
+            let text_like = matches!(
+                col.pg_type,
+                PgType::Text | PgType::Varchar | PgType::Char | PgType::Citext
+            );
             if !text_like || col.enum_key.is_some() {
                 continue;
             }
@@ -670,7 +790,11 @@ impl<'a> CatalogInspector<'a> {
                 .await?;
             for row in rows {
                 let key: String = row.get(0);
-                let base = domains.iter().find(|(k, _)| *k == key).map(|(_, t)| t.clone()).unwrap_or(PgType::Text);
+                let base = domains
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or(PgType::Text);
                 catalog.domains.push(super::models::DomainMetadata {
                     key,
                     config_name: row.get(1),
@@ -698,7 +822,12 @@ impl<'a> CatalogInspector<'a> {
                 super::models::FunctionReturn::Value(t) => Some(t),
                 _ => None,
             };
-            let types = f.arguments.iter().map(|a| &a.pg_type).chain(f.return_columns.iter().map(|c| &c.pg_type)).chain(returned);
+            let types = f
+                .arguments
+                .iter()
+                .map(|a| &a.pg_type)
+                .chain(f.return_columns.iter().map(|c| &c.pg_type))
+                .chain(returned);
             for t in types {
                 collect(t, &mut composite_keys, &mut enum_keys);
             }
@@ -731,14 +860,17 @@ impl<'a> CatalogInspector<'a> {
                     });
                 }
                 let pg_type = type_from_row(&row, 5);
-                all.last_mut().unwrap().attributes.push(super::models::CompositeAttribute {
-                    name: row.get(3),
-                    enum_key: enum_key_of(&pg_type),
-                    limits: TypeLimits::from_typmod(&pg_type, row.get(11)),
-                    pg_type,
-                    field_name: String::new(),
-                    description: row.get(4),
-                });
+                all.last_mut()
+                    .unwrap()
+                    .attributes
+                    .push(super::models::CompositeAttribute {
+                        name: row.get(3),
+                        enum_key: enum_key_of(&pg_type),
+                        limits: TypeLimits::from_typmod(&pg_type, row.get(11)),
+                        pg_type,
+                        field_name: String::new(),
+                        description: row.get(4),
+                    });
             }
             // Keep the types reachable from columns (composite attributes may nest others)
             let mut i = 0;
@@ -750,7 +882,10 @@ impl<'a> CatalogInspector<'a> {
                 }
                 i += 1;
             }
-            catalog.composites = all.into_iter().filter(|c| composite_keys.contains(&c.key)).collect();
+            catalog.composites = all
+                .into_iter()
+                .filter(|c| composite_keys.contains(&c.key))
+                .collect();
         }
 
         if !enum_keys.is_empty() {
@@ -829,7 +964,8 @@ impl<'a> CatalogInspector<'a> {
              WHERE {filter}
              ORDER BY p.oid, a.ord"
         );
-        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] = [&schemas_vec, &extensions.all, &extensions.names];
+        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
+            [&schemas_vec, &extensions.all, &extensions.names];
         let mut args_by_fn: HashMap<u32, Vec<tokio_postgres::Row>> = HashMap::new();
         for row in self.client.query(&arg_query, &params).await? {
             args_by_fn.entry(row.get(0)).or_default().push(row);
@@ -873,25 +1009,41 @@ impl<'a> CatalogInspector<'a> {
                     }
                     let in_idx = in_args.len() as i16;
                     let has_default = pronargdefaults > 0 && in_idx >= (pronargs - pronargdefaults);
-                    in_args.push(super::models::FunctionArgument { name: name.clone(), pg_type: pg_type.clone(), has_default });
+                    in_args.push(super::models::FunctionArgument {
+                        name: name.clone(),
+                        pg_type: pg_type.clone(),
+                        has_default,
+                    });
                 }
                 table_columns |= mode == "t";
                 if matches!(mode.as_str(), "o" | "b" | "t") {
                     ret_cols.push(super::models::FunctionColumn { name, pg_type });
                 }
             }
-            let returns = match (r.get::<_, Option<String>>(15), ret_typtype.as_str(), ret_typname.as_str()) {
-                (Some(table), _, _) => super::models::FunctionReturn::Table { schema: r.get(14), table },
+            let returns = match (
+                r.get::<_, Option<String>>(15),
+                ret_typtype.as_str(),
+                ret_typname.as_str(),
+            ) {
+                (Some(table), _, _) => super::models::FunctionReturn::Table {
+                    schema: r.get(14),
+                    table,
+                },
                 // An array of rows is its rows (a set of arrays of rows has no GraphQL shape)
                 _ if r.get::<_, Option<String>>(18).is_some() => {
                     if returns_set {
                         continue;
                     }
                     (returns_set, returns_array) = (true, true);
-                    super::models::FunctionReturn::Table { schema: r.get(17), table: r.get(18) }
+                    super::models::FunctionReturn::Table {
+                        schema: r.get(17),
+                        table: r.get(18),
+                    }
                 }
                 (None, "p", "void") => super::models::FunctionReturn::Void,
-                (None, "p", "record") if !ret_cols.is_empty() => super::models::FunctionReturn::Record,
+                (None, "p", "record") if !ret_cols.is_empty() => {
+                    super::models::FunctionReturn::Record
+                }
                 // `RETURNS TABLE` names its columns, even just one
                 (None, _, _) if table_columns => super::models::FunctionReturn::Record,
                 // Triggers, handlers, polymorphic and anonymous record results have no type
@@ -900,7 +1052,10 @@ impl<'a> CatalogInspector<'a> {
                 (None, _, _) => super::models::FunctionReturn::Value(type_from_row(&r, 8)),
             };
             // A computed column must not change data, and its table must be exposed
-            if row_table.as_ref().is_some_and(|t| volatile || catalog.find_table(&fn_schema, t).is_none()) {
+            if row_table
+                .as_ref()
+                .is_some_and(|t| volatile || catalog.find_table(&fn_schema, t).is_none())
+            {
                 continue;
             }
             // Overloads share a name: the first is exposed
@@ -915,7 +1070,8 @@ impl<'a> CatalogInspector<'a> {
             // references that table's primary key: same type, named `{table}_id` /
             // `{singular}_id` (or a one-letter `{initial}_id`), and the table appears in the
             // function name.
-            let mountable = returns == super::models::FunctionReturn::Record && returns_set && !volatile;
+            let mountable =
+                returns == super::models::FunctionReturn::Record && returns_set && !volatile;
             let parent = in_args.first().filter(|_| mountable).and_then(|arg| {
                 let arg_name = arg.name.to_lowercase();
                 let func_lower = func_name.to_lowercase();
@@ -932,18 +1088,27 @@ impl<'a> CatalogInspector<'a> {
                     if !(func_lower.contains(&t_singular) || func_lower.contains(&t_name)) {
                         return None;
                     }
-                    let prefix = arg_name.strip_suffix("_id").or_else(|| arg_name.strip_suffix("id"))?;
+                    let prefix = arg_name
+                        .strip_suffix("_id")
+                        .or_else(|| arg_name.strip_suffix("id"))?;
                     let prefix = prefix.trim_matches('_');
                     let matches_name = prefix == t_singular
                         || prefix == t_name
                         || prefix == t_singular.replace('_', "")
                         || (prefix.len() == 1 && t_singular.starts_with(prefix));
-                    matches_name.then(|| ((t.schema.clone(), t.name.clone()), vec![(arg.name.clone(), pk.clone())]))
+                    matches_name.then(|| {
+                        (
+                            (t.schema.clone(), t.name.clone()),
+                            vec![(arg.name.clone(), pk.clone())],
+                        )
+                    })
                 })
             });
             let (parent_schema, parent_table, parent_arguments) = match (parent, &row_table) {
                 (_, Some(table)) => (None, Some(table.clone()), Vec::new()),
-                (Some(((schema, table), args)), None) => ((schema != fn_schema).then_some(schema), Some(table), args),
+                (Some(((schema, table), args)), None) => {
+                    ((schema != fn_schema).then_some(schema), Some(table), args)
+                }
                 (None, None) => (None, None, Vec::new()),
             };
             let mounted_field_name = match &row_table {
@@ -976,7 +1141,11 @@ impl<'a> CatalogInspector<'a> {
 
     /// Exclusive arcs: a `CHECK (num_nonnulls(a_id, b_id, ...) = 1)` over single-column
     /// foreign keys, each pointing at a different table.
-    async fn inspect_exclusive_arcs(&self, schema_names: &[&str], catalog: &mut DatabaseCatalog) -> Result<(), CatalogError> {
+    async fn inspect_exclusive_arcs(
+        &self,
+        schema_names: &[&str],
+        catalog: &mut DatabaseCatalog,
+    ) -> Result<(), CatalogError> {
         let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
         let chk_query = "
             SELECT c.conname, cl.relname, pg_get_constraintdef(c.oid) AS def, n.nspname::text
@@ -995,15 +1164,23 @@ impl<'a> CatalogInspector<'a> {
             if !(def.contains("num_nonnulls(") && def.contains("= 1")) {
                 continue;
             }
-            let Some(start) = def.find("num_nonnulls(") else { continue };
+            let Some(start) = def.find("num_nonnulls(") else {
+                continue;
+            };
             let inner = &def[start + 13..];
             let Some(end) = inner.find(')') else { continue };
             let target_cols: Vec<String> = inner[..end]
                 .split(',')
-                .map(|s| s.trim().trim_matches(|c: char| !c.is_alphanumeric() && c != '_').to_string())
+                .map(|s| {
+                    s.trim()
+                        .trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+                        .to_string()
+                })
                 .collect();
 
-            let Some(table_meta) = catalog.find_table(&table_schema, &table_name) else { continue };
+            let Some(table_meta) = catalog.find_table(&table_schema, &table_name) else {
+                continue;
+            };
             let Some(parent_fk) = table_meta
                 .foreign_keys
                 .iter()
@@ -1016,7 +1193,10 @@ impl<'a> CatalogInspector<'a> {
             let mut target_schemas = Vec::new();
             let mut target_key_columns = Vec::new();
             for tc in &target_cols {
-                let fk = table_meta.foreign_keys.iter().find(|k| k.single().is_some_and(|(c, _)| c == tc));
+                let fk = table_meta
+                    .foreign_keys
+                    .iter()
+                    .find(|k| k.single().is_some_and(|(c, _)| c == tc));
                 if let Some(fk) = fk {
                     arc_columns.push(tc.clone());
                     target_tables.push(fk.foreign_table.clone());
@@ -1048,7 +1228,11 @@ impl<'a> CatalogInspector<'a> {
     /// Search indexes: `pg_trgm` (fuzzy), `pgvector` (semantic), `bm25` (lexical), `tsvector`
     /// documents (full text: GIN/GiST indexes on a `tsvector` column or on a `to_tsvector(...)`
     /// expression) and PostGIS geometries (GiST/SP-GiST: nearest first).
-    async fn inspect_search_indexes(&self, schema_names: &[&str], catalog: &mut DatabaseCatalog) -> Result<(), CatalogError> {
+    async fn inspect_search_indexes(
+        &self,
+        schema_names: &[&str],
+        catalog: &mut DatabaseCatalog,
+    ) -> Result<(), CatalogError> {
         let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
         let search_idx_query = "
             SELECT
@@ -1084,25 +1268,41 @@ impl<'a> CatalogInspector<'a> {
             let operator_class: String = r.get(4);
             let key_expression: String = r.get(5);
             let table_schema: String = r.get(6);
-            let Some(table) = catalog.find_table(&table_schema, &table_name) else { continue };
+            let Some(table) = catalog.find_table(&table_schema, &table_name) else {
+                continue;
+            };
 
             let mut columns = Vec::new();
             let kind = if access_method == "bm25" {
                 super::models::SearchIndexKind::Bm25
-            } else if access_method == "hnsw" || access_method == "ivfflat" || operator_class.starts_with("vector_") {
-                super::models::SearchIndexKind::Vector { opclass: operator_class.clone() }
+            } else if access_method == "hnsw"
+                || access_method == "ivfflat"
+                || operator_class.starts_with("vector_")
+            {
+                super::models::SearchIndexKind::Vector {
+                    opclass: operator_class.clone(),
+                }
             } else if operator_class.contains("tsvector") {
                 // A document column (its generation expression tells how it is built), or an
                 // expression over columns
                 let built_from = if column_name.is_empty() {
-                    columns = sql_identifiers(&key_expression).into_iter().filter(|i| table.get_column(i).is_some()).collect();
+                    columns = sql_identifiers(&key_expression)
+                        .into_iter()
+                        .filter(|i| table.get_column(i).is_some())
+                        .collect();
                     columns.dedup();
                     Some(key_expression.clone())
                 } else {
-                    table.get_column(&column_name).and_then(|c| c.generation.clone())
+                    table
+                        .get_column(&column_name)
+                        .and_then(|c| c.generation.clone())
                 };
                 let parsed = built_from.as_deref().and_then(parse_to_tsvector);
-                let document = if column_name.is_empty() { key_expression.clone() } else { quote_ident(&column_name) };
+                let document = if column_name.is_empty() {
+                    key_expression.clone()
+                } else {
+                    quote_ident(&column_name)
+                };
                 super::models::SearchIndexKind::FullText {
                     document,
                     config: parsed.as_ref().and_then(|(config, _)| config.clone()),
@@ -1117,16 +1317,18 @@ impl<'a> CatalogInspector<'a> {
                 super::models::SearchIndexKind::FuzzyTrgm
             };
 
-            catalog.search_indexes.push(super::models::SearchIndexMetadata {
-                table_schema,
-                table_name,
-                index_name,
-                column_name,
-                access_method,
-                operator_class,
-                kind,
-                columns,
-            });
+            catalog
+                .search_indexes
+                .push(super::models::SearchIndexMetadata {
+                    table_schema,
+                    table_name,
+                    index_name,
+                    column_name,
+                    access_method,
+                    operator_class,
+                    kind,
+                    columns,
+                });
         }
         Ok(())
     }
@@ -1146,9 +1348,15 @@ impl<'a> CatalogInspector<'a> {
     async fn inspect_polymorphism(&self, schema_names: &[&str], catalog: &mut DatabaseCatalog) {
         let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
         const DISCRIMINATOR_NAMES: &[&str] = &[
-            "type", "kind", "discriminator", "entity_type", "record_type", "resource_type",
+            "type",
+            "kind",
+            "discriminator",
+            "entity_type",
+            "record_type",
+            "resource_type",
         ];
-        let discriminators: Vec<String> = DISCRIMINATOR_NAMES.iter().map(|s| s.to_string()).collect();
+        let discriminators: Vec<String> =
+            DISCRIMINATOR_NAMES.iter().map(|s| s.to_string()).collect();
 
         let sti = |schema: &str, table: &str, column: &str, values: Vec<String>| StiMetadata {
             schema: schema.to_string(),
@@ -1156,7 +1364,10 @@ impl<'a> CatalogInspector<'a> {
             discriminator_column: column.to_string(),
             variants: values
                 .into_iter()
-                .map(|v| StiVariant { type_name: super::models::graphql_type_name(&v), discriminator_value: v })
+                .map(|v| StiVariant {
+                    type_name: super::models::graphql_type_name(&v),
+                    discriminator_value: v,
+                })
                 .collect(),
             fallback_type_name: None,
             base_type_name: String::new(),
@@ -1176,7 +1387,11 @@ impl<'a> CatalogInspector<'a> {
               AND a.attname = ANY($2)
             ORDER BY c.relname, con.conname;
         ";
-        if let Ok(rows) = self.client.query(chk_query, &[&schemas_vec, &discriminators]).await {
+        if let Ok(rows) = self
+            .client
+            .query(chk_query, &[&schemas_vec, &discriminators])
+            .await
+        {
             for r in rows {
                 let table: String = r.get(0);
                 let column: String = r.get(1);
@@ -1203,14 +1418,22 @@ impl<'a> CatalogInspector<'a> {
             GROUP BY n.nspname, c.relname, a.attname, a.attnum
             ORDER BY n.nspname, c.relname, a.attnum;
         ";
-        if let Ok(rows) = self.client.query(enum_query, &[&schemas_vec, &discriminators]).await {
+        if let Ok(rows) = self
+            .client
+            .query(enum_query, &[&schemas_vec, &discriminators])
+            .await
+        {
             for r in rows {
                 let table: String = r.get(0);
                 let column: String = r.get(1);
                 let values: Vec<String> = r.get(2);
                 let schema: String = r.get(3);
                 // A CHECK on the column is narrower than its enum, so it takes precedence
-                if !catalog.sti.iter().any(|s| s.schema == schema && s.table_name == table) {
+                if !catalog
+                    .sti
+                    .iter()
+                    .any(|s| s.schema == schema && s.table_name == table)
+                {
                     catalog.sti.push(sti(&schema, &table, &column, values));
                 }
             }
@@ -1247,52 +1470,88 @@ impl<'a> CatalogInspector<'a> {
                 let child: String = r.get(2);
                 let parent_schema: String = r.get(3);
                 // Children inherit the parent's columns, so they join on the parent's key
-                let Some(parent_meta) = catalog.find_table(&parent_schema, &parent) else { continue };
+                let Some(parent_meta) = catalog.find_table(&parent_schema, &parent) else {
+                    continue;
+                };
                 if parent_meta.primary_key.is_empty() {
                     continue;
                 }
-                let join_columns = parent_meta.primary_key.iter().map(|pk| (pk.clone(), pk.clone())).collect();
-                push_cti_child(catalog, &parent_schema, &parent, CtiKind::Inherits, CtiChild {
-                    type_name: table_to_type_name(&child),
-                    schema: child_schema,
-                    table: child,
-                    join_columns,
-                });
+                let join_columns = parent_meta
+                    .primary_key
+                    .iter()
+                    .map(|pk| (pk.clone(), pk.clone()))
+                    .collect();
+                push_cti_child(
+                    catalog,
+                    &parent_schema,
+                    &parent,
+                    CtiKind::Inherits,
+                    CtiChild {
+                        type_name: table_to_type_name(&child),
+                        schema: child_schema,
+                        table: child,
+                        join_columns,
+                    },
+                );
             }
         }
 
         // Sub-pass D: shared-primary-key subtype tables
         let mut candidates: Vec<(String, String, CtiChild)> = Vec::new();
         for child in &catalog.tables {
-            let [pk] = child.primary_key.as_slice() else { continue };
+            let [pk] = child.primary_key.as_slice() else {
+                continue;
+            };
             for fk in &child.foreign_keys {
-                let Some((column, foreign_column)) = fk.single() else { continue };
-                if column != pk || (fk.foreign_schema == child.schema && fk.foreign_table == child.name) {
+                let Some((column, foreign_column)) = fk.single() else {
+                    continue;
+                };
+                if column != pk
+                    || (fk.foreign_schema == child.schema && fk.foreign_table == child.name)
+                {
                     continue;
                 }
                 let parent_pk_matches = catalog
                     .find_table(&fk.foreign_schema, &fk.foreign_table)
                     .is_some_and(|p| p.primary_key == [foreign_column]);
                 if parent_pk_matches {
-                    candidates.push((fk.foreign_schema.clone(), fk.foreign_table.clone(), CtiChild {
-                        schema: child.schema.clone(),
-                        table: child.name.clone(),
-                        type_name: table_to_type_name(&child.name),
-                        join_columns: vec![(pk.clone(), foreign_column.to_string())],
-                    }));
+                    candidates.push((
+                        fk.foreign_schema.clone(),
+                        fk.foreign_table.clone(),
+                        CtiChild {
+                            schema: child.schema.clone(),
+                            table: child.name.clone(),
+                            type_name: table_to_type_name(&child.name),
+                            join_columns: vec![(pk.clone(), foreign_column.to_string())],
+                        },
+                    ));
                 }
             }
         }
         for (parent_schema, parent, child) in &candidates {
-            if catalog.find_cti(parent_schema, parent).is_some_and(|c| c.kind == CtiKind::Inherits) {
+            if catalog
+                .find_cti(parent_schema, parent)
+                .is_some_and(|c| c.kind == CtiKind::Inherits)
+            {
                 continue;
             }
-            let siblings = candidates.iter().filter(|(ps, p, _)| ps == parent_schema && p == parent).count();
-            let has_discriminator = catalog
-                .find_table(parent_schema, parent)
-                .is_some_and(|t| t.columns.iter().any(|c| DISCRIMINATOR_NAMES.contains(&c.name.as_str())));
+            let siblings = candidates
+                .iter()
+                .filter(|(ps, p, _)| ps == parent_schema && p == parent)
+                .count();
+            let has_discriminator = catalog.find_table(parent_schema, parent).is_some_and(|t| {
+                t.columns
+                    .iter()
+                    .any(|c| DISCRIMINATOR_NAMES.contains(&c.name.as_str()))
+            });
             if siblings >= 2 || has_discriminator {
-                push_cti_child(catalog, parent_schema, parent, CtiKind::SharedPrimaryKey, child.clone());
+                push_cti_child(
+                    catalog,
+                    parent_schema,
+                    parent,
+                    CtiKind::SharedPrimaryKey,
+                    child.clone(),
+                );
             }
         }
     }
@@ -1300,7 +1559,10 @@ impl<'a> CatalogInspector<'a> {
 
 /// Applies the GraphQL-facing parts of `config` (names, descriptions, omissions) to a catalog
 /// from [`CatalogInspector::inspect_base`] and resolves the remaining names.
-pub fn finalize(mut catalog: DatabaseCatalog, config: &EngineConfig) -> Result<DatabaseCatalog, CatalogError> {
+pub fn finalize(
+    mut catalog: DatabaseCatalog,
+    config: &EngineConfig,
+) -> Result<DatabaseCatalog, CatalogError> {
     for t in &mut catalog.tables {
         refresh_key_operations(t);
     }
@@ -1330,7 +1592,10 @@ fn refresh_key_operations(table: &mut TableMetadata) {
 /// `(configuration, text)` of a `to_tsvector([config,] text)` expression, as PostgreSQL
 /// prints it: `to_tsvector('english'::regconfig, ((title || ' '::text) || body))`.
 fn parse_to_tsvector(expr: &str) -> Option<(Option<String>, String)> {
-    let inner = expr.trim().strip_prefix("to_tsvector(")?.strip_suffix(')')?;
+    let inner = expr
+        .trim()
+        .strip_prefix("to_tsvector(")?
+        .strip_suffix(')')?;
     // Split at the first comma outside parentheses and string literals
     let (mut depth, mut in_string) = (0i32, false);
     for (i, c) in inner.char_indices() {
@@ -1339,7 +1604,10 @@ fn parse_to_tsvector(expr: &str) -> Option<(Option<String>, String)> {
             '(' if !in_string => depth += 1,
             ')' if !in_string => depth -= 1,
             ',' if !in_string && depth == 0 => {
-                return Some((Some(inner[..i].trim().to_string()), inner[i + 1..].trim().to_string()));
+                return Some((
+                    Some(inner[..i].trim().to_string()),
+                    inner[i + 1..].trim().to_string(),
+                ));
             }
             _ => {}
         }
@@ -1351,7 +1619,9 @@ fn parse_to_tsvector(expr: &str) -> Option<(Option<String>, String)> {
 /// columns its key parts are, or its expressions read (`lower(email)` covers `email`).
 /// `INCLUDE` columns and the predicate are not part of the key.
 fn index_columns(definition: &str, table: &TableMetadata) -> Vec<String> {
-    let Some(start) = definition.find(" USING ") else { return Vec::new() };
+    let Some(start) = definition.find(" USING ") else {
+        return Vec::new();
+    };
     let mut key = &definition[start..];
     for end in [" INCLUDE (", " WHERE ", " NULLS NOT DISTINCT"] {
         if let Some(at) = key.find(end) {
@@ -1458,17 +1728,34 @@ fn detect_many_to_many(catalog: &mut DatabaseCatalog) {
         let fks: Vec<&ForeignKeyMetadata> = table
             .foreign_keys
             .iter()
-            .filter(|fk| catalog.find_table(&fk.foreign_schema, &fk.foreign_table).is_some())
+            .filter(|fk| {
+                catalog
+                    .find_table(&fk.foreign_schema, &fk.foreign_table)
+                    .is_some()
+            })
             .collect();
         if fks.len() < 2 {
             continue;
         }
-        let name_indicates_junction = ["_link", "_member", "_role", "_result", "_endpoint", "_insurance", "_association", "_junction"]
-            .iter()
-            .any(|s| table.name.contains(s));
+        let name_indicates_junction = [
+            "_link",
+            "_member",
+            "_role",
+            "_result",
+            "_endpoint",
+            "_insurance",
+            "_association",
+            "_junction",
+        ]
+        .iter()
+        .any(|s| table.name.contains(s));
         let is_lean = table.columns.len() <= 6;
         let composite_pk = table.primary_key.len() >= 2
-            && fks.iter().filter(|fk| fk.columns.iter().all(|c| table.primary_key.contains(c))).count() >= 2;
+            && fks
+                .iter()
+                .filter(|fk| fk.columns.iter().all(|c| table.primary_key.contains(c)))
+                .count()
+                >= 2;
         if !(is_lean || name_indicates_junction || composite_pk) {
             continue;
         }
@@ -1480,7 +1767,11 @@ fn detect_many_to_many(catalog: &mut DatabaseCatalog) {
                 }
                 for (from, to) in [(fk_a, fk_b), (fk_b, fk_a)] {
                     let field_name = super::models::to_camel_case(&to.foreign_table);
-                    let via_field_name = format!("{}Via{}", field_name, super::models::to_pascal_case(&table.name));
+                    let via_field_name = format!(
+                        "{}Via{}",
+                        field_name,
+                        super::models::to_pascal_case(&table.name)
+                    );
                     found.push(super::models::ManyToManyMetadata {
                         source_schema: from.foreign_schema.clone(),
                         source_table: from.foreign_table.clone(),
@@ -1488,8 +1779,18 @@ fn detect_many_to_many(catalog: &mut DatabaseCatalog) {
                         target_table: to.foreign_table.clone(),
                         junction_table: table.name.clone(),
                         junction_schema: table.schema.clone(),
-                        junction_source: from.columns.iter().cloned().zip(from.foreign_columns.iter().cloned()).collect(),
-                        junction_target: to.columns.iter().cloned().zip(to.foreign_columns.iter().cloned()).collect(),
+                        junction_source: from
+                            .columns
+                            .iter()
+                            .cloned()
+                            .zip(from.foreign_columns.iter().cloned())
+                            .collect(),
+                        junction_target: to
+                            .columns
+                            .iter()
+                            .cloned()
+                            .zip(to.foreign_columns.iter().cloned())
+                            .collect(),
                         field_name,
                         via_field_name,
                     });
@@ -1520,10 +1821,24 @@ fn extract_computed_field_name(func_name: &str, table_name: &str) -> String {
 }
 
 /// Appends `child` to the CTI hierarchy of `parent`, creating the hierarchy if needed.
-fn push_cti_child(catalog: &mut DatabaseCatalog, schema: &str, parent: &str, kind: CtiKind, child: CtiChild) {
-    match catalog.cti.iter_mut().find(|c| c.schema == schema && c.parent_table == parent) {
+fn push_cti_child(
+    catalog: &mut DatabaseCatalog,
+    schema: &str,
+    parent: &str,
+    kind: CtiKind,
+    child: CtiChild,
+) {
+    match catalog
+        .cti
+        .iter_mut()
+        .find(|c| c.schema == schema && c.parent_table == parent)
+    {
         Some(existing) => {
-            if !existing.children.iter().any(|c| c.schema == child.schema && c.table == child.table) {
+            if !existing
+                .children
+                .iter()
+                .any(|c| c.schema == child.schema && c.table == child.table)
+            {
                 existing.children.push(child);
             }
         }
@@ -1544,7 +1859,9 @@ fn push_cti_child(catalog: &mut DatabaseCatalog, schema: &str, parent: &str, kin
 /// Returns `None` for anything that is not a plain positive value list.
 fn parse_check_value_list(def: &str) -> Option<Vec<String>> {
     let upper = def.to_uppercase();
-    let other_operators = ["<", ">", "!=", "~", "NOT ", " AND ", " LIKE ", "SIMILAR", "LENGTH(", "LOWER(", "UPPER("];
+    let other_operators = [
+        "<", ">", "!=", "~", "NOT ", " AND ", " LIKE ", "SIMILAR", "LENGTH(", "LOWER(", "UPPER(",
+    ];
     if other_operators.iter().any(|op| upper.contains(op)) {
         return None;
     }
@@ -1584,36 +1901,63 @@ mod tests {
         use super::parse_to_tsvector;
         assert_eq!(
             parse_to_tsvector("to_tsvector('english'::regconfig, ((title || ' '::text) || body))"),
-            Some((Some("'english'::regconfig".to_string()), "((title || ' '::text) || body)".to_string()))
+            Some((
+                Some("'english'::regconfig".to_string()),
+                "((title || ' '::text) || body)".to_string()
+            ))
         );
-        assert_eq!(parse_to_tsvector("to_tsvector(title)"), Some((None, "title".to_string())));
-        assert_eq!(parse_to_tsvector("to_tsvector('simple'::regconfig, 'a,b'::text)").map(|p| p.1), Some("'a,b'::text".to_string()));
-        assert_eq!(parse_to_tsvector("setweight(to_tsvector(title), 'A'::\"char\")"), None);
+        assert_eq!(
+            parse_to_tsvector("to_tsvector(title)"),
+            Some((None, "title".to_string()))
+        );
+        assert_eq!(
+            parse_to_tsvector("to_tsvector('simple'::regconfig, 'a,b'::text)").map(|p| p.1),
+            Some("'a,b'::text".to_string())
+        );
+        assert_eq!(
+            parse_to_tsvector("setweight(to_tsvector(title), 'A'::\"char\")"),
+            None
+        );
     }
 
     #[test]
     fn parses_normalised_in_list() {
         let def = "CHECK ((type = ANY (ARRAY['dog'::text, 'cat'::text])))";
-        assert_eq!(parse_check_value_list(def), Some(vec!["dog".into(), "cat".into()]));
+        assert_eq!(
+            parse_check_value_list(def),
+            Some(vec!["dog".into(), "cat".into()])
+        );
     }
 
     #[test]
     fn parses_varchar_in_list_and_escaped_quotes() {
         let def = "CHECK (((kind)::text = ANY ((ARRAY['it''s'::character varying, 'b'::character varying])::text[])))";
-        assert_eq!(parse_check_value_list(def), Some(vec!["it's".into(), "b".into()]));
+        assert_eq!(
+            parse_check_value_list(def),
+            Some(vec!["it's".into(), "b".into()])
+        );
     }
 
     #[test]
     fn parses_or_chain() {
         let def = "CHECK (((type = 'a'::text) OR (type = 'b'::text)))";
-        assert_eq!(parse_check_value_list(def), Some(vec!["a".into(), "b".into()]));
+        assert_eq!(
+            parse_check_value_list(def),
+            Some(vec!["a".into(), "b".into()])
+        );
     }
 
     #[test]
     fn rejects_non_list_checks() {
         assert_eq!(parse_check_value_list("CHECK ((type <> 'x'::text))"), None);
-        assert_eq!(parse_check_value_list("CHECK (((code ~ '^[a-z]+$'::text) OR (code = 'b'::text)))"), None);
-        assert_eq!(parse_check_value_list("CHECK (((code ~~ 'a%'::text) OR (code = 'b'::text)))"), None);
+        assert_eq!(
+            parse_check_value_list("CHECK (((code ~ '^[a-z]+$'::text) OR (code = 'b'::text)))"),
+            None
+        );
+        assert_eq!(
+            parse_check_value_list("CHECK (((code ~~ 'a%'::text) OR (code = 'b'::text)))"),
+            None
+        );
         assert_eq!(parse_check_value_list("CHECK ((length(type) > 2))"), None);
     }
 }

@@ -121,7 +121,9 @@ pub struct AuthConfig {
     pub session_variables: SessionVariablesConfig,
 }
 
-fn default_leeway() -> u64 { 30 }
+fn default_leeway() -> u64 {
+    30
+}
 
 impl Default for AuthConfig {
     fn default() -> Self {
@@ -187,8 +189,12 @@ pub struct SessionVariablesConfig {
     pub mappings: BTreeMap<String, String>,
 }
 
-fn default_claim_prefix() -> String { "request.jwt.claim.".to_string() }
-fn default_claims_setting() -> String { "request.jwt.claims".to_string() }
+fn default_claim_prefix() -> String {
+    "request.jwt.claim.".to_string()
+}
+fn default_claims_setting() -> String {
+    "request.jwt.claims".to_string()
+}
 
 impl Default for SessionVariablesConfig {
     fn default() -> Self {
@@ -251,9 +257,12 @@ impl ExtensionsConfig {
 
 impl EngineConfig {
     /// Load and parse an `engine.config.yaml` file.
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn load_from_file<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         Self::from_yaml(&content).map_err(|e| format!("{}: {e}", path.display()).into())
     }
 
@@ -302,7 +311,12 @@ impl ConfigOverrides {
     /// [`DEFAULT_SCHEMA`].
     pub fn apply(&self, config: &mut EngineConfig) {
         fn split(list: Option<&str>) -> Vec<String> {
-            list.unwrap_or_default().split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+            list.unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
         }
         let from_env = split(self.database_schemas.as_deref());
         if !from_env.is_empty() {
@@ -320,7 +334,12 @@ impl ConfigOverrides {
             config.graphiql = graphiql;
         }
         // Empty variables (a template's `AUTH_JWT_SECRET=`) override nothing
-        let set = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+        let set = |v: &Option<String>| {
+            v.as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        };
         if let Some(enabled) = self.auth_enabled {
             config.auth.enabled = enabled;
         }
@@ -561,7 +580,10 @@ functions:
         assert_eq!(users.type_name.as_deref(), Some("Person"));
         assert_eq!(users.omit_operations, vec![Operation::Delete]);
         assert!(users.columns["password_hash"].omit);
-        assert_eq!(users.columns["birth_date"].field_name.as_deref(), Some("dateOfBirth"));
+        assert_eq!(
+            users.columns["birth_date"].field_name.as_deref(),
+            Some("dateOfBirth")
+        );
 
         let view = &config.entities["user_contact_view"];
         assert_eq!(view.primary_key, vec!["user_id", "value"]);
@@ -571,7 +593,10 @@ functions:
         assert!(fk.references.as_ref().unwrap().columns.is_empty());
         assert_eq!(fk.reverse_field_name.as_deref(), Some("contacts"));
 
-        let mount = config.functions["flatten_menu_items"].mount.as_ref().unwrap();
+        let mount = config.functions["flatten_menu_items"]
+            .mount
+            .as_ref()
+            .unwrap();
         assert_eq!(mount.on.as_deref(), Some("menus"));
         assert_eq!(mount.arguments["m_id"], "id");
     }

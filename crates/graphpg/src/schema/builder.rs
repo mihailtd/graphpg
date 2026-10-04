@@ -1,7 +1,8 @@
 use crate::catalog::{
-    CUSTOM_SCALARS, RANGE_SCALARS, deprecated_directive,
-    conflict_key_value, to_camel_case, ColumnMetadata, DatabaseCatalog, FieldKind, FunctionArgument, MutationAction, MutationField,
-    pg_type_enum_key, FunctionReturn, OrderTarget, PgType, Polymorphism, SearchIndexKind, TreeLink, SearchIndexMetadata, SearchMethod, TableMetadata, FunctionMetadata,
+    conflict_key_value, deprecated_directive, pg_type_enum_key, to_camel_case, ColumnMetadata,
+    DatabaseCatalog, FieldKind, FunctionArgument, FunctionMetadata, FunctionReturn, MutationAction,
+    MutationField, OrderTarget, PgType, Polymorphism, SearchIndexKind, SearchIndexMetadata,
+    SearchMethod, TableMetadata, TreeLink, CUSTOM_SCALARS, RANGE_SCALARS,
 };
 use apollo_compiler::validation::Valid;
 use apollo_compiler::Schema;
@@ -30,7 +31,12 @@ pub struct SdlField {
 
 impl SdlField {
     fn new(name: impl Into<String>, decl: impl Into<String>) -> Self {
-        Self { name: name.into(), doc: String::new(), decl: decl.into(), directives: String::new() }
+        Self {
+            name: name.into(),
+            doc: String::new(),
+            decl: decl.into(),
+            directives: String::new(),
+        }
     }
 
     fn with_doc(mut self, doc: String) -> Self {
@@ -44,19 +50,25 @@ impl SdlField {
     }
 
     fn render(fields: &[SdlField]) -> String {
-        fields.iter().map(|f| format!("{}  {}{}{}\n", f.doc, f.name, f.decl, f.directives)).collect()
+        fields
+            .iter()
+            .map(|f| format!("{}  {}{}{}\n", f.doc, f.name, f.decl, f.directives))
+            .collect()
     }
 
     /// Whether this field can implement `iface` (GraphQL IsValidImplementation): identical
     /// arguments and the same type, optionally made non-null.
     fn implements(&self, iface: &SdlField) -> bool {
-        let split = |d: &str| d.rsplit_once(": ").map(|(a, t)| (a.to_string(), t.to_string())).unwrap_or_default();
+        let split = |d: &str| {
+            d.rsplit_once(": ")
+                .map(|(a, t)| (a.to_string(), t.to_string()))
+                .unwrap_or_default()
+        };
         let (args, ty) = split(&self.decl);
         let (iface_args, iface_ty) = split(&iface.decl);
         args == iface_args && (ty == iface_ty || ty == format!("{iface_ty}!"))
     }
 }
-
 
 /// Comparison filter inputs: `(input name, value type, ordered)`. Ordered types also get
 /// `lessThan`-style operators.
@@ -194,10 +206,18 @@ impl SchemaBuilder {
     /// take Relay IDs.
     fn function_args(catalog: &DatabaseCatalog, func: &FunctionMetadata, mounted: bool) -> String {
         let args = Self::function_arg_list(catalog, func, mounted);
-        if args.is_empty() { String::new() } else { format!("({})", args.join(", ")) }
+        if args.is_empty() {
+            String::new()
+        } else {
+            format!("({})", args.join(", "))
+        }
     }
 
-    fn function_arg_list(catalog: &DatabaseCatalog, func: &FunctionMetadata, mounted: bool) -> Vec<String> {
+    fn function_arg_list(
+        catalog: &DatabaseCatalog,
+        func: &FunctionMetadata,
+        mounted: bool,
+    ) -> Vec<String> {
         // A computed column's row is the parent's
         func.arguments
             .iter()
@@ -218,12 +238,24 @@ impl SchemaBuilder {
     /// Arguments and type of a root field backed by a function. In a query, rows of a table
     /// returned as a set are a connection: the function's arguments, then the connection's
     /// (except any a function argument's name takes).
-    fn function_field_sdl(catalog: &DatabaseCatalog, func: &FunctionMetadata, mutation: bool) -> String {
-        format!("{}{}", func.field_name, Self::function_field_type(catalog, func, mutation))
+    fn function_field_sdl(
+        catalog: &DatabaseCatalog,
+        func: &FunctionMetadata,
+        mutation: bool,
+    ) -> String {
+        format!(
+            "{}{}",
+            func.field_name,
+            Self::function_field_type(catalog, func, mutation)
+        )
     }
 
     /// `(args): Type` of a field backed by a function (see `function_field_sdl`).
-    fn function_field_type(catalog: &DatabaseCatalog, func: &FunctionMetadata, mutation: bool) -> String {
+    fn function_field_type(
+        catalog: &DatabaseCatalog,
+        func: &FunctionMetadata,
+        mutation: bool,
+    ) -> String {
         let list = |item: String, non_null_items: bool| {
             if !func.returns_set {
                 item
@@ -240,25 +272,41 @@ impl SchemaBuilder {
                     return String::new();
                 };
                 if func.returns_set && !mutation {
-                    let own: HashSet<String> = func.arguments.iter().map(|a| a.graphql_name()).collect();
+                    let own: HashSet<String> =
+                        func.arguments.iter().map(|a| a.graphql_name()).collect();
                     let conn = Self::format_connection_args(target);
-                    args.extend(conn.split(", ").filter(|a| !own.contains(a.split(':').next().unwrap_or(""))).map(str::to_string));
+                    args.extend(
+                        conn.split(", ")
+                            .filter(|a| !own.contains(a.split(':').next().unwrap_or("")))
+                            .map(str::to_string),
+                    );
                     format!("{}Connection!", target.type_name)
                 } else {
                     list(target.type_name.clone(), true)
                 }
             }
             FunctionReturn::Record => list(func.row_type_name(), true),
-            FunctionReturn::Value(pg_type) => list(catalog.graphql_type(pg_type, pg_type_enum_key(pg_type).as_deref(), false), false),
+            FunctionReturn::Value(pg_type) => list(
+                catalog.graphql_type(pg_type, pg_type_enum_key(pg_type).as_deref(), false),
+                false,
+            ),
             FunctionReturn::Void => "Boolean".to_string(),
         };
-        let args = if args.is_empty() { String::new() } else { format!("({})", args.join(", ")) };
+        let args = if args.is_empty() {
+            String::new()
+        } else {
+            format!("({})", args.join(", "))
+        };
         format!("{args}: {ty}")
     }
 
     /// Names of the fields of `table`'s own GraphQL type.
     pub fn type_field_names(catalog: &DatabaseCatalog, table: &TableMetadata) -> HashSet<String> {
-        catalog.object_fields(&table.schema, &table.name).iter().map(|f| f.name.clone()).collect()
+        catalog
+            .object_fields(&table.schema, &table.name)
+            .iter()
+            .map(|f| f.name.clone())
+            .collect()
     }
 
     /// Fields of a CTI child table's concrete type: every field of each parent interface
@@ -289,21 +337,39 @@ impl SchemaBuilder {
         let children: Vec<(String, String)> = catalog
             .cti
             .iter()
-            .flat_map(|c| c.children.iter().map(|ch| (ch.schema.clone(), ch.table.clone())))
+            .flat_map(|c| {
+                c.children
+                    .iter()
+                    .map(|ch| (ch.schema.clone(), ch.table.clone()))
+            })
             .collect();
         for (schema, table) in children {
             while let Some(meta) = catalog.find_table(&schema, &table) {
                 let merged = Self::cti_child_fields(catalog, meta);
-                let incompatible = catalog.cti_parents_of(&schema, &table).into_iter().skip(1).find_map(|(cti, _)| {
-                    let parent = catalog.find_table(&cti.schema, &cti.parent_table)?;
-                    let ok = Self::table_object_fields(catalog, parent)
-                        .iter()
-                        .all(|f| merged.iter().find(|m| m.name == f.name).is_some_and(|m| m.implements(f)));
-                    (!ok).then(|| (cti.schema.clone(), cti.parent_table.clone()))
-                });
-                let Some((p_schema, p_table)) = incompatible else { break };
-                if let Some(cti) = catalog.cti.iter_mut().find(|c| c.schema == p_schema && c.parent_table == p_table) {
-                    cti.children.retain(|ch| !(ch.schema == schema && ch.table == table));
+                let incompatible = catalog
+                    .cti_parents_of(&schema, &table)
+                    .into_iter()
+                    .skip(1)
+                    .find_map(|(cti, _)| {
+                        let parent = catalog.find_table(&cti.schema, &cti.parent_table)?;
+                        let ok = Self::table_object_fields(catalog, parent).iter().all(|f| {
+                            merged
+                                .iter()
+                                .find(|m| m.name == f.name)
+                                .is_some_and(|m| m.implements(f))
+                        });
+                        (!ok).then(|| (cti.schema.clone(), cti.parent_table.clone()))
+                    });
+                let Some((p_schema, p_table)) = incompatible else {
+                    break;
+                };
+                if let Some(cti) = catalog
+                    .cti
+                    .iter_mut()
+                    .find(|c| c.schema == p_schema && c.parent_table == p_table)
+                {
+                    cti.children
+                        .retain(|ch| !(ch.schema == schema && ch.table == table));
                 }
             }
         }
@@ -319,14 +385,19 @@ impl SchemaBuilder {
         let mut sdl = String::new();
         let type_name = &table.type_name;
         let doc = Self::format_docstring(catalog.table_description(table).as_deref(), "");
-        let has_id = |fields: &[SdlField]| fields.iter().any(|f| f.name == "id" && f.decl == ": ID!");
+        let has_id =
+            |fields: &[SdlField]| fields.iter().any(|f| f.name == "id" && f.decl == ": ID!");
         let implements = |node: bool, interfaces: &[String]| {
             let mut list: Vec<String> = Vec::new();
             if node {
                 list.push("Node".to_string());
             }
             list.extend(interfaces.iter().cloned());
-            if list.is_empty() { String::new() } else { format!(" implements {}", list.join(" & ")) }
+            if list.is_empty() {
+                String::new()
+            } else {
+                format!(" implements {}", list.join(" & "))
+            }
         };
         let fed_directives = if catalog.federation_enabled {
             let mut d = String::new();
@@ -346,7 +417,13 @@ impl SchemaBuilder {
             let node = has_id(&fields) && table.implements_node();
             let body = SdlField::render(&fields);
             sdl.push_str(&doc);
-            sdl.push_str(&format!("interface {}{}{} {{\n{}}}\n\n", type_name, implements(node, &[]), fed_directives, body));
+            sdl.push_str(&format!(
+                "interface {}{}{} {{\n{}}}\n\n",
+                type_name,
+                implements(node, &[]),
+                fed_directives,
+                body
+            ));
 
             let iface = [type_name.clone()];
             if let Polymorphism::Sti(sti) = poly {
@@ -357,12 +434,27 @@ impl SchemaBuilder {
                         sti.discriminator_column,
                         v.discriminator_value.replace('"', "'").replace('\\', "")
                     ));
-                    sdl.push_str(&format!("type {}{}{} {{\n{}}}\n\n", v.type_name, implements(node, &iface), fed_directives, body));
+                    sdl.push_str(&format!(
+                        "type {}{}{} {{\n{}}}\n\n",
+                        v.type_name,
+                        implements(node, &iface),
+                        fed_directives,
+                        body
+                    ));
                 }
             }
             if let Some(fallback) = poly.fallback_type_name() {
-                sdl.push_str(&format!("\"\"\"A `{}` that is none of its more specific types.\"\"\"\n", type_name));
-                sdl.push_str(&format!("type {}{}{} {{\n{}}}\n\n", fallback, implements(node, &iface), fed_directives, body));
+                sdl.push_str(&format!(
+                    "\"\"\"A `{}` that is none of its more specific types.\"\"\"\n",
+                    type_name
+                ));
+                sdl.push_str(&format!(
+                    "type {}{}{} {{\n{}}}\n\n",
+                    fallback,
+                    implements(node, &iface),
+                    fed_directives,
+                    body
+                ));
             }
             return sdl;
         }
@@ -371,12 +463,21 @@ impl SchemaBuilder {
         let (fields, interfaces): (Vec<SdlField>, Vec<String>) = if parents.is_empty() {
             (Self::table_object_fields(catalog, table), Vec::new())
         } else {
-            let interfaces = parents.iter().map(|(c, _)| catalog.type_name_of(&c.schema, &c.parent_table)).collect();
+            let interfaces = parents
+                .iter()
+                .map(|(c, _)| catalog.type_name_of(&c.schema, &c.parent_table))
+                .collect();
             (Self::cti_child_fields(catalog, table), interfaces)
         };
         let node = has_id(&fields);
         sdl.push_str(&doc);
-        sdl.push_str(&format!("type {}{}{} {{\n{}}}\n\n", type_name, implements(node, &interfaces), fed_directives, SdlField::render(&fields)));
+        sdl.push_str(&format!(
+            "type {}{}{} {{\n{}}}\n\n",
+            type_name,
+            implements(node, &interfaces),
+            fed_directives,
+            SdlField::render(&fields)
+        ));
         sdl
     }
 
@@ -440,7 +541,9 @@ impl SchemaBuilder {
             PgType::Ltree => "LTreeFilter",
             PgType::TsVector => "FullTextFilter",
             PgType::Geometry | PgType::Geography => "GeoJSONFilter",
-            PgType::Multirange(range) => return Some(format!("{}MultirangeFilter", range.range_element()?.1)),
+            PgType::Multirange(range) => {
+                return Some(format!("{}MultirangeFilter", range.range_element()?.1))
+            }
             PgType::Bytea | PgType::Vector => return None,
             // Arrays of types with a native cast compare natively; others cannot be filtered
             PgType::Array(elem) if col.pg_type.sql_cast().is_some() && !elem.is_array() => {
@@ -487,27 +590,37 @@ impl SchemaBuilder {
     /// `asOf` argument of fields reading rows of a table with a temporal key.
     fn as_of_arg(table: &TableMetadata) -> Option<String> {
         let scalar = table.as_of_scalar()?;
-        let period = table.get_column(&table.period_key()?.period)?.field_name.clone();
+        let period = table
+            .get_column(&table.period_key()?.period)?
+            .field_name
+            .clone();
         Some(format!("\"\"\"Only the versions valid at this point: whose `{period}` contains it.\"\"\" asOf: {scalar}"))
     }
 
     /// Arguments of a connection field over rows of `table`.
     pub fn format_connection_args(table: &TableMetadata) -> String {
         let type_name = &table.type_name;
-        let mut args = "first: Int, after: String, last: Int, before: String, offset: Int".to_string();
+        let mut args =
+            "first: Int, after: String, last: Int, before: String, offset: Int".to_string();
         if let Some(as_of) = Self::as_of_arg(table) {
             args.push_str(&format!(", {as_of}"));
         }
         if Self::has_condition(table) {
             args.push_str(&format!(", condition: {type_name}Condition"));
         }
-        args.push_str(&format!(", filter: {type_name}Filter, orderBy: [{type_name}OrderBy!]"));
+        args.push_str(&format!(
+            ", filter: {type_name}Filter, orderBy: [{type_name}OrderBy!]"
+        ));
         args
     }
 
     /// Arguments of search root field `method` over rows of `table`: the method's own, then
     /// `first` and the conditions and filter the matches must pass.
-    fn search_args(catalog: &DatabaseCatalog, table: &TableMetadata, method: SearchMethod) -> String {
+    fn search_args(
+        catalog: &DatabaseCatalog,
+        table: &TableMetadata,
+        method: SearchMethod,
+    ) -> String {
         let type_name = &table.type_name;
         let limits = catalog.search_limits;
         let mut args = vec![match method {
@@ -627,18 +740,31 @@ impl SchemaBuilder {
     }
 
     /// `enum <name>` of the columns searchable through `indexes`.
-    fn search_field_enum(catalog: &DatabaseCatalog, name: &str, indexes: &[&SearchIndexMetadata]) -> String {
-        let values: BTreeSet<String> = indexes.iter().map(|i| catalog.search_field_value(i)).collect();
+    fn search_field_enum(
+        catalog: &DatabaseCatalog,
+        name: &str,
+        indexes: &[&SearchIndexMetadata],
+    ) -> String {
+        let values: BTreeSet<String> = indexes
+            .iter()
+            .map(|i| catalog.search_field_value(i))
+            .collect();
         let values: String = values.iter().map(|v| format!("  {v}\n")).collect();
         format!("enum {name} {{\n{values}}}\n\n")
     }
 
     /// Arguments addressing one row by key: `(id: ID!)` for a single-column key (a Relay ID
     /// or the raw key), one argument per key column otherwise.
-    fn key_args(catalog: &DatabaseCatalog, table: &TableMetadata, relay_id: bool) -> Option<String> {
+    fn key_args(
+        catalog: &DatabaseCatalog,
+        table: &TableMetadata,
+        relay_id: bool,
+    ) -> Option<String> {
         let key = table.key_columns()?;
         // A row of a table with a temporal key is looked up by its entity and a point in time
-        if let (false, Some(period), Some(as_of)) = (relay_id, table.period_key(), Self::as_of_arg(table)) {
+        if let (false, Some(period), Some(as_of)) =
+            (relay_id, table.period_key(), Self::as_of_arg(table))
+        {
             if table.primary_key.contains(&period.period) {
                 let mut args: Vec<String> = key
                     .iter()
@@ -652,7 +778,12 @@ impl SchemaBuilder {
         if relay_id && table.implements_node() {
             return Some("id: ID!".to_string());
         }
-        Some(key.iter().map(|c| format!("{}: {}!", c.field_name, catalog.column_type(c, true))).collect::<Vec<_>>().join(", "))
+        Some(
+            key.iter()
+                .map(|c| format!("{}: {}!", c.field_name, catalog.column_type(c, true)))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
     }
 
     /// Generate GraphQL SDL for all tables in the catalog including Relay Connections.
@@ -704,7 +835,10 @@ impl SchemaBuilder {
             sdl.push_str("directive @shareable repeatable on OBJECT | FIELD_DEFINITION\n\n");
             sdl.push_str("type _Service {\n  sdl: String!\n}\n\n");
             if !entity_type_names.is_empty() {
-                sdl.push_str(&format!("union _Entity = {}\n\n", entity_type_names.join(" | ")));
+                sdl.push_str(&format!(
+                    "union _Entity = {}\n\n",
+                    entity_type_names.join(" | ")
+                ));
             }
         }
 
@@ -778,7 +912,12 @@ impl SchemaBuilder {
             sdl.push_str("}\n\n");
         }
 
-        if catalog.tables.iter().flat_map(|t| t.visible_columns()).any(|c| c.pg_type == PgType::Ltree) {
+        if catalog
+            .tables
+            .iter()
+            .flat_map(|t| t.visible_columns())
+            .any(|c| c.pg_type == PgType::Ltree)
+        {
             sdl.push_str(concat!(
                 "\"\"\"Conditions on an `ltree` label path, e.g. `top.science.astronomy`.\"\"\"\n",
                 "input LTreeFilter {\n  isNull: Boolean\n  equalTo: String\n  notEqualTo: String\n  in: [String!]\n  notIn: [String!]\n",
@@ -799,14 +938,20 @@ impl SchemaBuilder {
         sdl.push_str("  containedBy: JSON\n");
         sdl.push_str("  \"\"\"A JSON path predicate holds, e.g. `$.age > 21` (`@@`).\"\"\"\n  matchesPath: String\n");
         sdl.push_str("  \"\"\"A JSON path selects some item, e.g. `$.tags[*] ? (@ == \\\"urgent\\\")` (`@?`).\"\"\"\n  existsPath: String\n");
-        sdl.push_str("  \"\"\"Has this top-level key (or array string element).\"\"\"\n  hasKey: String\n");
+        sdl.push_str(
+            "  \"\"\"Has this top-level key (or array string element).\"\"\"\n  hasKey: String\n",
+        );
         sdl.push_str("  hasAnyKeys: [String!]\n");
         sdl.push_str("  hasAllKeys: [String!]\n");
         sdl.push_str("}\n\n");
 
         // Filters of types with operators of their own, when columns have them
-        let used: BTreeSet<String> =
-            catalog.tables.iter().flat_map(|t| t.visible_columns()).filter_map(|c| Self::column_filter_type(catalog, c)).collect();
+        let used: BTreeSet<String> = catalog
+            .tables
+            .iter()
+            .flat_map(|t| t.visible_columns())
+            .filter_map(|c| Self::column_filter_type(catalog, c))
+            .collect();
         if used.contains("FullTextFilter") {
             sdl.push_str(concat!(
                 "\"\"\"Conditions on a full-text document (`tsvector`).\"\"\"\ninput FullTextFilter {\n  isNull: Boolean\n",
@@ -842,16 +987,24 @@ impl SchemaBuilder {
             .tables
             .iter()
             .flat_map(|t| t.visible_columns())
-            .filter_map(|c| Self::column_filter_type(catalog, c).filter(|f| f.ends_with("ListFilter")))
+            .filter_map(|c| {
+                Self::column_filter_type(catalog, c).filter(|f| f.ends_with("ListFilter"))
+            })
             .collect();
         for filter in &list_filters {
             let ty = filter.trim_end_matches("ListFilter");
             sdl.push_str(&format!("input {filter} {{\n"));
             sdl.push_str("  isNull: Boolean\n");
             sdl.push_str(&format!("  equalTo: [{ty}]\n  notEqualTo: [{ty}]\n"));
-            sdl.push_str(&format!("  \"\"\"Contains all of these elements.\"\"\"\n  contains: [{ty}]\n"));
-            sdl.push_str(&format!("  \"\"\"Every element is one of these.\"\"\"\n  containedBy: [{ty}]\n"));
-            sdl.push_str(&format!("  \"\"\"Shares an element with these.\"\"\"\n  overlaps: [{ty}]\n"));
+            sdl.push_str(&format!(
+                "  \"\"\"Contains all of these elements.\"\"\"\n  contains: [{ty}]\n"
+            ));
+            sdl.push_str(&format!(
+                "  \"\"\"Every element is one of these.\"\"\"\n  containedBy: [{ty}]\n"
+            ));
+            sdl.push_str(&format!(
+                "  \"\"\"Shares an element with these.\"\"\"\n  overlaps: [{ty}]\n"
+            ));
             sdl.push_str("}\n\n");
         }
 
@@ -868,7 +1021,10 @@ impl SchemaBuilder {
             sdl.push_str(&format!("enum {} {{\n", e.type_name));
             for v in &e.values {
                 if v.label != v.name {
-                    sdl.push_str(&format!("  \"\"\"`{}`\"\"\"\n", v.label.replace('"', "'").replace('\\', "")));
+                    sdl.push_str(&format!(
+                        "  \"\"\"`{}`\"\"\"\n",
+                        v.label.replace('"', "'").replace('\\', "")
+                    ));
                 }
                 sdl.push_str(&format!("  {}\n", v.name));
             }
@@ -885,7 +1041,11 @@ impl SchemaBuilder {
         for c in &catalog.composites {
             for input in [false, true] {
                 sdl.push_str(&Self::format_docstring(c.description.as_deref(), ""));
-                let (keyword, name) = if input { ("input", c.input_type_name()) } else { ("type", c.type_name.clone()) };
+                let (keyword, name) = if input {
+                    ("input", c.input_type_name())
+                } else {
+                    ("type", c.type_name.clone())
+                };
                 sdl.push_str(&format!("{keyword} {name} {{\n"));
                 for a in &c.attributes {
                     sdl.push_str(&Self::format_docstring(a.description.as_deref(), "  "));
@@ -914,9 +1074,16 @@ impl SchemaBuilder {
         // 1b. Generate Exclusive Arc GraphQL Unions (polymorphic targets contribute their
         // concrete types, since unions cannot contain interfaces)
         for arc in &catalog.exclusive_arcs {
-            let schema = catalog.find_table_any(&arc.table_name).map(|t| t.schema.as_str()).unwrap_or("public");
+            let schema = catalog
+                .find_table_any(&arc.table_name)
+                .map(|t| t.schema.as_str())
+                .unwrap_or("public");
             let member_types = catalog.arc_member_types(arc, schema);
-            sdl.push_str(&format!("union {} = {}\n\n", arc.union_name, member_types.join(" | ")));
+            sdl.push_str(&format!(
+                "union {} = {}\n\n",
+                arc.union_name,
+                member_types.join(" | ")
+            ));
         }
 
         // 1c. Row types of functions returning columns of their own
@@ -924,7 +1091,11 @@ impl SchemaBuilder {
             sdl.push_str(&Self::format_docstring(func.description.as_deref(), ""));
             sdl.push_str(&format!("type {} {{\n", func.row_type_name()));
             for col in &func.return_columns {
-                let ty = catalog.graphql_type(&col.pg_type, pg_type_enum_key(&col.pg_type).as_deref(), false);
+                let ty = catalog.graphql_type(
+                    &col.pg_type,
+                    pg_type_enum_key(&col.pg_type).as_deref(),
+                    false,
+                );
                 sdl.push_str(&format!("  {}: {}\n", to_camel_case(&col.name), ty));
             }
             sdl.push_str("}\n\n");
@@ -943,7 +1114,11 @@ impl SchemaBuilder {
             if Self::has_condition(table) {
                 connection_types_sdl.push_str(&format!("input {}Condition {{\n", type_name));
                 for col in Self::condition_columns(table) {
-                    connection_types_sdl.push_str(&format!("  {}: {}\n", col.field_name, catalog.column_type(col, true)));
+                    connection_types_sdl.push_str(&format!(
+                        "  {}: {}\n",
+                        col.field_name,
+                        catalog.column_type(col, true)
+                    ));
                 }
                 connection_types_sdl.push_str("}\n\n");
             }
@@ -954,11 +1129,13 @@ impl SchemaBuilder {
             connection_types_sdl.push_str(&format!("  and: [{}!]\n", filter_type_name));
             connection_types_sdl.push_str(&format!("  or: [{}!]\n", filter_type_name));
             connection_types_sdl.push_str(&format!("  not: {}\n", filter_type_name));
-            let mut filter_fields: HashSet<String> = ["and", "or", "not"].iter().map(|s| s.to_string()).collect();
+            let mut filter_fields: HashSet<String> =
+                ["and", "or", "not"].iter().map(|s| s.to_string()).collect();
             for col in &columns {
                 if let Some(f_type) = Self::column_filter_type(catalog, col) {
                     if filter_fields.insert(col.field_name.clone()) {
-                        connection_types_sdl.push_str(&format!("  {}: {}\n", col.field_name, f_type));
+                        connection_types_sdl
+                            .push_str(&format!("  {}: {}\n", col.field_name, f_type));
                     }
                 }
             }
@@ -968,10 +1145,16 @@ impl SchemaBuilder {
                 if let FieldKind::Relation(rel) = &field.kind {
                     if filter_fields.insert(field.name.clone()) {
                         let target = catalog.type_name_of(&rel.target_schema, &rel.target_table);
-                        let suffix = if rel.is_many { "ToManyFilter" } else { "Filter" };
-                        connection_types_sdl.push_str(&format!("  {}: {target}{suffix}\n", field.name));
+                        let suffix = if rel.is_many {
+                            "ToManyFilter"
+                        } else {
+                            "Filter"
+                        };
+                        connection_types_sdl
+                            .push_str(&format!("  {}: {target}{suffix}\n", field.name));
                         if rel.is_many {
-                            to_many_filters.insert((rel.target_schema.clone(), rel.target_table.clone()));
+                            to_many_filters
+                                .insert((rel.target_schema.clone(), rel.target_table.clone()));
                         }
                     }
                 }
@@ -989,15 +1172,24 @@ impl SchemaBuilder {
                     OrderTarget::Column(_) => String::new(),
                     OrderTarget::Related { rel, column } => {
                         let target = catalog.find_table(&rel.target_schema, &rel.target_table);
-                        let field = target.and_then(|t| t.get_column(column)).map(|c| c.field_name.clone()).unwrap_or_default();
+                        let field = target
+                            .and_then(|t| t.get_column(column))
+                            .map(|c| c.field_name.clone())
+                            .unwrap_or_default();
                         let ty = target.map(|t| t.type_name.clone()).unwrap_or_default();
                         format!("  \"\"\"By the `{field}` of the related `{ty}` (rows without one last ascending).\"\"\"\n")
                     }
                     OrderTarget::Count(rel) => {
-                        format!("  \"\"\"By the number of related `{}` rows.\"\"\"\n", catalog.type_name_of(&rel.target_schema, &rel.target_table))
+                        format!(
+                            "  \"\"\"By the number of related `{}` rows.\"\"\"\n",
+                            catalog.type_name_of(&rel.target_schema, &rel.target_table)
+                        )
                     }
                     OrderTarget::Function(i) => {
-                        format!("  \"\"\"By the value of the computed field `{}`.\"\"\"\n", catalog.functions[*i].mounted_field_name)
+                        format!(
+                            "  \"\"\"By the value of the computed field `{}`.\"\"\"\n",
+                            catalog.functions[*i].mounted_field_name
+                        )
                     }
                 };
                 connection_types_sdl.push_str(&format!("{doc}  {name}_ASC\n{doc}  {name}_DESC\n"));
@@ -1005,7 +1197,10 @@ impl SchemaBuilder {
             connection_types_sdl.push_str("}\n\n");
 
             // 2b. Generate Aggregates Types for this table
-            let orderable_cols: Vec<_> = columns.iter().filter(|c| c.pg_type.is_orderable()).collect();
+            let orderable_cols: Vec<_> = columns
+                .iter()
+                .filter(|c| c.pg_type.is_orderable())
+                .collect();
             let numeric_cols: Vec<_> = columns.iter().filter(|c| c.pg_type.is_numeric()).collect();
             let has_aggregates = !orderable_cols.is_empty();
 
@@ -1013,27 +1208,35 @@ impl SchemaBuilder {
                 for kind in ["Min", "Max"] {
                     connection_types_sdl.push_str(&format!("type {type_name}{kind}Aggregate {{\n"));
                     for col in &orderable_cols {
-                        connection_types_sdl.push_str(&format!("  {}: {}\n", col.field_name, catalog.column_type(col, false)));
+                        connection_types_sdl.push_str(&format!(
+                            "  {}: {}\n",
+                            col.field_name,
+                            catalog.column_type(col, false)
+                        ));
                     }
                     connection_types_sdl.push_str("}\n\n");
                 }
                 if !numeric_cols.is_empty() {
                     for kind in ["Sum", "Avg"] {
-                        connection_types_sdl.push_str(&format!("type {type_name}{kind}Aggregate {{\n"));
+                        connection_types_sdl
+                            .push_str(&format!("type {type_name}{kind}Aggregate {{\n"));
                         for col in &numeric_cols {
-                            connection_types_sdl.push_str(&format!("  {}: Float\n", col.field_name));
+                            connection_types_sdl
+                                .push_str(&format!("  {}: Float\n", col.field_name));
                         }
                         connection_types_sdl.push_str("}\n\n");
                     }
                 }
 
-                connection_types_sdl.push_str(&format!("type {type_name}DistinctCountAggregate {{\n"));
+                connection_types_sdl
+                    .push_str(&format!("type {type_name}DistinctCountAggregate {{\n"));
                 for col in &orderable_cols {
                     connection_types_sdl.push_str(&format!("  {}: Int\n", col.field_name));
                 }
                 connection_types_sdl.push_str("}\n\n");
                 if !numeric_cols.is_empty() {
-                    connection_types_sdl.push_str(&format!("type {type_name}StatisticAggregate {{\n"));
+                    connection_types_sdl
+                        .push_str(&format!("type {type_name}StatisticAggregate {{\n"));
                     for col in &numeric_cols {
                         connection_types_sdl.push_str(&format!("  {}: Float\n", col.field_name));
                     }
@@ -1041,44 +1244,84 @@ impl SchemaBuilder {
                 }
 
                 connection_types_sdl.push_str(&format!("type {type_name}Aggregates {{\n"));
-                connection_types_sdl.push_str(&Self::aggregate_fields_sdl(type_name, !numeric_cols.is_empty()));
+                connection_types_sdl.push_str(&Self::aggregate_fields_sdl(
+                    type_name,
+                    !numeric_cols.is_empty(),
+                ));
                 connection_types_sdl.push_str("}\n\n");
-                connection_types_sdl.push_str(&Self::grouped_aggregates_sdl(table, !numeric_cols.is_empty()));
+                connection_types_sdl.push_str(&Self::grouped_aggregates_sdl(
+                    table,
+                    !numeric_cols.is_empty(),
+                ));
             }
 
             // 2c. Search field enums and result types, from the detected indexes
-            let has_fuzzy = !catalog.fuzzy_indexes_for_table(&table.schema, &table.name).is_empty();
-            let has_vector = !catalog.vector_indexes_for_table(&table.schema, &table.name).is_empty();
-            let has_bm25 = !catalog.bm25_indexes_for_table(&table.schema, &table.name).is_empty();
+            let has_fuzzy = !catalog
+                .fuzzy_indexes_for_table(&table.schema, &table.name)
+                .is_empty();
+            let has_vector = !catalog
+                .vector_indexes_for_table(&table.schema, &table.name)
+                .is_empty();
+            let has_bm25 = !catalog
+                .bm25_indexes_for_table(&table.schema, &table.name)
+                .is_empty();
 
             if has_fuzzy {
                 let fuzzy_field_enum = format!("{}FuzzyField", type_name);
                 let values = catalog.fuzzy_indexes_for_table(&table.schema, &table.name);
-                connection_types_sdl.push_str(&Self::search_field_enum(catalog, &fuzzy_field_enum, &values));
+                connection_types_sdl.push_str(&Self::search_field_enum(
+                    catalog,
+                    &fuzzy_field_enum,
+                    &values,
+                ));
             }
             if has_vector {
                 let vector_field_enum = format!("{}VectorField", type_name);
                 let values = catalog.vector_indexes_for_table(&table.schema, &table.name);
-                connection_types_sdl.push_str(&Self::search_field_enum(catalog, &vector_field_enum, &values));
+                connection_types_sdl.push_str(&Self::search_field_enum(
+                    catalog,
+                    &vector_field_enum,
+                    &values,
+                ));
             }
             if has_bm25 {
                 let bm25_field_enum = format!("{}Bm25Field", type_name);
                 let values = catalog.bm25_indexes_for_table(&table.schema, &table.name);
-                connection_types_sdl.push_str(&Self::search_field_enum(catalog, &bm25_field_enum, &values));
+                connection_types_sdl.push_str(&Self::search_field_enum(
+                    catalog,
+                    &bm25_field_enum,
+                    &values,
+                ));
             }
             let full_text = catalog.full_text_indexes_for_table(&table.schema, &table.name);
             if !full_text.is_empty() {
-                connection_types_sdl.push_str(&Self::search_field_enum(catalog, &format!("{type_name}FullTextField"), &full_text));
+                connection_types_sdl.push_str(&Self::search_field_enum(
+                    catalog,
+                    &format!("{type_name}FullTextField"),
+                    &full_text,
+                ));
             }
             let spatial = catalog.spatial_indexes_for_table(&table.schema, &table.name);
             if !spatial.is_empty() {
-                connection_types_sdl.push_str(&Self::search_field_enum(catalog, &format!("{type_name}SpatialField"), &spatial));
+                connection_types_sdl.push_str(&Self::search_field_enum(
+                    catalog,
+                    &format!("{type_name}SpatialField"),
+                    &spatial,
+                ));
             }
 
             let search_fields = catalog.search_fields(table);
             if !search_fields.is_empty() {
                 let mut hit_extra = String::new();
-                if full_text.iter().any(|i| matches!(&i.kind, SearchIndexKind::FullText { source: Some(_), .. })) {
+                if full_text.iter().any(|i| {
+                    matches!(
+                        &i.kind,
+                        SearchIndexKind::FullText {
+                            source: Some(_),
+                            ..
+                        }
+                    )
+                }) {
                     hit_extra.push_str(
                         "  \"\"\"Full-text searches: the fragments of the document's text that match, the query's words marked (null for other searches).\"\"\"\n  \
                          highlight(startSel: String = \"<b>\", stopSel: String = \"</b>\", maxWords: Int, minWords: Int, \
@@ -1151,7 +1394,9 @@ impl SchemaBuilder {
             // 5. Query Root Fields
             let root_doc = |text: String| {
                 table.description.as_ref().map(|desc| {
-                    Self::format_docstring(Some(&format!("{text}\n{desc}")), "  ").trim_end_matches('\n').to_string()
+                    Self::format_docstring(Some(&format!("{text}\n{desc}")), "  ")
+                        .trim_end_matches('\n')
+                        .to_string()
                 })
             };
             let ops = table.operations;
@@ -1160,7 +1405,9 @@ impl SchemaBuilder {
             // A. List field: users: [User!]!
             if ops.list {
                 query_fields.extend(root_doc(format!("Fetch a list of {} records.", type_name)));
-                let args = Self::as_of_arg(table).map(|a| format!("({a})")).unwrap_or_default();
+                let args = Self::as_of_arg(table)
+                    .map(|a| format!("({a})"))
+                    .unwrap_or_default();
                 query_fields.push(format!("  {}{args}: [{}!]!", table.list_field, type_name));
             }
 
@@ -1178,15 +1425,24 @@ impl SchemaBuilder {
             }
             // B2. Single row by each other unique key: userByEmail(email: String!)
             for (name, cols) in catalog.unique_lookup_fields(table) {
-                let args: Vec<String> =
-                    cols.iter().map(|c| format!("{}: {}!", c.field_name, catalog.column_type(c, true))).collect();
-                query_fields.extend(root_doc(format!("Lookup a single {} by a unique key.", type_name)));
+                let args: Vec<String> = cols
+                    .iter()
+                    .map(|c| format!("{}: {}!", c.field_name, catalog.column_type(c, true)))
+                    .collect();
+                query_fields.extend(root_doc(format!(
+                    "Lookup a single {} by a unique key.",
+                    type_name
+                )));
                 query_fields.push(format!("  {name}({}): {type_name}", args.join(", ")));
             }
 
             // C. Root Connection fields with orderBy support
             if ops.connection {
-                let conn_field_args = format!("({}): {}!", Self::format_connection_args(table), connection_type_name);
+                let conn_field_args = format!(
+                    "({}): {}!",
+                    Self::format_connection_args(table),
+                    connection_type_name
+                );
                 query_fields.extend(root_doc(format!(
                     "Relay connection for {} records with filtering, sorting, and pagination.",
                     type_name
@@ -1207,14 +1463,18 @@ impl SchemaBuilder {
                     SearchMethod::FullText => "by full-text relevance",
                     SearchMethod::Nearest => "by distance, nearest",
                 };
-                query_fields.extend(root_doc(format!("The {type_name} records best matching a search {how}, best first.")));
+                query_fields.extend(root_doc(format!(
+                    "The {type_name} records best matching a search {how}, best first."
+                )));
                 let args = Self::search_args(catalog, table, *method);
                 query_fields.push(format!("  {name}({args}): {type_name}SearchResults!"));
             }
             // A deprecated type's root fields are deprecated (docstring lines are skipped)
             if !deprecated.is_empty() {
                 for line in &mut query_fields[first_root..] {
-                    if !line.trim_start().starts_with("\"\"\"") && !line.trim_end().ends_with("\"\"\"") {
+                    if !line.trim_start().starts_with("\"\"\"")
+                        && !line.trim_end().ends_with("\"\"\"")
+                    {
                         line.push_str(&deprecated);
                     }
                 }
@@ -1223,7 +1483,13 @@ impl SchemaBuilder {
 
         // Search across every searchable table
         let global_types = catalog.global_search_types();
-        if let (Some(name), false) = (catalog.tables.first().and_then(|t| catalog.global_search_field(&t.schema)), global_types.is_empty()) {
+        if let (Some(name), false) = (
+            catalog
+                .tables
+                .first()
+                .and_then(|t| catalog.global_search_field(&t.schema)),
+            global_types.is_empty(),
+        ) {
             let limits = catalog.search_limits;
             connection_types_sdl.push_str(&format!(
                 "\"\"\"A row a global search found.\"\"\"\nunion GlobalSearchNode = {}\n\n\
@@ -1266,7 +1532,11 @@ impl SchemaBuilder {
         let mut mutation_types_sdl = String::new();
         let mut taken_mutations: HashSet<String> = HashSet::new();
 
-        if catalog.tables.iter().any(|t| t.has_upsert() && (t.operations.create || t.operations.create_many)) {
+        if catalog
+            .tables
+            .iter()
+            .any(|t| t.has_upsert() && (t.operations.create || t.operations.create_many))
+        {
             mutation_types_sdl.push_str(concat!(
                 "\"\"\"What an insert does when a row conflicts with an existing one on a unique key.\"\"\"\n",
                 "enum ConflictAction {\n",
@@ -1297,21 +1567,59 @@ impl SchemaBuilder {
                     .collect();
                 mutation_types_sdl.push_str(&format!("input Create{type_name}Input {{\n"));
                 for col in &writable {
-                    let required =
-                        !col.is_nullable && col.default_value.is_none() && !col.is_primary_key && !filled.contains(col.name.as_str());
+                    let required = !col.is_nullable
+                        && col.default_value.is_none()
+                        && !col.is_primary_key
+                        && !filled.contains(col.name.as_str());
                     let non_null = if required { "!" } else { "" };
-                    mutation_types_sdl.push_str(&Self::format_docstring(catalog.column_description(table, col).as_deref(), "  "));
-                    mutation_types_sdl.push_str(&format!("  {}: {}{}\n", col.field_name, catalog.column_type(col, true), non_null));
+                    mutation_types_sdl.push_str(&Self::format_docstring(
+                        catalog.column_description(table, col).as_deref(),
+                        "  ",
+                    ));
+                    mutation_types_sdl.push_str(&format!(
+                        "  {}: {}{}\n",
+                        col.field_name,
+                        catalog.column_type(col, true),
+                        non_null
+                    ));
                 }
                 for (name, rel) in &nested {
-                    let Some(target) = catalog.find_table(&rel.target_schema, &rel.target_table) else { continue };
-                    let (suffix, doc) = match (rel.is_many, rel.junction.is_some()) {
-                        (false, _) => ("ToOne", format!("The `{}` this row refers to: an existing one, or a new one.", target.type_name)),
-                        (true, false) => ("ToMany", format!("`{}` rows to create with, or move to, this row.", target.type_name)),
-                        (true, true) => ("ToMany", format!("`{}` rows to link this row to: existing ones, or new ones.", target.type_name)),
+                    let Some(target) = catalog.find_table(&rel.target_schema, &rel.target_table)
+                    else {
+                        continue;
                     };
-                    mutation_types_sdl.push_str(&format!("  \"\"\"{doc}\"\"\"\n  {name}: {}{suffix}Input\n", target.type_name));
-                    Self::mark_relation_input(&mut nested_targets, target, usize::from(rel.is_many));
+                    let (suffix, doc) = match (rel.is_many, rel.junction.is_some()) {
+                        (false, _) => (
+                            "ToOne",
+                            format!(
+                                "The `{}` this row refers to: an existing one, or a new one.",
+                                target.type_name
+                            ),
+                        ),
+                        (true, false) => (
+                            "ToMany",
+                            format!(
+                                "`{}` rows to create with, or move to, this row.",
+                                target.type_name
+                            ),
+                        ),
+                        (true, true) => (
+                            "ToMany",
+                            format!(
+                                "`{}` rows to link this row to: existing ones, or new ones.",
+                                target.type_name
+                            ),
+                        ),
+                    };
+                    mutation_types_sdl.push_str(&format!(
+                        "  \"\"\"{doc}\"\"\"\n  {name}: {}{suffix}Input\n",
+                        target.type_name
+                    ));
+                    Self::mark_relation_input(
+                        &mut nested_targets,
+                        target,
+                        usize::from(rel.is_many),
+                    );
                 }
                 mutation_types_sdl.push_str("}\n\n");
             }
@@ -1327,25 +1635,44 @@ impl SchemaBuilder {
             }
             let has = |pred: &dyn Fn(MutationAction) -> bool| fields.iter().any(|f| pred(f.action));
             let creates = has(&|a| a.is_create()) && !writable.is_empty();
-            let updates = has(&|a| matches!(a, MutationAction::Update | MutationAction::UpdateMany));
+            let updates =
+                has(&|a| matches!(a, MutationAction::Update | MutationAction::UpdateMany));
             let upsert = creates && table.has_upsert();
             if updates {
                 mutation_types_sdl.push_str(&format!("input Update{type_name}Input {{\n"));
                 for col in &writable {
-                    mutation_types_sdl.push_str(&Self::format_docstring(catalog.column_description(table, col).as_deref(), "  "));
-                    mutation_types_sdl.push_str(&format!("  {}: {}\n", col.field_name, catalog.column_type(col, true)));
+                    mutation_types_sdl.push_str(&Self::format_docstring(
+                        catalog.column_description(table, col).as_deref(),
+                        "  ",
+                    ));
+                    mutation_types_sdl.push_str(&format!(
+                        "  {}: {}\n",
+                        col.field_name,
+                        catalog.column_type(col, true)
+                    ));
                 }
                 // Nested writes of single-row updates, which read the row back by key
                 if has(&|a| a == MutationAction::Update) && !table.primary_key.is_empty() {
                     for (name, rel) in &catalog.nested_relations(table) {
-                        let Some(target) = catalog.find_table(&rel.target_schema, &rel.target_table) else { continue };
+                        let Some(target) =
+                            catalog.find_table(&rel.target_schema, &rel.target_table)
+                        else {
+                            continue;
+                        };
                         let (suffix, doc) = if rel.is_many {
                             ("ToManyUpdate", format!("`{}` rows to relate to, or detach from, this row (single-row updates only).", target.type_name))
                         } else {
                             ("ToOneUpdate", format!("The `{}` this row refers to: another existing one, a new one, or none (single-row updates only).", target.type_name))
                         };
-                        mutation_types_sdl.push_str(&format!("  \"\"\"{doc}\"\"\"\n  {name}: {}{suffix}Input\n", target.type_name));
-                        Self::mark_relation_input(&mut nested_targets, target, 2 + usize::from(rel.is_many));
+                        mutation_types_sdl.push_str(&format!(
+                            "  \"\"\"{doc}\"\"\"\n  {name}: {}{suffix}Input\n",
+                            target.type_name
+                        ));
+                        Self::mark_relation_input(
+                            &mut nested_targets,
+                            target,
+                            2 + usize::from(rel.is_many),
+                        );
                     }
                 }
                 mutation_types_sdl.push_str("}\n\n");
@@ -1365,7 +1692,11 @@ impl SchemaBuilder {
                             "  \"\"\"The affected rows.\"\"\"\n  {rows_field}: [{type_name}!]!\n  \"\"\"Number of rows inserted, updated or deleted.\"\"\"\n  affectedCount: Int!\n"
                         )
                     } else {
-                        let non_null = if action == MutationAction::Create { "!" } else { "" };
+                        let non_null = if action == MutationAction::Create {
+                            "!"
+                        } else {
+                            ""
+                        };
                         format!("  {rows_field}: {type_name}{non_null}\n")
                     };
                     if let Some(previous) = catalog.previous_field_name(table, action, upsert) {
@@ -1381,7 +1712,11 @@ impl SchemaBuilder {
                     mutation_types_sdl.push_str(&format!("type {payload_name} {{\n{body}}}\n\n"));
                 }
 
-                let unique_key: Vec<&ColumnMetadata> = field.unique_key.iter().filter_map(|c| table.get_column(c)).collect();
+                let unique_key: Vec<&ColumnMetadata> = field
+                    .unique_key
+                    .iter()
+                    .filter_map(|c| table.get_column(c))
+                    .collect();
                 let key_args = if unique_key.is_empty() {
                     Self::key_args(catalog, table, true)
                 } else {
@@ -1393,13 +1728,21 @@ impl SchemaBuilder {
                             .join(", "),
                     )
                 };
-                let key_names = unique_key.iter().map(|c| format!("`{}`", c.field_name)).collect::<Vec<_>>().join(", ");
+                let key_names = unique_key
+                    .iter()
+                    .map(|c| format!("`{}`", c.field_name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 let expected_version = if table.has_row_version() {
                     ", \"\"\"Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).\"\"\" expectedVersion: String"
                 } else {
                     ""
                 };
-                let on_conflict = if upsert { format!(", onConflict: {type_name}OnConflict") } else { String::new() };
+                let on_conflict = if upsert {
+                    format!(", onConflict: {type_name}OnConflict")
+                } else {
+                    String::new()
+                };
                 let (doc, args) = match action {
                     MutationAction::Create if writable.is_empty() => (String::new(), String::new()),
                     MutationAction::Create => (String::new(), format!("input: Create{type_name}Input!{on_conflict}")),
@@ -1423,10 +1766,20 @@ impl SchemaBuilder {
                         (format!("Delete every `{type_name}` matching `where`."), format!("where: {type_name}Filter!"))
                     }
                 };
-                mutation_fields.push(Self::format_docstring((!doc.is_empty()).then_some(doc.as_str()), "  "));
-                let args = if args.is_empty() { String::new() } else { format!("({args})") };
+                mutation_fields.push(Self::format_docstring(
+                    (!doc.is_empty()).then_some(doc.as_str()),
+                    "  ",
+                ));
+                let args = if args.is_empty() {
+                    String::new()
+                } else {
+                    format!("({args})")
+                };
                 let deprecated = deprecated_directive(table.deprecation.as_deref());
-                mutation_fields.push(format!("  {}{args}: {payload_name}!{deprecated}\n", field.name));
+                mutation_fields.push(format!(
+                    "  {}{args}: {payload_name}!{deprecated}\n",
+                    field.name
+                ));
             }
         }
 
@@ -1474,7 +1827,11 @@ impl SchemaBuilder {
     /// Inputs of relations to `table` in nested creates: `<Type>KeyInput` (identifies an
     /// existing row), `<Type>ToOneInput` and `<Type>ToManyInput`.
     /// Records that relation input `slot` (see `relation_inputs_sdl`) of `target` is used.
-    fn mark_relation_input<'c>(targets: &mut Vec<(&'c TableMetadata, [bool; 4])>, target: &'c TableMetadata, slot: usize) {
+    fn mark_relation_input<'c>(
+        targets: &mut Vec<(&'c TableMetadata, [bool; 4])>,
+        target: &'c TableMetadata,
+        slot: usize,
+    ) {
         match targets.iter_mut().find(|(t, _)| std::ptr::eq(*t, target)) {
             Some((_, used)) => used[slot] = true,
             None => {
@@ -1487,13 +1844,19 @@ impl SchemaBuilder {
 
     /// Relation inputs of `table` that `used` flags: `[<Type>ToOneInput, <Type>ToManyInput,
     /// <Type>ToOneUpdateInput, <Type>ToManyUpdateInput]` (and `<Type>KeyInput`).
-    fn relation_inputs_sdl(catalog: &DatabaseCatalog, table: &TableMetadata, used: [bool; 4]) -> String {
+    fn relation_inputs_sdl(
+        catalog: &DatabaseCatalog,
+        table: &TableMetadata,
+        used: [bool; 4],
+    ) -> String {
         let [to_one, to_many, to_one_update, to_many_update] = used;
         let type_name = &table.type_name;
         let mut sdl = String::new();
         let connect = table.is_connectable();
         let create = table.is_insertable();
-        let updatable = table.operations.update && !table.primary_key.is_empty() && table.writable_columns().next().is_some();
+        let updatable = table.operations.update
+            && !table.primary_key.is_empty()
+            && table.writable_columns().next().is_some();
         let connect_or_create = connect && create;
         if connect_or_create {
             sdl.push_str(&format!(
@@ -1511,7 +1874,13 @@ impl SchemaBuilder {
             let keys: Vec<String> = table
                 .row_keys()
                 .iter()
-                .map(|fields| fields.iter().map(|(f, _)| format!("`{f}`")).collect::<Vec<_>>().join(" and "))
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .map(|(f, _)| format!("`{f}`"))
+                        .collect::<Vec<_>>()
+                        .join(" and ")
+                })
                 .collect();
             sdl.push_str(&format!(
                 "\"\"\"Identifies a `{type_name}` by {}.\"\"\"\ninput {type_name}KeyInput {{\n",
@@ -1520,7 +1889,11 @@ impl SchemaBuilder {
             let mut seen = HashSet::new();
             for (field, col) in table.row_keys().into_iter().flatten() {
                 if seen.insert(field.clone()) {
-                    let ty = if field == "id" && table.implements_node() { "ID".to_string() } else { catalog.column_type(col, true) };
+                    let ty = if field == "id" && table.implements_node() {
+                        "ID".to_string()
+                    } else {
+                        catalog.column_type(col, true)
+                    };
                     sdl.push_str(&format!("  {field}: {ty}\n"));
                 }
             }
@@ -1529,7 +1902,9 @@ impl SchemaBuilder {
         if to_one {
             sdl.push_str(&format!("\"\"\"A `{type_name}` to refer to: set one of `connect` and `create`.\"\"\"\ninput {type_name}ToOneInput {{\n"));
             if connect {
-                sdl.push_str(&format!("  \"\"\"An existing `{type_name}`.\"\"\"\n  connect: {type_name}KeyInput\n"));
+                sdl.push_str(&format!(
+                    "  \"\"\"An existing `{type_name}`.\"\"\"\n  connect: {type_name}KeyInput\n"
+                ));
             }
             if create {
                 sdl.push_str(&format!("  \"\"\"A new `{type_name}`, created first.\"\"\"\n  create: Create{type_name}Input\n"));
@@ -1557,7 +1932,9 @@ impl SchemaBuilder {
                 "\"\"\"The `{type_name}` an updated row refers to: set one of `connect`, `create` and `disconnect`.\"\"\"\ninput {type_name}ToOneUpdateInput {{\n"
             ));
             if connect {
-                sdl.push_str(&format!("  \"\"\"An existing `{type_name}`.\"\"\"\n  connect: {type_name}KeyInput\n"));
+                sdl.push_str(&format!(
+                    "  \"\"\"An existing `{type_name}`.\"\"\"\n  connect: {type_name}KeyInput\n"
+                ));
             }
             if create {
                 sdl.push_str(&format!("  \"\"\"A new `{type_name}`, created first.\"\"\"\n  create: Create{type_name}Input\n"));
@@ -1593,7 +1970,8 @@ impl SchemaBuilder {
             if connect && table.operations.delete {
                 sdl.push_str(&format!("  \"\"\"Related `{type_name}` rows to delete (its own children only).\"\"\"\n  delete: [{type_name}KeyInput!]\n"));
             }
-            let sync = create && updatable && table.operations.delete && catalog.server_version >= 170000;
+            let sync =
+                create && updatable && table.operations.delete && catalog.server_version >= 170000;
             if sync {
                 sdl.push_str(&format!(
                     "  \"\"\"The related `{type_name}` rows, exactly (its own children only, one `MERGE`): rows whose key matches a child update it, \
@@ -1609,7 +1987,12 @@ impl SchemaBuilder {
     /// constraints and column types. Tables that cannot be written get none.
     fn error_code_sdl(catalog: &DatabaseCatalog, table: &TableMetadata) -> String {
         let ops = table.operations;
-        let writable = ops.create || ops.update || ops.delete || ops.create_many || ops.update_many || ops.delete_many;
+        let writable = ops.create
+            || ops.update
+            || ops.delete
+            || ops.create_many
+            || ops.update_many
+            || ops.delete_many;
         let codes = catalog.error_codes(table);
         if !writable || codes.is_empty() {
             return String::new();
@@ -1635,8 +2018,15 @@ impl SchemaBuilder {
         let mut has_primary = false;
         for (key, cols) in table.conflict_keys() {
             has_primary |= key.is_primary;
-            let fields = cols.iter().map(|c| format!("`{}`", c.field_name)).collect::<Vec<_>>().join(", ");
-            sdl.push_str(&format!("  \"\"\"{fields}\"\"\"\n  {}\n", conflict_key_value(key, &cols)));
+            let fields = cols
+                .iter()
+                .map(|c| format!("`{}`", c.field_name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sdl.push_str(&format!(
+                "  \"\"\"{fields}\"\"\"\n  {}\n",
+                conflict_key_value(key, &cols)
+            ));
         }
         sdl.push_str("}\n\n");
 
@@ -1674,14 +2064,24 @@ mod tests {
 
     #[test]
     fn test_format_docstring_ends_with_quote() {
-        let doc = SchemaBuilder::format_docstring(Some("Warning such as \"Pregnancy\", \"Overdose\""), "  ");
-        assert_eq!(doc, "  \"\"\"Warning such as \"Pregnancy\", \"Overdose\" \"\"\"\n");
+        let doc = SchemaBuilder::format_docstring(
+            Some("Warning such as \"Pregnancy\", \"Overdose\""),
+            "  ",
+        );
+        assert_eq!(
+            doc,
+            "  \"\"\"Warning such as \"Pregnancy\", \"Overdose\" \"\"\"\n"
+        );
 
         let sdl = format!(
             "{}type TestQuery {{\n  field: String\n}}\nschema {{\n  query: TestQuery\n}}",
             doc
         );
         let schema_res = apollo_compiler::Schema::parse_and_validate(&sdl, "test.graphql");
-        assert!(schema_res.is_ok(), "Validation failed: {:?}", schema_res.err());
+        assert!(
+            schema_res.is_ok(),
+            "Validation failed: {:?}",
+            schema_res.err()
+        );
     }
 }

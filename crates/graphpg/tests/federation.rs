@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default, clippy::len_zero)] // test setup builds configs field by field
+
 mod common;
 use axum::http::header;
 use axum::http::StatusCode;
@@ -10,7 +12,6 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio_postgres::NoTls;
 use tower::ServiceExt;
-
 
 async fn setup_app(federation_enabled: bool) -> axum::Router {
     common::ensure_forum_fixture().await;
@@ -97,14 +98,32 @@ async fn test_federation_subgraph_sdl_schema_export() {
     );
 
     // 3. Subgraph SDL must NOT contain federation internal types
-    assert!(!subgraph_sdl.contains("scalar _Any"), "Subgraph SDL must not define scalar _Any");
-    assert!(!subgraph_sdl.contains("scalar _FieldSet"), "Subgraph SDL must not define scalar _FieldSet");
-    assert!(!subgraph_sdl.contains("type _Service"), "Subgraph SDL must not define type _Service");
-    assert!(!subgraph_sdl.contains("union _Entity"), "Subgraph SDL must not define union _Entity");
+    assert!(
+        !subgraph_sdl.contains("scalar _Any"),
+        "Subgraph SDL must not define scalar _Any"
+    );
+    assert!(
+        !subgraph_sdl.contains("scalar _FieldSet"),
+        "Subgraph SDL must not define scalar _FieldSet"
+    );
+    assert!(
+        !subgraph_sdl.contains("type _Service"),
+        "Subgraph SDL must not define type _Service"
+    );
+    assert!(
+        !subgraph_sdl.contains("union _Entity"),
+        "Subgraph SDL must not define union _Entity"
+    );
 
     // 4. Query in Subgraph SDL must NOT contain _service or _entities
-    assert!(!subgraph_sdl.contains("_service: _Service!"), "Subgraph Query must not contain _service");
-    assert!(!subgraph_sdl.contains("_entities(representations:"), "Subgraph Query must not contain _entities");
+    assert!(
+        !subgraph_sdl.contains("_service: _Service!"),
+        "Subgraph Query must not contain _service"
+    );
+    assert!(
+        !subgraph_sdl.contains("_entities(representations:"),
+        "Subgraph Query must not contain _entities"
+    );
 }
 
 #[tokio::test]
@@ -145,7 +164,8 @@ async fn test_federation_runtime_schema_directives_and_types() {
     assert!(runtime_sdl.contains("  _entities(representations: [_Any!]!): [_Entity]!\n"));
 
     // Verify it compiles and validates with apollo-compiler
-    let valid_schema = SchemaBuilder::build(&catalog).expect("Runtime schema must validate cleanly");
+    let valid_schema =
+        SchemaBuilder::build(&catalog).expect("Runtime schema must validate cleanly");
     let schema_ref = valid_schema.as_ref();
     assert!(schema_ref.get_union("_Entity").is_some());
     assert!(schema_ref.get_object("_Service").is_some());
@@ -165,7 +185,9 @@ async fn test_query_service_sdl_via_http() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&request_body).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&request_body).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
@@ -175,8 +197,14 @@ async fn test_query_service_sdl_via_http() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert!(res.get("errors").is_none(), "Errors: {:?}", res.get("errors"));
-    let sdl = res["data"]["_service"]["sdl"].as_str().expect("sdl must be a string");
+    assert!(
+        res.get("errors").is_none(),
+        "Errors: {:?}",
+        res.get("errors")
+    );
+    let sdl = res["data"]["_service"]["sdl"]
+        .as_str()
+        .expect("sdl must be a string");
     assert!(sdl.contains("https://specs.apollo.dev/federation/v2.3"));
     assert!(sdl.contains("@key(fields: \"id\")"));
 }
@@ -197,7 +225,9 @@ async fn test_query_entities_single_and_batch_lookups() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&seed_request).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&seed_request).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
@@ -205,10 +235,22 @@ async fn test_query_entities_single_and_batch_lookups() {
 
     let body = seed_res.into_body().collect().await.unwrap().to_bytes();
     let seed_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let user_id = seed_json["data"]["users"][0]["id"].as_str().unwrap().to_string();
-    let expected_username = seed_json["data"]["users"][0]["username"].as_str().unwrap().to_string();
-    let forum_id = seed_json["data"]["forums"][0]["id"].as_str().unwrap().to_string();
-    let expected_forum_name = seed_json["data"]["forums"][0]["name"].as_str().unwrap().to_string();
+    let user_id = seed_json["data"]["users"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let expected_username = seed_json["data"]["users"][0]["username"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let forum_id = seed_json["data"]["forums"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let expected_forum_name = seed_json["data"]["forums"][0]["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // 2. Query _entities with representations as variables (Apollo Router pattern)
     let entities_query = r#"
@@ -244,7 +286,9 @@ async fn test_query_entities_single_and_batch_lookups() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&request_body).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&request_body).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
@@ -254,8 +298,14 @@ async fn test_query_entities_single_and_batch_lookups() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert!(res.get("errors").is_none(), "Errors: {:?}", res.get("errors"));
-    let entities = res["data"]["_entities"].as_array().expect("_entities must be an array");
+    assert!(
+        res.get("errors").is_none(),
+        "Errors: {:?}",
+        res.get("errors")
+    );
+    let entities = res["data"]["_entities"]
+        .as_array()
+        .expect("_entities must be an array");
     assert_eq!(entities.len(), 3);
 
     // Verify 1st entity (User)
@@ -286,21 +336,35 @@ async fn test_query_entities_batch_beyond_function_argument_limit() {
             .unwrap()
     };
 
-    let seed = app.clone().oneshot(post(json!({ "query": "query { users { id } }" }))).await.unwrap();
-    let seed: serde_json::Value = serde_json::from_slice(&seed.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let seed = app
+        .clone()
+        .oneshot(post(json!({ "query": "query { users { id } }" })))
+        .await
+        .unwrap();
+    let seed: serde_json::Value =
+        serde_json::from_slice(&seed.into_body().collect().await.unwrap().to_bytes()).unwrap();
     let user_id = seed["data"]["users"][0]["id"].as_str().unwrap().to_string();
 
     // Routers batch more representations than PostgreSQL's 100 function arguments
-    let reps: Vec<serde_json::Value> = (0..150).map(|_| json!({ "__typename": "User", "id": user_id })).collect();
+    let reps: Vec<serde_json::Value> = (0..150)
+        .map(|_| json!({ "__typename": "User", "id": user_id }))
+        .collect();
     let request = json!({
         "query": "query($reps: [_Any!]!) { _entities(representations: $reps) { ... on User { id } } }",
         "variables": { "reps": reps }
     });
     let response = app.oneshot(post(request)).await.unwrap();
-    let res: serde_json::Value = serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let res: serde_json::Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
 
-    assert!(res.get("errors").is_none(), "Errors: {:?}", res.get("errors"));
-    let entities = res["data"]["_entities"].as_array().expect("_entities must be an array");
+    assert!(
+        res.get("errors").is_none(),
+        "Errors: {:?}",
+        res.get("errors")
+    );
+    let entities = res["data"]["_entities"]
+        .as_array()
+        .expect("_entities must be an array");
     assert_eq!(entities.len(), 150);
     assert!(entities.iter().all(|e| e["id"] == user_id));
 }
@@ -318,14 +382,19 @@ async fn test_query_entities_missing_or_invalid_id_returns_null() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&seed_request).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&seed_request).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
     let body = seed_res.into_body().collect().await.unwrap().to_bytes();
     let seed_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let valid_user_id = seed_json["data"]["users"][0]["id"].as_str().unwrap().to_string();
+    let valid_user_id = seed_json["data"]["users"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let entities_query = r#"
         query LookupEntities($reps: [_Any!]!) {
@@ -357,7 +426,9 @@ async fn test_query_entities_missing_or_invalid_id_returns_null() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&request_body).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&request_body).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
@@ -367,8 +438,14 @@ async fn test_query_entities_missing_or_invalid_id_returns_null() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert!(res.get("errors").is_none(), "Errors: {:?}", res.get("errors"));
-    let entities = res["data"]["_entities"].as_array().expect("_entities array");
+    assert!(
+        res.get("errors").is_none(),
+        "Errors: {:?}",
+        res.get("errors")
+    );
+    let entities = res["data"]["_entities"]
+        .as_array()
+        .expect("_entities array");
     assert_eq!(entities.len(), 4);
 
     // 1st is valid
@@ -376,7 +453,10 @@ async fn test_query_entities_missing_or_invalid_id_returns_null() {
     assert_eq!(entities[0]["id"], valid_user_id);
 
     // 2nd, 3rd, 4th must all be null according to Apollo Federation spec
-    assert!(entities[1].is_null(), "Non-existent entity should return null");
+    assert!(
+        entities[1].is_null(),
+        "Non-existent entity should return null"
+    );
     assert!(entities[2].is_null(), "Unknown type should return null");
     assert!(entities[3].is_null(), "Malformed ID should return null");
 }
@@ -394,17 +474,26 @@ async fn test_query_entities_relay_global_id_support() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&seed_request).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&seed_request).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
     let body = seed_res.into_body().collect().await.unwrap().to_bytes();
     let seed_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let relay_global_id = seed_json["data"]["users"][0]["id"].as_str().unwrap().to_string();
-    let expected_username = seed_json["data"]["users"][0]["username"].as_str().unwrap().to_string();
+    let relay_global_id = seed_json["data"]["users"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let expected_username = seed_json["data"]["users"][0]["username"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
-    let (_, raw_uuid) = SchemaBuilder::decode_global_id(&relay_global_id).expect("valid Relay Global ID");
+    let (_, raw_uuid) =
+        SchemaBuilder::decode_global_id(&relay_global_id).expect("valid Relay Global ID");
 
     let entities_query = r#"
         query LookupEntities($reps: [_Any!]!) {
@@ -434,7 +523,9 @@ async fn test_query_entities_relay_global_id_support() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&request_body).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&request_body).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
@@ -444,8 +535,14 @@ async fn test_query_entities_relay_global_id_support() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert!(res.get("errors").is_none(), "Errors: {:?}", res.get("errors"));
-    let entities = res["data"]["_entities"].as_array().expect("_entities array");
+    assert!(
+        res.get("errors").is_none(),
+        "Errors: {:?}",
+        res.get("errors")
+    );
+    let entities = res["data"]["_entities"]
+        .as_array()
+        .expect("_entities array");
     assert_eq!(entities.len(), 2);
     assert_eq!(entities[0]["__typename"], "User");
     assert_eq!(entities[0]["username"], expected_username);
@@ -466,14 +563,19 @@ async fn test_query_entities_nested_selections() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&seed_request).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&seed_request).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
     let body = seed_res.into_body().collect().await.unwrap().to_bytes();
     let seed_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let user_id = seed_json["data"]["users"][0]["id"].as_str().unwrap().to_string();
+    let user_id = seed_json["data"]["users"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let entities_query = r#"
         query LookupUserWithMessages($reps: [_Any!]!) {
@@ -506,7 +608,9 @@ async fn test_query_entities_nested_selections() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&request_body).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&request_body).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
@@ -516,11 +620,20 @@ async fn test_query_entities_nested_selections() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert!(res.get("errors").is_none(), "Errors: {:?}", res.get("errors"));
-    let entities = res["data"]["_entities"].as_array().expect("_entities array");
+    assert!(
+        res.get("errors").is_none(),
+        "Errors: {:?}",
+        res.get("errors")
+    );
+    let entities = res["data"]["_entities"]
+        .as_array()
+        .expect("_entities array");
     assert_eq!(entities.len(), 1);
     assert_eq!(entities[0]["__typename"], "User");
-    assert!(entities[0]["messages"].is_array(), "messages should be an array");
+    assert!(
+        entities[0]["messages"].is_array(),
+        "messages should be an array"
+    );
 }
 
 #[tokio::test]
@@ -538,7 +651,9 @@ async fn test_non_federated_mode_remains_unpolluted() {
                 .method("POST")
                 .uri("/graphql")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&request_body).unwrap()))
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&request_body).unwrap(),
+                ))
                 .unwrap(),
         )
         .await

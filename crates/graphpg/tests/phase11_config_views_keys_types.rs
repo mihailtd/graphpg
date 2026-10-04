@@ -178,7 +178,9 @@ types:
 "#;
 
 async fn connect() -> tokio_postgres::Client {
-    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls).await.expect("Failed to connect to PostgreSQL");
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .expect("Failed to connect to PostgreSQL");
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             eprintln!("connection error: {}", e);
@@ -190,9 +192,15 @@ async fn connect() -> tokio_postgres::Client {
 /// Creates the fixture schema once (serialised by an advisory lock, since tests run
 /// concurrently), recreating it when the fixture changed.
 async fn ensure_fixture(client: &tokio_postgres::Client) {
-    client.execute("SELECT pg_advisory_lock(424243)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_lock(424243)", &[])
+        .await
+        .unwrap();
     let version: Option<String> = client
-        .query_opt("SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1", &[&SCHEMA])
+        .query_opt(
+            "SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1",
+            &[&SCHEMA],
+        )
         .await
         .unwrap()
         .and_then(|row| row.get(0));
@@ -204,7 +212,10 @@ async fn ensure_fixture(client: &tokio_postgres::Client) {
             .await
             .expect("fixture setup failed");
     }
-    client.execute("SELECT pg_advisory_unlock(424243)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_unlock(424243)", &[])
+        .await
+        .unwrap();
 }
 
 struct Env {
@@ -223,8 +234,14 @@ async fn setup_with(config: &str) -> Env {
         .await
         .expect("inspection failed");
     let sdl = SchemaBuilder::generate_sdl(&catalog);
-    let schema = SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
-    Env { client, schema, catalog, sdl }
+    let schema =
+        SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
+    Env {
+        client,
+        schema,
+        catalog,
+        sdl,
+    }
 }
 
 async fn setup() -> Env {
@@ -233,15 +250,25 @@ async fn setup() -> Env {
 
 impl Env {
     async fn try_run(&self, query: &str) -> Result<serde_json::Value, String> {
-        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&self.schema, query, "q.graphql")
-            .map_err(|e| format!("validation: {e}"))?;
-        let plan = QueryPlanner::new(&self.catalog, SCHEMA).plan(&doc).map_err(|e| format!("planning: {e}"))?;
-        let result = ExecutionEngine::execute(&self.client, &plan).await.map_err(|e| format!("execution: {e}"))?;
+        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(
+            &self.schema,
+            query,
+            "q.graphql",
+        )
+        .map_err(|e| format!("validation: {e}"))?;
+        let plan = QueryPlanner::new(&self.catalog, SCHEMA)
+            .plan(&doc)
+            .map_err(|e| format!("planning: {e}"))?;
+        let result = ExecutionEngine::execute(&self.client, &plan)
+            .await
+            .map_err(|e| format!("execution: {e}"))?;
         Ok(result["data"].clone())
     }
 
     async fn run(&self, query: &str) -> serde_json::Value {
-        self.try_run(query).await.unwrap_or_else(|e| panic!("{e}\nquery: {query}"))
+        self.try_run(query)
+            .await
+            .unwrap_or_else(|e| panic!("{e}\nquery: {query}"))
     }
 
     /// Runs `query` in a transaction that is rolled back afterwards.
@@ -258,7 +285,10 @@ impl Env {
             .sdl
             .find(&format!("{keyword} {name} "))
             .unwrap_or_else(|| panic!("no {keyword} {name} in SDL:\n{}", self.sdl));
-        let end = self.sdl[start..].find("\n}").map(|e| start + e).unwrap_or(self.sdl.len());
+        let end = self.sdl[start..]
+            .find("\n}")
+            .map(|e| start + e)
+            .unwrap_or(self.sdl.len());
         self.sdl[start..end].to_string()
     }
 }
@@ -268,21 +298,48 @@ async fn test_config_renames_types_fields_and_root_fields() {
     let env = setup().await;
 
     let writer = env.type_sdl("type", "Writer");
-    assert!(env.sdl.contains("\"\"\"Configured description\"\"\"\ntype Writer implements Node"), "{}", env.sdl);
-    assert!(writer.contains("\"\"\"The writer's name\"\"\"\n  name: String!"), "{writer}");
-    assert!(!writer.contains("fullName") && !writer.contains("secret"), "{writer}");
-    assert!(writer.contains("  shout: String"), "computed column renamed: {writer}");
-    assert!(writer.contains("  works: [Book!]!") && writer.contains("  worksConnection("), "{writer}");
-    assert!(!writer.contains("authorStats"), "reverse relation omitted: {writer}");
+    assert!(
+        env.sdl
+            .contains("\"\"\"Configured description\"\"\"\ntype Writer implements Node"),
+        "{}",
+        env.sdl
+    );
+    assert!(
+        writer.contains("\"\"\"The writer's name\"\"\"\n  name: String!"),
+        "{writer}"
+    );
+    assert!(
+        !writer.contains("fullName") && !writer.contains("secret"),
+        "{writer}"
+    );
+    assert!(
+        writer.contains("  shout: String"),
+        "computed column renamed: {writer}"
+    );
+    assert!(
+        writer.contains("  works: [Book!]!") && writer.contains("  worksConnection("),
+        "{writer}"
+    );
+    assert!(
+        !writer.contains("authorStats"),
+        "reverse relation omitted: {writer}"
+    );
     assert!(!env.sdl.contains("type Author "), "old type name gone");
-    assert!(env.type_sdl("input", "WriterFilter").contains("  name: StringFilter"));
-    assert!(env.type_sdl("enum", "WriterOrderBy").contains("  NAME_DESC"));
+    assert!(env
+        .type_sdl("input", "WriterFilter")
+        .contains("  name: StringFilter"));
+    assert!(env
+        .type_sdl("enum", "WriterOrderBy")
+        .contains("  NAME_DESC"));
 
     let query = env.type_sdl("type", "Query");
     assert!(query.contains("  writers: [Writer!]!"), "{query}");
     assert!(query.contains("  writer(id: Int!): Writer"), "{query}");
     assert!(query.contains("  writersConnection("), "{query}");
-    assert!(!query.contains("allAuthorsConnection") && !query.contains("  authors"), "{query}");
+    assert!(
+        !query.contains("allAuthorsConnection") && !query.contains("  authors"),
+        "{query}"
+    );
 
     let mutation = env.type_sdl("type", "Mutation");
     assert!(
@@ -291,13 +348,24 @@ async fn test_config_renames_types_fields_and_root_fields() {
     );
     assert!(mutation.contains("  updateWriter(id: ID!, input: UpdateWriterInput!, \"\"\"Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).\"\"\" expectedVersion: String): UpdateWriterPayload!"), "{mutation}");
     assert!(!mutation.contains("deleteWriter"), "{mutation}");
-    assert!(!env.type_sdl("input", "CreateWriterInput").contains("secret"));
+    assert!(!env
+        .type_sdl("input", "CreateWriterInput")
+        .contains("secret"));
 
     let book = env.type_sdl("type", "Book");
-    assert!(book.contains("  writer: Writer") && !book.contains("  author: "), "{book}");
+    assert!(
+        book.contains("  writer: Writer") && !book.contains("  author: "),
+        "{book}"
+    );
     assert!(!book.contains("internalNotes"), "omitted table: {book}");
-    assert!(!env.sdl.contains("InternalNote"), "omitted table has no types");
-    assert!(book.contains("  reviewSummary(minStars: Int): [ReviewSummaryRow!]!"), "mounted, p_book from the row: {book}");
+    assert!(
+        !env.sdl.contains("InternalNote"),
+        "omitted table has no types"
+    );
+    assert!(
+        book.contains("  reviewSummary(minStars: Int): [ReviewSummaryRow!]!"),
+        "mounted, p_book from the row: {book}"
+    );
 
     let data = env
         .run(
@@ -310,19 +378,36 @@ async fn test_config_renames_types_fields_and_root_fields() {
             }"#,
         )
         .await;
-    let ada = data["writers"].as_array().unwrap().iter().find(|w| w["databaseId"] == 1).unwrap();
+    let ada = data["writers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["databaseId"] == 1)
+        .unwrap();
     assert_eq!(ada["name"], "Ada Lovelace");
     assert_eq!(ada["shout"], "ADA LOVELACE");
     assert_eq!(ada["works"][0]["writer"]["name"], "Ada Lovelace");
-    assert_eq!(data["writersConnection"], json!({ "totalCount": 1, "nodes": [{ "databaseId": 1, "born": "1815-12-10" }] }));
-    assert_eq!(data["book"]["reviewSummary"], json!([{ "reviewId": 1, "stars": 5 }]));
-    assert_eq!(data["book"]["all"], json!([{ "reviewId": 1 }, { "reviewId": 2 }]));
+    assert_eq!(
+        data["writersConnection"],
+        json!({ "totalCount": 1, "nodes": [{ "databaseId": 1, "born": "1815-12-10" }] })
+    );
+    assert_eq!(
+        data["book"]["reviewSummary"],
+        json!([{ "reviewId": 1, "stars": 5 }])
+    );
+    assert_eq!(
+        data["book"]["all"],
+        json!([{ "reviewId": 1 }, { "reviewId": 2 }])
+    );
 
     let data = env
         .run_rolled_back(r#"mutation { createWriter(input: { id: 50, name: "Grace Hopper" }) { writer { name works { title } } } }"#)
         .await
         .unwrap();
-    assert_eq!(data["createWriter"]["writer"], json!({ "name": "Grace Hopper", "works": [] }));
+    assert_eq!(
+        data["createWriter"]["writer"],
+        json!({ "name": "Grace Hopper", "works": [] })
+    );
 }
 
 #[tokio::test]
@@ -344,7 +429,13 @@ async fn test_views_and_materialized_views() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|t| format!("{}:{}", t["book"]["title"].as_str().unwrap(), t["tag"].as_str().unwrap()))
+        .map(|t| {
+            format!(
+                "{}:{}",
+                t["book"]["title"].as_str().unwrap(),
+                t["tag"].as_str().unwrap()
+            )
+        })
         .collect();
     tags.sort();
     assert_eq!(tags, vec!["50% off:math", "50% off:poetry", "500 off:math"]);
@@ -354,20 +445,41 @@ async fn test_views_and_materialized_views() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|s| (s["bookCount"].as_i64().unwrap(), s["writer"]["name"].as_str().unwrap().to_string()))
+        .map(|s| {
+            (
+                s["bookCount"].as_i64().unwrap(),
+                s["writer"]["name"].as_str().unwrap().to_string(),
+            )
+        })
         .collect();
     stats.sort();
-    assert_eq!(stats, vec![(1, "Alan Turing".to_string()), (2, "Ada Lovelace".to_string())]);
+    assert_eq!(
+        stats,
+        vec![
+            (1, "Alan Turing".to_string()),
+            (2, "Ada Lovelace".to_string())
+        ]
+    );
 
     // A declared single-column key makes the view a Relay node
     let id = data["cheapBook"]["id"].as_str().unwrap().to_string();
-    let node = env.run(&format!(r#"{{ node(id: "{id}") {{ ... on CheapBook {{ title }} }} }}"#)).await;
+    let node = env
+        .run(&format!(
+            r#"{{ node(id: "{id}") {{ ... on CheapBook {{ title }} }} }}"#
+        ))
+        .await;
     assert_eq!(node["node"]["title"], "500 off");
 
     // Mutations follow updatability: auto-updatable view yes, others no
     let mutation = env.type_sdl("type", "Mutation");
-    assert!(mutation.contains("createCheapBook") && mutation.contains("updateCheapBook"), "{mutation}");
-    assert!(!mutation.contains("BookTag") && !mutation.contains("AuthorStat"), "{mutation}");
+    assert!(
+        mutation.contains("createCheapBook") && mutation.contains("updateCheapBook"),
+        "{mutation}"
+    );
+    assert!(
+        !mutation.contains("BookTag") && !mutation.contains("AuthorStat"),
+        "{mutation}"
+    );
     let data = env
         .run_rolled_back(r#"mutation { updateCheapBook(id: "2", input: { title: "Renamed" }) { cheapBook { title } } }"#)
         .await
@@ -399,11 +511,29 @@ async fn test_composite_foreign_and_primary_keys() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|r| (r["databaseId"].as_i64().unwrap(), r["edition"]["label"].as_str().unwrap().to_string()))
+        .map(|r| {
+            (
+                r["databaseId"].as_i64().unwrap(),
+                r["edition"]["label"].as_str().unwrap().to_string(),
+            )
+        })
         .collect();
-    assert_eq!(reviews, vec![(1, "First".into()), (2, "Second".into()), (3, "Only".into())]);
-    assert_eq!(data["edition"], json!({ "label": "Second", "reviews": [{ "stars": 3 }], "reviewsConnection": { "totalCount": 1 } }));
-    assert_eq!(data["reviewsConnection"]["nodes"], json!([{ "databaseId": 1 }]));
+    assert_eq!(
+        reviews,
+        vec![
+            (1, "First".into()),
+            (2, "Second".into()),
+            (3, "Only".into())
+        ]
+    );
+    assert_eq!(
+        data["edition"],
+        json!({ "label": "Second", "reviews": [{ "stars": 3 }], "reviewsConnection": { "totalCount": 1 } })
+    );
+    assert_eq!(
+        data["reviewsConnection"]["nodes"],
+        json!([{ "databaseId": 1 }])
+    );
 
     // Composite-key cursors page through every row exactly once
     let mut seen = Vec::new();
@@ -417,7 +547,10 @@ async fn test_composite_foreign_and_primary_keys() {
         if !page["pageInfo"]["hasNextPage"].as_bool().unwrap() {
             break;
         }
-        after = format!(r#", after: "{}""#, page["pageInfo"]["endCursor"].as_str().unwrap());
+        after = format!(
+            r#", after: "{}""#,
+            page["pageInfo"]["endCursor"].as_str().unwrap()
+        );
     }
     assert_eq!(seen, vec!["First", "Second", "Only"]);
 
@@ -434,23 +567,43 @@ async fn test_composite_foreign_and_primary_keys() {
         )
         .await
         .unwrap();
-    assert_eq!(data, json!({ "u": { "edition": { "label": "2nd" } }, "d": { "review": { "databaseId": 2 } }, "x": { "edition": { "label": "2nd" } } }));
+    assert_eq!(
+        data,
+        json!({ "u": { "edition": { "label": "2nd" } }, "d": { "review": { "databaseId": 2 } }, "x": { "edition": { "label": "2nd" } } })
+    );
 }
 
 #[tokio::test]
 async fn test_scalar_array_and_composite_types() {
     let env = setup().await;
     let book = env.type_sdl("type", "Book");
-    for field in ["databaseId: BigInt!", "price: Decimal", "tags: [String]!", "ratings: [Int]", "publishedAt: Datetime", "path: String): JSON"] {
+    for field in [
+        "databaseId: BigInt!",
+        "price: Decimal",
+        "tags: [String]!",
+        "ratings: [Int]",
+        "publishedAt: Datetime",
+        "path: String): JSON",
+    ] {
         assert!(book.contains(field), "{field}: {book}");
     }
     assert!(env.type_sdl("type", "Writer").contains("  born: Date"));
     assert!(env.type_sdl("type", "Listing").contains("  asking: Money"));
-    assert!(env.type_sdl("type", "Listing").contains("  history: [PricePoint]"));
-    assert!(env.type_sdl("input", "MoneyInput").contains("  value: Decimal"));
-    assert!(env.type_sdl("type", "PricePoint").contains("  status: BookStatus"));
-    assert!(env.type_sdl("input", "BookFilter").contains("  tags: StringListFilter"));
-    assert!(env.type_sdl("type", "Query").contains("  book(id: BigInt!): Book"));
+    assert!(env
+        .type_sdl("type", "Listing")
+        .contains("  history: [PricePoint]"));
+    assert!(env
+        .type_sdl("input", "MoneyInput")
+        .contains("  value: Decimal"));
+    assert!(env
+        .type_sdl("type", "PricePoint")
+        .contains("  status: BookStatus"));
+    assert!(env
+        .type_sdl("input", "BookFilter")
+        .contains("  tags: StringListFilter"));
+    assert!(env
+        .type_sdl("type", "Query")
+        .contains("  book(id: BigInt!): Book"));
 
     let data = env
         .run(
@@ -466,17 +619,32 @@ async fn test_scalar_array_and_composite_types() {
         )
         .await;
     // Values past 2^53 and past float precision survive the trip
-    assert_eq!(data["big"], json!({ "databaseId": "9007199254740993", "title": "big_id" }));
+    assert_eq!(
+        data["big"],
+        json!({ "databaseId": "9007199254740993", "title": "big_id" })
+    );
     assert_eq!(data["book"]["databaseId"], "1");
     assert_eq!(data["book"]["price"], "12345678901234.123456");
     assert_eq!(data["book"]["tags"], json!(["math", "poetry"]));
     assert_eq!(data["book"]["ratings"], json!([5, 4]));
     assert_eq!(data["book"]["publishedAt"], "2024-05-01T12:30:00+00:00");
     assert_eq!(data["book"]["meta"], json!({ "lang": "en" }));
-    assert_eq!(data["booksConnection"]["nodes"], json!([{ "title": "50% off" }]));
-    assert_eq!(data["overlap"]["nodes"], json!([{ "title": "50% off" }, { "title": "500 off" }]));
-    assert_eq!(data["overlap"]["aggregates"]["max"], json!({ "id": "2", "price": "12345678901234.123456" }));
-    assert_eq!(data["listing"]["asking"], json!({ "value": "19.99", "currency": "EUR", "__typename": "Money" }));
+    assert_eq!(
+        data["booksConnection"]["nodes"],
+        json!([{ "title": "50% off" }])
+    );
+    assert_eq!(
+        data["overlap"]["nodes"],
+        json!([{ "title": "50% off" }, { "title": "500 off" }])
+    );
+    assert_eq!(
+        data["overlap"]["aggregates"]["max"],
+        json!({ "id": "2", "price": "12345678901234.123456" })
+    );
+    assert_eq!(
+        data["listing"]["asking"],
+        json!({ "value": "19.99", "currency": "EUR", "__typename": "Money" })
+    );
     assert_eq!(
         data["listing"]["history"],
         json!([
@@ -527,17 +695,27 @@ async fn test_string_filters_match_wildcards_literally() {
     assert_eq!(data["percent"]["nodes"], json!([{ "title": "50% off" }]));
     assert_eq!(data["underscore"]["nodes"], json!([{ "title": "big_id" }]));
     // `like` keeps SQL wildcards
-    assert_eq!(data["pattern"]["nodes"], json!([{ "title": "50% off" }, { "title": "500 off" }]));
+    assert_eq!(
+        data["pattern"]["nodes"],
+        json!([{ "title": "50% off" }, { "title": "500 off" }])
+    );
 }
 
 #[tokio::test]
 async fn test_identifiers_needing_quotes() {
     let env = setup().await;
-    assert!(env.sdl.contains("type OddNames implements Node"), "{}", env.sdl);
+    assert!(
+        env.sdl.contains("type OddNames implements Node"),
+        "{}",
+        env.sdl
+    );
     let data = env
         .run(r#"{ oddNames { databaseId mixedCase quoteCol } oddNamesConnection(filter: { mixedCase: { equalTo: "hello" } }) { totalCount } }"#)
         .await;
-    assert_eq!(data["oddNames"], json!([{ "databaseId": 1, "mixedCase": "hello", "quoteCol": "q" }]));
+    assert_eq!(
+        data["oddNames"],
+        json!([{ "databaseId": 1, "mixedCase": "hello", "quoteCol": "q" }])
+    );
     assert_eq!(data["oddNamesConnection"]["totalCount"], 1);
     let data = env
         .run_rolled_back(r#"mutation { createOddNames(input: { key: 2, mixedCase: "x", quoteCol: "y" }) { oddNames { mixedCase } } }"#)
@@ -562,12 +740,24 @@ async fn test_mutations_run_in_order() {
         .await
         .unwrap();
     assert_eq!(data["a"]["writer"]["name"], "First");
-    assert_eq!(data["b"]["book"], json!({ "title": "T", "writer": { "name": "First", "works": [{ "title": "T" }] } }));
-    assert_eq!(data["c"]["writer"], json!({ "name": "Renamed", "works": [{ "title": "T" }] }));
+    assert_eq!(
+        data["b"]["book"],
+        json!({ "title": "T", "writer": { "name": "First", "works": [{ "title": "T" }] } })
+    );
+    assert_eq!(
+        data["c"]["writer"],
+        json!({ "name": "Renamed", "works": [{ "title": "T" }] })
+    );
 
     // Pooled HTTP path: the second field fails, the first is rolled back
     let pool = create_pool(common::db_url(), 2).unwrap();
-    let state = Arc::new(ServerState::new(pool, env.schema.clone(), env.catalog.clone(), SCHEMA.to_string(), DebugOptions::default()));
+    let state = Arc::new(ServerState::new(
+        pool,
+        env.schema.clone(),
+        env.catalog.clone(),
+        SCHEMA.to_string(),
+        DebugOptions::default(),
+    ));
     let body = json!({ "query": r#"mutation {
         a: createWriter(input: { id: 61, name: "Rolled back" }) { writer { name } }
         b: createBook(input: { id: "601", authorId: 999999, title: "Orphan" }) { book { title } }
@@ -584,11 +774,29 @@ async fn test_mutations_run_in_order() {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let message = json["errors"][0]["message"].as_str().unwrap();
-    assert!(message.contains("`b`") && message.contains("rolled back"), "{message}");
+    assert!(
+        message.contains("`b`") && message.contains("rolled back"),
+        "{message}"
+    );
     assert_eq!(json["errors"][0]["path"], json!(["b"]));
-    assert_eq!(json["errors"][0]["extensions"]["type"], "BookErrorCode", "{json}");
-    assert_eq!(json["errors"][0]["extensions"]["fields"], json!(["input.authorId"]), "{json}");
-    let count: i64 = env.client.query_one("SELECT count(*) FROM engine_fixture.authors WHERE id = 61", &[]).await.unwrap().get(0);
+    assert_eq!(
+        json["errors"][0]["extensions"]["type"], "BookErrorCode",
+        "{json}"
+    );
+    assert_eq!(
+        json["errors"][0]["extensions"]["fields"],
+        json!(["input.authorId"]),
+        "{json}"
+    );
+    let count: i64 = env
+        .client
+        .query_one(
+            "SELECT count(*) FROM engine_fixture.authors WHERE id = 61",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(count, 0, "first mutation was rolled back");
 }
 
@@ -617,8 +825,13 @@ functions:
 "#,
     )
     .unwrap();
-    let err = CatalogInspector::new(&client).inspect_schema_with_config(SCHEMA, &config).await.unwrap_err();
-    let CatalogError::Config(errors) = &err else { panic!("{err}") };
+    let err = CatalogInspector::new(&client)
+        .inspect_schema_with_config(SCHEMA, &config)
+        .await
+        .unwrap_err();
+    let CatalogError::Config(errors) = &err else {
+        panic!("{err}")
+    };
     let text = errors.join("\n");
     for expected in [
         "entities.nope: no table",
@@ -647,7 +860,10 @@ types:
 "#,
     )
     .unwrap();
-    let err = CatalogInspector::new(&client).inspect_schema_with_config(SCHEMA, &config).await.unwrap_err();
+    let err = CatalogInspector::new(&client)
+        .inspect_schema_with_config(SCHEMA, &config)
+        .await
+        .unwrap_err();
     let text = err.to_string();
     for expected in [
         "entities.authors.type_name: `not valid` is not a valid GraphQL name",
@@ -661,8 +877,15 @@ types:
     }
 
     let config = EngineConfig::from_yaml("extensions: { expose: [nope] }").unwrap();
-    let err = CatalogInspector::new(&client).inspect_schema_with_config(SCHEMA, &config).await.unwrap_err();
-    assert!(err.to_string().contains("extensions.expose: no extension `nope` is installed"), "{err}");
+    let err = CatalogInspector::new(&client)
+        .inspect_schema_with_config(SCHEMA, &config)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("extensions.expose: no extension `nope` is installed"),
+        "{err}"
+    );
 }
 
 #[tokio::test]
@@ -670,15 +893,34 @@ async fn test_without_config_views_have_no_keys() {
     let env = setup_with("").await;
     let query = env.type_sdl("type", "Query");
     // Keyless relations: lists and connections, no single-row lookups
-    assert!(query.contains("  bookTags: [BookTag!]!") && query.contains("  cheapBooks: [CheapBook!]!"), "{query}");
-    assert!(!query.contains("  cheapBook(") && !query.contains("  bookTag("), "{query}");
+    assert!(
+        query.contains("  bookTags: [BookTag!]!") && query.contains("  cheapBooks: [CheapBook!]!"),
+        "{query}"
+    );
+    assert!(
+        !query.contains("  cheapBook(") && !query.contains("  bookTag("),
+        "{query}"
+    );
     assert!(env.sdl.contains("type Author implements Node"));
     // Default enum names: the type's name, and <Type><Field> for CHECK-closed columns
-    assert!(env.type_sdl("enum", "BookStatus").contains("  \"\"\"`in-print`\"\"\"\n  IN_PRINT\n  \"\"\"`out_of_print`\"\"\"\n  OUT_OF_PRINT"), "{}", env.sdl);
+    assert!(
+        env.type_sdl("enum", "BookStatus").contains(
+            "  \"\"\"`in-print`\"\"\"\n  IN_PRINT\n  \"\"\"`out_of_print`\"\"\"\n  OUT_OF_PRINT"
+        ),
+        "{}",
+        env.sdl
+    );
     assert!(env.type_sdl("enum", "BookCover").contains("  HARD\n"));
-    assert!(env.type_sdl("type", "Listing").contains("  asking: MoneyAmount"));
-    let data = env.run(r#"{ cheapBooksConnection { totalCount nodes { title } } }"#).await;
-    assert_eq!(data["cheapBooksConnection"], json!({ "totalCount": 2, "nodes": [{ "title": "500 off" }, { "title": "big_id" }] }));
+    assert!(env
+        .type_sdl("type", "Listing")
+        .contains("  asking: MoneyAmount"));
+    let data = env
+        .run(r#"{ cheapBooksConnection { totalCount nodes { title } } }"#)
+        .await;
+    assert_eq!(
+        data["cheapBooksConnection"],
+        json!({ "totalCount": 2, "nodes": [{ "title": "500 off" }, { "title": "big_id" }] })
+    );
 }
 
 #[tokio::test]
@@ -686,13 +928,23 @@ async fn test_enum_types() {
     let env = setup().await;
     let status = env.type_sdl("enum", "BookStatus");
     assert!(status.contains("  DRAFT\n  \"\"\"`in-print`\"\"\"\n  PRINTING\n  \"\"\"`out_of_print`\"\"\"\n  OUT_OF_PRINT"), "{status}");
-    assert!(env.type_sdl("enum", "Cover").contains("  \"\"\"`hard`\"\"\"\n  HARD"));
+    assert!(env
+        .type_sdl("enum", "Cover")
+        .contains("  \"\"\"`hard`\"\"\"\n  HARD"));
     let book = env.type_sdl("type", "Book");
-    for field in ["status: BookStatus!", "pastStatuses: [BookStatus]", "cover: Cover"] {
+    for field in [
+        "status: BookStatus!",
+        "pastStatuses: [BookStatus]",
+        "cover: Cover",
+    ] {
         assert!(book.contains(field), "{field}: {book}");
     }
     let filter = env.type_sdl("input", "BookFilter");
-    for field in ["status: BookStatusFilter", "pastStatuses: BookStatusListFilter", "cover: CoverFilter"] {
+    for field in [
+        "status: BookStatusFilter",
+        "pastStatuses: BookStatusListFilter",
+        "cover: CoverFilter",
+    ] {
         assert!(filter.contains(field), "{field}: {filter}");
     }
 
@@ -709,7 +961,10 @@ async fn test_enum_types() {
             }"#,
         )
         .await;
-    assert_eq!(data["book"], json!({ "status": "PRINTING", "pastStatuses": ["DRAFT", "PRINTING"], "cover": "HARD" }));
+    assert_eq!(
+        data["book"],
+        json!({ "status": "PRINTING", "pastStatuses": ["DRAFT", "PRINTING"], "cover": "HARD" })
+    );
     assert_eq!(
         data["byStatus"],
         json!({
@@ -731,7 +986,10 @@ async fn test_enum_types() {
         )
         .await
         .unwrap();
-    assert_eq!(data["createBook"]["book"], json!({ "status": "PRINTING", "cover": "SOFT", "pastStatuses": ["DRAFT", null] }));
+    assert_eq!(
+        data["createBook"]["book"],
+        json!({ "status": "PRINTING", "cover": "SOFT", "pastStatuses": ["DRAFT", null] })
+    );
 }
 
 /// Search is a root field per method returning the best matches, not a connection: no
@@ -742,14 +1000,32 @@ async fn test_enum_types() {
 async fn test_search_fields() {
     let env = setup().await;
     let fuzzy_field = env.type_sdl("enum", "WriterFuzzyField");
-    assert!(fuzzy_field.contains("  NAME") && !fuzzy_field.contains("SECRET") && !fuzzy_field.contains("FULL_NAME"), "{fuzzy_field}");
+    assert!(
+        fuzzy_field.contains("  NAME")
+            && !fuzzy_field.contains("SECRET")
+            && !fuzzy_field.contains("FULL_NAME"),
+        "{fuzzy_field}"
+    );
     let query = env.type_sdl("type", "Query");
-    for field in ["writersFuzzySearch(", "booksFuzzySearch(", "booksSemanticSearch(", "booksHybridSearch("] {
+    for field in [
+        "writersFuzzySearch(",
+        "booksFuzzySearch(",
+        "booksSemanticSearch(",
+        "booksHybridSearch(",
+    ] {
         assert!(query.contains(field), "{field}: {query}");
     }
-    assert!(!query.contains("writersSemanticSearch") && !query.contains("Bm25Search"), "{query}");
-    assert!(query.contains("vector: [Float!]!, \"\"\"Weight of the lexical ranking"), "{query}");
-    assert!(env.type_sdl("type", "BookSearchHit").contains("score: Float!"));
+    assert!(
+        !query.contains("writersSemanticSearch") && !query.contains("Bm25Search"),
+        "{query}"
+    );
+    assert!(
+        query.contains("vector: [Float!]!, \"\"\"Weight of the lexical ranking"),
+        "{query}"
+    );
+    assert!(env
+        .type_sdl("type", "BookSearchHit")
+        .contains("score: Float!"));
     assert!(!env.type_sdl("type", "BookEdge").contains("Score"));
 
     // Connections do not search, and searches do not page
@@ -779,41 +1055,97 @@ async fn test_search_fields() {
             }"#,
         )
         .await;
-    assert_eq!(data["fuzzy"]["hits"][0]["node"], json!({ "name": "Ada Lovelace" }));
+    assert_eq!(
+        data["fuzzy"]["hits"][0]["node"],
+        json!({ "name": "Ada Lovelace" })
+    );
     assert!(data["fuzzy"]["hits"][0]["score"].as_f64().unwrap() > 0.5);
     assert_eq!(data["fuzzy"]["hasMore"], false);
-    assert_eq!(data["explicit"]["hits"], json!([{ "node": { "name": "Alan Turing" } }]));
-    assert_eq!(data["semantic"]["hits"][0]["node"], json!({ "title": "50% off" }));
+    assert_eq!(
+        data["explicit"]["hits"],
+        json!([{ "node": { "name": "Alan Turing" } }])
+    );
+    assert_eq!(
+        data["semantic"]["hits"][0]["node"],
+        json!({ "title": "50% off" })
+    );
     assert!(data["semantic"]["hits"][0]["score"].as_f64().unwrap() > 0.9);
     assert_eq!(data["semantic"]["hasMore"], true);
-    assert_eq!(data["filtered"], json!({ "hasMore": false, "hits": [{ "node": { "title": "500 off" } }] }));
-    assert_eq!(data["hybrid"]["hits"][0]["node"], json!({ "title": "500 off" }));
+    assert_eq!(
+        data["filtered"],
+        json!({ "hasMore": false, "hits": [{ "node": { "title": "500 off" } }] })
+    );
+    assert_eq!(
+        data["hybrid"]["hits"][0]["node"],
+        json!({ "title": "500 off" })
+    );
     assert!(data["hybrid"]["hits"][0]["score"].as_f64().unwrap() > 0.0);
     // Word similarity matches a partly typed value
-    assert_eq!(data["typed"]["hits"][0]["node"], json!({ "name": "Ada Lovelace" }));
+    assert_eq!(
+        data["typed"]["hits"][0]["node"],
+        json!({ "name": "Ada Lovelace" })
+    );
     assert!(data["typed"]["hits"][0]["score"].as_f64().unwrap() > 0.8);
     assert_eq!(data["none"], json!({ "hasMore": false, "hits": [] }));
 
     // Sizes are parameters: every `first` shares one prepared statement
     let sql = |first: u32| {
-        let query = format!(r#"{{ booksHybridSearch(query: "x", vector: [0, 1, 0], first: {first}, rrfK: {first}) {{ hits {{ score }} }} }}"#);
-        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&env.schema, &query, "q.graphql").unwrap();
-        graphpg::compiler::SqlCompiler::compile(&QueryPlanner::new(&env.catalog, SCHEMA).plan(&doc).unwrap()).sql
+        let query = format!(
+            r#"{{ booksHybridSearch(query: "x", vector: [0, 1, 0], first: {first}, rrfK: {first}) {{ hits {{ score }} }} }}"#
+        );
+        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(
+            &env.schema,
+            &query,
+            "q.graphql",
+        )
+        .unwrap();
+        graphpg::compiler::SqlCompiler::compile(
+            &QueryPlanner::new(&env.catalog, SCHEMA).plan(&doc).unwrap(),
+        )
+        .sql
     };
     assert_eq!(sql(1), sql(40));
 
     // `first`: 10 by default, at most 50, both configurable
-    let err = env.try_run("{ booksSemanticSearch(vector: [1, 0, 0], first: 51) { hasMore } }").await.unwrap_err();
+    let err = env
+        .try_run("{ booksSemanticSearch(vector: [1, 0, 0], first: 51) { hasMore } }")
+        .await
+        .unwrap_err();
     assert!(err.contains("`first` must be between 0 and 50"), "{err}");
-    let env = setup_with(&format!("{CONFIG}\nsearch: {{ default_limit: 2, max_limit: 2 }}\n")).await;
-    assert!(env.type_sdl("type", "Query").contains("Number of hits: 2 by default, at most 2."));
-    let data = env.run("{ booksSemanticSearch(vector: [1, 0, 0]) { hasMore hits { node { title } } } }").await;
-    assert_eq!(data["booksSemanticSearch"]["hits"].as_array().unwrap().len(), 2);
+    let env = setup_with(&format!(
+        "{CONFIG}\nsearch: {{ default_limit: 2, max_limit: 2 }}\n"
+    ))
+    .await;
+    assert!(env
+        .type_sdl("type", "Query")
+        .contains("Number of hits: 2 by default, at most 2."));
+    let data = env
+        .run("{ booksSemanticSearch(vector: [1, 0, 0]) { hasMore hits { node { title } } } }")
+        .await;
+    assert_eq!(
+        data["booksSemanticSearch"]["hits"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     assert_eq!(data["booksSemanticSearch"]["hasMore"], true);
-    assert!(env.try_run("{ booksSemanticSearch(vector: [1, 0, 0], first: 3) { hasMore } }").await.is_err());
-    let config = EngineConfig::from_yaml(&format!("{CONFIG}\nsearch: {{ default_limit: 20, max_limit: 5 }}\n")).unwrap();
-    let err = CatalogInspector::new(&env.client).inspect_schema_with_config(SCHEMA, &config).await.unwrap_err();
-    assert!(format!("{err:?}").contains("search.default_limit"), "{err:?}");
+    assert!(env
+        .try_run("{ booksSemanticSearch(vector: [1, 0, 0], first: 3) { hasMore } }")
+        .await
+        .is_err());
+    let config = EngineConfig::from_yaml(&format!(
+        "{CONFIG}\nsearch: {{ default_limit: 20, max_limit: 5 }}\n"
+    ))
+    .unwrap();
+    let err = CatalogInspector::new(&env.client)
+        .inspect_schema_with_config(SCHEMA, &config)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{err:?}").contains("search.default_limit"),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]
@@ -829,11 +1161,25 @@ async fn test_partitions_and_extension_objects() {
     // ... unless their extension is exposed
     for expose in ["[tablefunc]", "['*']"] {
         let env = setup_with(&format!("extensions: {{ expose: {expose} }}")).await;
-        assert!(env.sdl.contains("type ExtSetting implements Node"), "{expose}");
-        assert_eq!(env.run("{ extSettings { value } }").await["extSettings"], json!([]), "{expose}");
+        assert!(
+            env.sdl.contains("type ExtSetting implements Node"),
+            "{expose}"
+        );
+        assert_eq!(
+            env.run("{ extSettings { value } }").await["extSettings"],
+            json!([]),
+            "{expose}"
+        );
         // Declared without a volatility, so VOLATILE: a mutation
-        let data = env.run_rolled_back("mutation { extNumbers(n: 3) { i } }").await.unwrap();
-        assert_eq!(data["extNumbers"], json!([{ "i": 1 }, { "i": 2 }, { "i": 3 }]), "{expose}");
+        let data = env
+            .run_rolled_back("mutation { extNumbers(n: 3) { i } }")
+            .await
+            .unwrap();
+        assert_eq!(
+            data["extNumbers"],
+            json!([{ "i": 1 }, { "i": 2 }, { "i": 3 }]),
+            "{expose}"
+        );
     }
 }
 
@@ -842,13 +1188,34 @@ async fn test_partitions_and_extension_objects() {
 #[tokio::test]
 async fn test_grouped_aggregates_keys_and_having() {
     let env = setup().await;
-    let values = |name: &str| -> Vec<String> { env.type_sdl("enum", name).lines().skip(1).map(|l| l.trim().to_string()).collect() };
+    let values = |name: &str| -> Vec<String> {
+        env.type_sdl("enum", name)
+            .lines()
+            .skip(1)
+            .map(|l| l.trim().to_string())
+            .collect()
+    };
     let book = values("BookGroupBy");
-    assert!(book.iter().any(|v| v == "STATUS") && book.iter().any(|v| v == "PUBLISHED_AT_TRUNCATED_TO_QUARTER"), "{book:?}");
-    assert!(!book.iter().any(|v| v.starts_with("TITLE_TRUNCATED")), "only dates and timestamps are truncated: {book:?}");
+    assert!(
+        book.iter().any(|v| v == "STATUS")
+            && book
+                .iter()
+                .any(|v| v == "PUBLISHED_AT_TRUNCATED_TO_QUARTER"),
+        "{book:?}"
+    );
+    assert!(
+        !book.iter().any(|v| v.starts_with("TITLE_TRUNCATED")),
+        "only dates and timestamps are truncated: {book:?}"
+    );
     let writer = values("WriterGroupBy");
-    assert!(writer.iter().any(|v| v == "BORN_TRUNCATED_TO_YEAR"), "{writer:?}");
-    assert!(!writer.iter().any(|v| v == "BORN_TRUNCATED_TO_HOUR"), "dates have no hours: {writer:?}");
+    assert!(
+        writer.iter().any(|v| v == "BORN_TRUNCATED_TO_YEAR"),
+        "{writer:?}"
+    );
+    assert!(
+        !writer.iter().any(|v| v == "BORN_TRUNCATED_TO_HOUR"),
+        "dates have no hours: {writer:?}"
+    );
 
     let data = env
         .run(
@@ -867,7 +1234,10 @@ async fn test_grouped_aggregates_keys_and_having() {
             { "keys": ["OUT_OF_PRINT"], "count": 1, "max": { "price": "5.500000" } }
         ])
     );
-    assert_eq!(data["expensive"]["groupedAggregates"], json!([{ "keys": ["PRINTING"] }]));
+    assert_eq!(
+        data["expensive"]["groupedAggregates"],
+        json!([{ "keys": ["PRINTING"] }])
+    );
     assert_eq!(
         data["byYear"]["groupedAggregates"],
         json!([{ "keys": ["1815-01-01"], "count": 1 }, { "keys": ["1912-01-01"], "count": 1 }])

@@ -44,7 +44,9 @@ INSERT INTO samples (label, n, d, f, g, m, ts, tz, dt, tm, ttz, iv, ip, net, mac
 "#;
 
 async fn connect() -> tokio_postgres::Client {
-    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls).await.expect("Failed to connect to PostgreSQL");
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .expect("Failed to connect to PostgreSQL");
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             eprintln!("connection error: {}", e);
@@ -56,9 +58,15 @@ async fn connect() -> tokio_postgres::Client {
 /// Creates the fixture schema once (serialised by an advisory lock, since tests run
 /// concurrently), recreating it when the fixture changed.
 async fn ensure_fixture(client: &tokio_postgres::Client) {
-    client.execute("SELECT pg_advisory_lock(424245)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_lock(424245)", &[])
+        .await
+        .unwrap();
     let version: Option<String> = client
-        .query_opt("SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1", &[&SCHEMA])
+        .query_opt(
+            "SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1",
+            &[&SCHEMA],
+        )
         .await
         .unwrap()
         .and_then(|row| row.get(0));
@@ -70,7 +78,10 @@ async fn ensure_fixture(client: &tokio_postgres::Client) {
             .await
             .expect("fixture setup failed");
     }
-    client.execute("SELECT pg_advisory_unlock(424245)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_unlock(424245)", &[])
+        .await
+        .unwrap();
 }
 
 struct Env {
@@ -84,10 +95,19 @@ async fn setup_with(config: &str) -> Env {
     let client = connect().await;
     ensure_fixture(&client).await;
     let config = EngineConfig::from_yaml(config).expect("config parses");
-    let catalog = CatalogInspector::new(&client).inspect_schema_with_config(SCHEMA, &config).await.expect("inspection failed");
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema_with_config(SCHEMA, &config)
+        .await
+        .expect("inspection failed");
     let sdl = SchemaBuilder::generate_sdl(&catalog);
-    let schema = SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
-    Env { client, schema, catalog, sdl }
+    let schema =
+        SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
+    Env {
+        client,
+        schema,
+        catalog,
+        sdl,
+    }
 }
 
 async fn setup() -> Env {
@@ -96,21 +116,37 @@ async fn setup() -> Env {
 
 impl Env {
     async fn try_run(&self, query: &str) -> Result<serde_json::Value, String> {
-        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&self.schema, query, "q.graphql")
-            .map_err(|e| format!("validation: {e}"))?;
-        let plan = QueryPlanner::new(&self.catalog, SCHEMA).plan(&doc).map_err(|e| format!("planning: {e}"))?;
-        let result = ExecutionEngine::execute(&self.client, &plan).await.map_err(|e| format!("execution: {e}"))?;
+        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(
+            &self.schema,
+            query,
+            "q.graphql",
+        )
+        .map_err(|e| format!("validation: {e}"))?;
+        let plan = QueryPlanner::new(&self.catalog, SCHEMA)
+            .plan(&doc)
+            .map_err(|e| format!("planning: {e}"))?;
+        let result = ExecutionEngine::execute(&self.client, &plan)
+            .await
+            .map_err(|e| format!("execution: {e}"))?;
         Ok(result["data"].clone())
     }
 
     async fn run(&self, query: &str) -> serde_json::Value {
-        self.try_run(query).await.unwrap_or_else(|e| panic!("{e}\nquery: {query}"))
+        self.try_run(query)
+            .await
+            .unwrap_or_else(|e| panic!("{e}\nquery: {query}"))
     }
 
     /// Block of `keyword name` in the SDL, with its last line's newline.
     fn block(&self, keyword: &str, name: &str) -> String {
-        let start = self.sdl.find(&format!("{keyword} {name} ")).unwrap_or_else(|| panic!("no {keyword} {name} in SDL:\n{}", self.sdl));
-        let end = self.sdl[start..].find("\n}").map(|e| start + e + 1).unwrap_or(self.sdl.len());
+        let start = self
+            .sdl
+            .find(&format!("{keyword} {name} "))
+            .unwrap_or_else(|| panic!("no {keyword} {name} in SDL:\n{}", self.sdl));
+        let end = self.sdl[start..]
+            .find("\n}")
+            .map(|e| start + e + 1)
+            .unwrap_or(self.sdl.len());
         self.sdl[start..end].to_string()
     }
 }
@@ -122,25 +158,68 @@ async fn test_every_type_has_a_graphql_type() {
     let env = setup().await;
     let sample = env.block("type", "Sample");
     for field in [
-        "n: BigInt", "d: Decimal", "f: Float", "m: Decimal", "ts: LocalDatetime", "tz: Datetime", "dt: Date", "tm: Time",
-        "ttz: TimeTz", "iv: Interval", "ip: InternetAddress", "net: CidrAddress", "mac: MacAddress", "b: Base64",
-        "emb: [Float!]", "r: IntRange", "period: DatetimeRange", "amounts: DecimalRange", "ips: [InternetAddress]",
-        "ivs: [Interval]", "email: Email", "qty: PositiveInt",
+        "n: BigInt",
+        "d: Decimal",
+        "f: Float",
+        "m: Decimal",
+        "ts: LocalDatetime",
+        "tz: Datetime",
+        "dt: Date",
+        "tm: Time",
+        "ttz: TimeTz",
+        "iv: Interval",
+        "ip: InternetAddress",
+        "net: CidrAddress",
+        "mac: MacAddress",
+        "b: Base64",
+        "emb: [Float!]",
+        "r: IntRange",
+        "period: DatetimeRange",
+        "amounts: DecimalRange",
+        "ips: [InternetAddress]",
+        "ivs: [Interval]",
+        "email: Email",
+        "qty: PositiveInt",
     ] {
-        assert!(sample.contains(&format!("  {field}\n")), "{field}\n{sample}");
+        assert!(
+            sample.contains(&format!("  {field}\n")),
+            "{field}\n{sample}"
+        );
     }
     assert!(env.sdl.contains("\"\"\"An email address\n\nValues of domain `email`, as `String` values.\"\"\"\nscalar Email"), "{}", env.sdl);
     assert!(env.sdl.contains("scalar PositiveInt"));
 
     let filter = env.block("input", "SampleFilter");
-    for field in ["ts: LocalDatetimeFilter", "iv: IntervalFilter", "ip: InternetAddressFilter", "m: DecimalFilter", "r: IntRangeFilter", "email: StringFilter"] {
-        assert!(filter.contains(&format!("  {field}\n")), "{field}\n{filter}");
+    for field in [
+        "ts: LocalDatetimeFilter",
+        "iv: IntervalFilter",
+        "ip: InternetAddressFilter",
+        "m: DecimalFilter",
+        "r: IntRangeFilter",
+        "email: StringFilter",
+    ] {
+        assert!(
+            filter.contains(&format!("  {field}\n")),
+            "{field}\n{filter}"
+        );
     }
-    assert!(!filter.contains("  b:") && !filter.contains("  emb:"), "binary data and vectors are not filtered: {filter}");
-    assert!(env.block("input", "SampleCondition").contains("  r: IntRangeInput\n"));
+    assert!(
+        !filter.contains("  b:") && !filter.contains("  emb:"),
+        "binary data and vectors are not filtered: {filter}"
+    );
+    assert!(env
+        .block("input", "SampleCondition")
+        .contains("  r: IntRangeInput\n"));
     let create = env.block("input", "CreateSampleInput");
-    assert!(create.contains("  period: DatetimeRangeInput\n") && create.contains("  b: Base64\n") && create.contains("  email: Email\n"), "{create}");
-    assert!(env.block("input", "IntRangeFilter").contains("  contains: Int\n"));
+    assert!(
+        create.contains("  period: DatetimeRangeInput\n")
+            && create.contains("  b: Base64\n")
+            && create.contains("  email: Email\n"),
+        "{create}"
+    );
+    assert!(env
+        .block("input", "IntRangeFilter")
+        .contains("  contains: Int\n"));
 }
 
 #[tokio::test]
@@ -173,7 +252,10 @@ async fn test_values_follow_their_scalar() {
             "r": { "start": null, "end": { "value": 11, "inclusive": false }, "isEmpty": false }
         })
     );
-    assert_eq!(data["samplesConnection"]["aggregates"], json!({ "min": { "iv": "PT0S" }, "max": { "iv": "P1Y2M-3DT4H5M6.5S" } }));
+    assert_eq!(
+        data["samplesConnection"]["aggregates"],
+        json!({ "min": { "iv": "PT0S" }, "max": { "iv": "P1Y2M-3DT4H5M6.5S" } })
+    );
 }
 
 #[tokio::test]
@@ -211,7 +293,12 @@ async fn test_inputs_round_trip() {
 async fn test_filters_on_new_types_and_ranges() {
     let env = setup().await;
     let labels = |data: &serde_json::Value, key: &str| -> Vec<String> {
-        let mut v: Vec<String> = data[key]["nodes"].as_array().unwrap().iter().map(|s| s["label"].as_str().unwrap().to_string()).collect();
+        let mut v: Vec<String> = data[key]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["label"].as_str().unwrap().to_string())
+            .collect();
         v.sort();
         v
     };
@@ -236,7 +323,11 @@ async fn test_filters_on_new_types_and_ranges() {
     assert_eq!(labels(&data, "longer"), ["full"]);
     assert_eq!(labels(&data, "ip"), ["full"]);
     assert_eq!(data["condition"]["nodes"], json!([{ "label": "full" }]));
-    assert_eq!(labels(&data, "emailCi"), ["full"], "citext domain compares case-insensitively");
+    assert_eq!(
+        labels(&data, "emailCi"),
+        ["full"],
+        "citext domain compares case-insensitively"
+    );
 }
 
 #[tokio::test]
@@ -266,21 +357,34 @@ async fn test_invalid_inputs_are_rejected_before_any_sql() {
         "`input.qty`: \"many\" is not an Int",
         "`input.ttz`: \"12:30\" is not a TimeTz",
     ] {
-        assert!(err.starts_with("planning:") && err.contains(expected), "expected `{expected}` in: {err}");
+        assert!(
+            err.starts_with("planning:") && err.contains(expected),
+            "expected `{expected}` in: {err}"
+        );
     }
     // Range bounds and filter operands are checked too
     let err = env.try_run(r#"{ samplesConnection(filter: { period: { contains: "soon" }, r: { overlaps: { start: { value: 1 } } } }) { nodes { label } } }"#).await.unwrap_err();
-    assert!(err.contains("`period`: \"soon\" is not a Datetime"), "{err}");
+    assert!(
+        err.contains("`period`: \"soon\" is not a Datetime"),
+        "{err}"
+    );
     let err = env.try_run(r#"{ samplesConnection(filter: { tz: { greaterThan: "later" } }) { nodes { label } } }"#).await.unwrap_err();
     assert!(err.contains("`tz`: \"later\" is not a Datetime"), "{err}");
     let count = env.run("{ samplesConnection { totalCount } }").await;
-    assert_eq!(count["samplesConnection"]["totalCount"], 2, "nothing was written");
+    assert_eq!(
+        count["samplesConnection"]["totalCount"], 2,
+        "nothing was written"
+    );
 }
 
 #[tokio::test]
 async fn test_config_names_domain_scalars() {
-    let env = setup_with("types:\n  email: { type_name: EmailAddress, description: Where mail goes }\n").await;
-    assert!(env.block("type", "Sample").contains("  email: EmailAddress\n"));
+    let env =
+        setup_with("types:\n  email: { type_name: EmailAddress, description: Where mail goes }\n")
+            .await;
+    assert!(env
+        .block("type", "Sample")
+        .contains("  email: EmailAddress\n"));
     assert!(env.sdl.contains("\"\"\"Where mail goes\n\nValues of domain `email`, as `String` values.\"\"\"\nscalar EmailAddress"));
     assert!(!env.sdl.contains("scalar Email\n"));
 }

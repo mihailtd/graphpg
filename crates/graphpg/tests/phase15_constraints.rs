@@ -62,7 +62,9 @@ INSERT INTO transfers (account_id, amount) VALUES (1, 5);
 "#;
 
 async fn connect() -> tokio_postgres::Client {
-    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls).await.expect("Failed to connect to PostgreSQL");
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .expect("Failed to connect to PostgreSQL");
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             eprintln!("connection error: {}", e);
@@ -74,9 +76,15 @@ async fn connect() -> tokio_postgres::Client {
 /// Creates the fixture schema once (serialised by an advisory lock), recreating it when the
 /// fixture changed.
 async fn ensure_fixture(client: &tokio_postgres::Client) {
-    client.execute("SELECT pg_advisory_lock(424246)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_lock(424246)", &[])
+        .await
+        .unwrap();
     let version: Option<String> = client
-        .query_opt("SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1", &[&SCHEMA])
+        .query_opt(
+            "SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = $1",
+            &[&SCHEMA],
+        )
         .await
         .unwrap()
         .and_then(|row| row.get(0));
@@ -88,7 +96,10 @@ async fn ensure_fixture(client: &tokio_postgres::Client) {
             .await
             .expect("fixture setup failed");
     }
-    client.execute("SELECT pg_advisory_unlock(424246)", &[]).await.unwrap();
+    client
+        .execute("SELECT pg_advisory_unlock(424246)", &[])
+        .await
+        .unwrap();
 }
 
 struct Env {
@@ -100,25 +111,44 @@ struct Env {
 async fn setup() -> Env {
     let client = connect().await;
     ensure_fixture(&client).await;
-    let catalog = CatalogInspector::new(&client).inspect_schema(SCHEMA).await.expect("inspection failed");
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema(SCHEMA)
+        .await
+        .expect("inspection failed");
     let sdl = SchemaBuilder::generate_sdl(&catalog);
-    let schema = SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
-    Env { catalog, schema, sdl }
+    let schema =
+        SchemaBuilder::build(&catalog).unwrap_or_else(|e| panic!("invalid schema: {e}\n{sdl}"));
+    Env {
+        catalog,
+        schema,
+        sdl,
+    }
 }
 
 impl Env {
     /// SDL block of type/input/enum `name`.
     fn block(&self, keyword: &str, name: &str) -> String {
-        let start = self.sdl.find(&format!("{keyword} {name} ")).unwrap_or_else(|| panic!("no {keyword} {name}:\n{}", self.sdl));
+        let start = self
+            .sdl
+            .find(&format!("{keyword} {name} "))
+            .unwrap_or_else(|| panic!("no {keyword} {name}:\n{}", self.sdl));
         // Include the description above the block
         let doc_start = self.sdl[..start].rfind("\n\n").map(|i| i + 2).unwrap_or(0);
-        let end = self.sdl[start..].find("\n}").map(|e| start + e + 1).unwrap_or(self.sdl.len());
+        let end = self.sdl[start..]
+            .find("\n}")
+            .map(|e| start + e + 1)
+            .unwrap_or(self.sdl.len());
         self.sdl[doc_start..end].to_string()
     }
 
     /// Plans `query`, expecting it to be rejected with input errors.
     fn input_errors(&self, query: &str) -> Vec<graphpg::InputError> {
-        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&self.schema, query, "q.graphql").expect("valid query");
+        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(
+            &self.schema,
+            query,
+            "q.graphql",
+        )
+        .expect("valid query");
         match QueryPlanner::new(&self.catalog, SCHEMA).plan(&doc) {
             Err(PlannerError::Input(errors)) => errors,
             other => panic!("expected input errors, got {other:?}"),
@@ -128,12 +158,20 @@ impl Env {
     /// Runs `query` over HTTP (writes are committed unless they fail).
     async fn post(&self, query: &str) -> (StatusCode, serde_json::Value) {
         let pool = create_pool(common::db_url(), 1).unwrap();
-        let state = Arc::new(ServerState::new(pool, self.schema.clone(), self.catalog.clone(), SCHEMA.to_string(), DebugOptions::default()));
+        let state = Arc::new(ServerState::new(
+            pool,
+            self.schema.clone(),
+            self.catalog.clone(),
+            SCHEMA.to_string(),
+            DebugOptions::default(),
+        ));
         let request = Request::builder()
             .method("POST")
             .uri("/graphql")
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(serde_json::to_vec(&json!({ "query": query })).unwrap()))
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "query": query })).unwrap(),
+            ))
             .unwrap();
         let response = create_router(state).oneshot(request).await.unwrap();
         let status = response.status();
@@ -147,7 +185,10 @@ impl Env {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body["data"].is_null(), "{body}");
         let error = &body["errors"][0];
-        assert!(error["message"].as_str().unwrap().contains("rolled back"), "{error}");
+        assert!(
+            error["message"].as_str().unwrap().contains("rolled back"),
+            "{error}"
+        );
         error["extensions"].clone()
     }
 }
@@ -173,33 +214,68 @@ async fn test_error_codes_come_from_constraints() {
         // Foreign keys referencing the table
         "REFERENCED_BY_TRANSFERS",
     ] {
-        assert!(account.contains(&format!("  {code}\n")), "missing {code}:\n{account}");
+        assert!(
+            account.contains(&format!("  {code}\n")),
+            "missing {code}:\n{account}"
+        );
     }
-    assert!(account.contains("Another row already has this `email` (unique `accounts_email_key`)."), "{account}");
-    assert!(account.contains("Check `balance_non_negative` failed: `balance >= (0)::numeric`."), "{account}");
+    assert!(
+        account.contains("Another row already has this `email` (unique `accounts_email_key`)."),
+        "{account}"
+    );
+    assert!(
+        account.contains("Check `balance_non_negative` failed: `balance >= (0)::numeric`."),
+        "{account}"
+    );
 
     let booking = env.block("enum", "BookingErrorCode");
-    for code in ["OVERLAPPING_BOOKING", "ROOM_NOT_FOUND", "ROOM_ID_REQUIRED", "DURING_REQUIRED"] {
-        assert!(booking.contains(&format!("  {code}\n")), "missing {code}:\n{booking}");
+    for code in [
+        "OVERLAPPING_BOOKING",
+        "ROOM_NOT_FOUND",
+        "ROOM_ID_REQUIRED",
+        "DURING_REQUIRED",
+    ] {
+        assert!(
+            booking.contains(&format!("  {code}\n")),
+            "missing {code}:\n{booking}"
+        );
     }
-    assert!(env.block("enum", "RoomErrorCode").contains("  REFERENCED_BY_BOOKINGS\n"));
+    assert!(env
+        .block("enum", "RoomErrorCode")
+        .contains("  REFERENCED_BY_BOOKINGS\n"));
 }
 
 #[tokio::test]
 async fn test_limits_and_checks_are_documented() {
     let env = setup().await;
     let account = env.block("type", "Account");
-    assert!(account.contains("\"\"\"Where statements go.\n\nAt most 40 characters.\"\"\"\n  email: String!"), "{account}");
+    assert!(
+        account.contains(
+            "\"\"\"Where statements go.\n\nAt most 40 characters.\"\"\"\n  email: String!"
+        ),
+        "{account}"
+    );
     assert!(
         account.contains("At most 8 digits, 2 of them after the decimal point (rounded to 2 decimal places).\n\nMust satisfy `balance >= (0)::numeric`.\"\"\"\n  balance: Decimal!"),
         "{account}"
     );
-    assert!(account.contains("Must satisfy `(score >= 0) AND (score <= 100)`."), "{account}");
-    assert!(account.contains("\"\"\"Rows must satisfy `lo < hi`.\"\"\"\ntype Account"), "{account}");
+    assert!(
+        account.contains("Must satisfy `(score >= 0) AND (score <= 100)`."),
+        "{account}"
+    );
+    assert!(
+        account.contains("\"\"\"Rows must satisfy `lo < hi`.\"\"\"\ntype Account"),
+        "{account}"
+    );
     // Inputs carry the same descriptions
     let create = env.block("input", "CreateAccountInput");
-    assert!(create.contains("At most 40 characters.\"\"\"\n  email: String!"), "{create}");
-    assert!(env.block("input", "UpdateAccountInput").contains("At most 5 characters.\"\"\"\n  tags: [String]"));
+    assert!(
+        create.contains("At most 40 characters.\"\"\"\n  email: String!"),
+        "{create}"
+    );
+    assert!(env
+        .block("input", "UpdateAccountInput")
+        .contains("At most 5 characters.\"\"\"\n  tags: [String]"));
 }
 
 #[tokio::test]
@@ -213,7 +289,10 @@ async fn test_limits_are_checked_before_any_sql() {
             tags: ["ok", "much-too-long"]
         }) { account { id } } }"#,
     );
-    let summary: Vec<(Option<&str>, &str)> = errors.iter().map(|e| (e.path.as_deref(), e.code.as_str())).collect();
+    let summary: Vec<(Option<&str>, &str)> = errors
+        .iter()
+        .map(|e| (e.path.as_deref(), e.code.as_str()))
+        .collect();
     assert_eq!(
         summary,
         [
@@ -223,13 +302,18 @@ async fn test_limits_are_checked_before_any_sql() {
         ],
         "trailing blanks beyond the length are dropped, as PostgreSQL does: {errors:?}"
     );
-    assert!(errors[1].message.contains("does not fit `numeric(8, 2)`"), "{errors:?}");
+    assert!(
+        errors[1].message.contains("does not fit `numeric(8, 2)`"),
+        "{errors:?}"
+    );
 
     // Rounding decides: 999999.994 rounds to 999999.99, 999999.995 to 1000000.00
     let ok = env.input_errors(r#"mutation { a: createAccount(input: { email: "x", balance: "999999.995" }) { account { id } } }"#);
     assert_eq!(ok.len(), 1);
     let doc = r#"mutation { a: createAccount(input: { email: "x", balance: "999999.994" }) { account { id } } }"#;
-    let doc = apollo_compiler::ExecutableDocument::parse_and_validate(&env.schema, doc, "q.graphql").unwrap();
+    let doc =
+        apollo_compiler::ExecutableDocument::parse_and_validate(&env.schema, doc, "q.graphql")
+            .unwrap();
     assert!(QueryPlanner::new(&env.catalog, SCHEMA).plan(&doc).is_ok());
 
     // Nested and bulk inputs report their own paths; filters are not limited
@@ -237,14 +321,21 @@ async fn test_limits_are_checked_before_any_sql() {
         r#"mutation { updateAccounts(where: { email: { equalTo: "a-very-long-address-that-does-not-fit@example.com" } }, set: { handle: "toolong" }) { affectedCount } }"#,
     );
     assert_eq!(errors.len(), 1);
-    assert_eq!((errors[0].path.as_deref(), errors[0].code.as_str()), (Some("set.handle"), "HANDLE_TOO_LONG"));
+    assert_eq!(
+        (errors[0].path.as_deref(), errors[0].code.as_str()),
+        (Some("set.handle"), "HANDLE_TOO_LONG")
+    );
 }
 
 #[tokio::test]
 async fn test_violations_are_typed_and_field_mapped() {
     let env = setup().await;
 
-    let ext = env.violation(r#"mutation { createAccount(input: { email: "ada@example.com" }) { account { id } } }"#).await;
+    let ext = env
+        .violation(
+            r#"mutation { createAccount(input: { email: "ada@example.com" }) { account { id } } }"#,
+        )
+        .await;
     assert_eq!(
         ext,
         json!({ "code": "EMAIL_TAKEN", "type": "AccountErrorCode", "constraint": "accounts_email_key", "fields": ["input.email"] })
@@ -254,22 +345,50 @@ async fn test_violations_are_typed_and_field_mapped() {
     let ext = env
         .violation(r#"mutation { createAccounts(inputs: [{ email: "new@example.com" }, { email: "bob@example.com" }]) { affectedCount } }"#)
         .await;
-    assert_eq!((ext["code"].as_str(), &ext["fields"]), (Some("EMAIL_TAKEN"), &json!(["inputs[1].email"])));
+    assert_eq!(
+        (ext["code"].as_str(), &ext["fields"]),
+        (Some("EMAIL_TAKEN"), &json!(["inputs[1].email"]))
+    );
 
     let ext = env.violation(r#"mutation { createAccount(input: { email: "c@example.com", handle: "ADA" }) { account { id } } }"#).await;
-    assert_eq!((ext["code"].as_str(), ext["constraint"].as_str()), (Some("HANDLE_TAKEN"), Some("accounts_lower_handle")));
+    assert_eq!(
+        (ext["code"].as_str(), ext["constraint"].as_str()),
+        (Some("HANDLE_TAKEN"), Some("accounts_lower_handle"))
+    );
 
     let ext = env.violation(r#"mutation { createAccount(input: { email: "c@example.com", balance: "-1" }) { account { id } } }"#).await;
-    assert_eq!((ext["code"].as_str(), &ext["fields"]), (Some("BALANCE_NON_NEGATIVE"), &json!(["input.balance"])));
+    assert_eq!(
+        (ext["code"].as_str(), &ext["fields"]),
+        (Some("BALANCE_NON_NEGATIVE"), &json!(["input.balance"]))
+    );
 
-    let ext = env.violation(r#"mutation { updateAccount(id: 1, input: { score: 101 }) { account { id } } }"#).await;
-    assert_eq!((ext["code"].as_str(), &ext["fields"]), (Some("SCORE_INVALID"), &json!(["input.score"])));
+    let ext = env
+        .violation(r#"mutation { updateAccount(id: 1, input: { score: 101 }) { account { id } } }"#)
+        .await;
+    assert_eq!(
+        (ext["code"].as_str(), &ext["fields"]),
+        (Some("SCORE_INVALID"), &json!(["input.score"]))
+    );
 
-    let ext = env.violation(r#"mutation { updateAccounts(where: {}, set: { lo: 5, hi: 1 }) { affectedCount } }"#).await;
-    assert_eq!((ext["code"].as_str(), &ext["fields"]), (Some("LO_AND_HI_INVALID"), &json!(["set.lo", "set.hi"])));
+    let ext = env
+        .violation(
+            r#"mutation { updateAccounts(where: {}, set: { lo: 5, hi: 1 }) { affectedCount } }"#,
+        )
+        .await;
+    assert_eq!(
+        (ext["code"].as_str(), &ext["fields"]),
+        (Some("LO_AND_HI_INVALID"), &json!(["set.lo", "set.hi"]))
+    );
 
-    let ext = env.violation(r#"mutation { updateAccount(id: 1, input: { email: null }) { account { id } } }"#).await;
-    assert_eq!(ext, json!({ "code": "EMAIL_REQUIRED", "type": "AccountErrorCode", "constraint": null, "fields": ["input.email"] }));
+    let ext = env
+        .violation(
+            r#"mutation { updateAccount(id: 1, input: { email: null }) { account { id } } }"#,
+        )
+        .await;
+    assert_eq!(
+        ext,
+        json!({ "code": "EMAIL_REQUIRED", "type": "AccountErrorCode", "constraint": null, "fields": ["input.email"] })
+    );
 
     let ext = env
         .violation(
@@ -284,10 +403,15 @@ async fn test_violations_are_typed_and_field_mapped() {
     let ext = env
         .violation(r#"mutation { createBooking(input: { roomId: 99, during: { start: { value: "2025-01-01T00:00:00Z" } } }) { booking { id } } }"#)
         .await;
-    assert_eq!((ext["code"].as_str(), &ext["fields"]), (Some("ROOM_NOT_FOUND"), &json!(["input.roomId"])));
+    assert_eq!(
+        (ext["code"].as_str(), &ext["fields"]),
+        (Some("ROOM_NOT_FOUND"), &json!(["input.roomId"]))
+    );
 
     // Deleting a row others refer to reports the referenced table's code
-    let ext = env.violation(r#"mutation { deleteAccount(id: 1) { account { id } } }"#).await;
+    let ext = env
+        .violation(r#"mutation { deleteAccount(id: 1) { account { id } } }"#)
+        .await;
     assert_eq!(
         ext,
         json!({ "code": "REFERENCED_BY_TRANSFERS", "type": "AccountErrorCode", "constraint": "transfers_account_id_fkey", "fields": [] })
@@ -302,11 +426,18 @@ async fn test_violations_are_typed_and_field_mapped() {
             ] } }) { room { id } } }"#,
         )
         .await;
-    assert_eq!((ext["code"].as_str(), ext["type"].as_str()), (Some("OVERLAPPING_BOOKING"), Some("BookingErrorCode")));
+    assert_eq!(
+        (ext["code"].as_str(), ext["type"].as_str()),
+        (Some("OVERLAPPING_BOOKING"), Some("BookingErrorCode"))
+    );
 
     // Nothing was written
     let (_, body) = env.post("{ accounts { email } rooms { name } }").await;
-    assert_eq!(body["data"]["accounts"].as_array().unwrap().len(), 2, "{body}");
+    assert_eq!(
+        body["data"]["accounts"].as_array().unwrap().len(),
+        2,
+        "{body}"
+    );
     assert_eq!(body["data"]["rooms"], json!([{ "name": "Blue" }]));
 }
 
@@ -315,11 +446,17 @@ async fn test_input_errors_over_http() {
     let env = setup().await;
     // A value of the wrong GraphQL type fails validation (400); a valid one exceeding its
     // column's limits is rejected by planning, per field
-    let (status, _) = env.post(r#"mutation { createAccount(input: { email: "a", score: "x" }) { account { id } } }"#).await;
+    let (status, _) = env
+        .post(r#"mutation { createAccount(input: { email: "a", score: "x" }) { account { id } } }"#)
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, body) = env
         .post(r#"mutation { createAccount(input: { email: "a-very-long-address-that-does-not-fit@example.com" }) { account { id } } }"#)
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["errors"][0]["extensions"], json!({ "code": "EMAIL_TOO_LONG", "field": "input.email" }), "{body}");
+    assert_eq!(
+        body["errors"][0]["extensions"],
+        json!({ "code": "EMAIL_TOO_LONG", "field": "input.email" }),
+        "{body}"
+    );
 }

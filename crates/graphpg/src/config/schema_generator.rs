@@ -30,7 +30,11 @@ impl ConfigSchemaGenerator {
     /// Config of a function exposed as a root field (a mutation when `VOLATILE`); a function
     /// returning columns of its own can also be mounted on a table.
     fn function_schema(func: &crate::catalog::FunctionMetadata) -> Value {
-        let (kind, field) = if func.volatile { ("Mutation", "Root Mutation field name") } else { ("Function", "Root Query field name") };
+        let (kind, field) = if func.volatile {
+            ("Mutation", "Root Mutation field name")
+        } else {
+            ("Function", "Root Query field name")
+        };
         let mut properties = json!({
             "field_name": graphql_name(field),
             "description": { "type": "string", "description": "Field description" },
@@ -73,15 +77,29 @@ impl ConfigSchemaGenerator {
     pub fn generate(catalog: &DatabaseCatalog) -> Value {
         // Config keys name objects by bare name, qualified as `schema.name` when several
         // inspected schemas have one of that name
-        let shared = |name: &str, names: &mut dyn Iterator<Item = &str>| names.filter(|n| *n == name).count() > 1;
+        let shared = |name: &str, names: &mut dyn Iterator<Item = &str>| {
+            names.filter(|n| *n == name).count() > 1
+        };
         let table_key = |schema: &str, name: &str| {
-            if shared(name, &mut catalog.tables.iter().map(|t| t.name.as_str())) { format!("{schema}.{name}") } else { name.to_string() }
+            if shared(name, &mut catalog.tables.iter().map(|t| t.name.as_str())) {
+                format!("{schema}.{name}")
+            } else {
+                name.to_string()
+            }
         };
         let function_key = |schema: &str, name: &str| {
             let mut names = catalog.functions.iter().map(|f| f.name.as_str());
-            if shared(name, &mut names) { format!("{schema}.{name}") } else { name.to_string() }
+            if shared(name, &mut names) {
+                format!("{schema}.{name}")
+            } else {
+                name.to_string()
+            }
         };
-        let relation_names: Vec<String> = catalog.tables.iter().map(|t| table_key(&t.schema, &t.name)).collect();
+        let relation_names: Vec<String> = catalog
+            .tables
+            .iter()
+            .map(|t| table_key(&t.schema, &t.name))
+            .collect();
         let mut defs = Map::new();
         defs.insert(
             "relation".to_string(),
@@ -135,7 +153,9 @@ impl ConfigSchemaGenerator {
             } else {
                 Self::function_schema(func)
             };
-            function_properties.entry(function_key(&func.schema, &func.name)).or_insert(schema);
+            function_properties
+                .entry(function_key(&func.schema, &func.name))
+                .or_insert(schema);
         }
 
         json!({
@@ -268,9 +288,21 @@ impl ConfigSchemaGenerator {
     fn type_properties(catalog: &DatabaseCatalog) -> Map<String, Value> {
         let mut props = Map::new();
         for e in &catalog.enums {
-            let values: Map<String, Value> =
-                e.values.iter().map(|v| (v.label.clone(), graphql_name(&format!("GraphQL value for `{}`", v.label)))).collect();
-            let kind = if e.key.starts_with("check:") { "CHECK-closed column" } else { "Enum type" };
+            let values: Map<String, Value> = e
+                .values
+                .iter()
+                .map(|v| {
+                    (
+                        v.label.clone(),
+                        graphql_name(&format!("GraphQL value for `{}`", v.label)),
+                    )
+                })
+                .collect();
+            let kind = if e.key.starts_with("check:") {
+                "CHECK-closed column"
+            } else {
+                "Enum type"
+            };
             props.insert(
                 e.config_name.clone(),
                 json!({
@@ -349,7 +381,15 @@ impl ConfigSchemaGenerator {
         let column_properties: Map<String, Value> = table
             .columns
             .iter()
-            .map(|c| (c.name.clone(), described_ref("column", describe(c.description.as_deref(), format!("Column `{}`", c.name)))))
+            .map(|c| {
+                (
+                    c.name.clone(),
+                    described_ref(
+                        "column",
+                        describe(c.description.as_deref(), format!("Column `{}`", c.name)),
+                    ),
+                )
+            })
             .collect();
 
         let existing_fk_properties: Map<String, Value> = table
@@ -363,7 +403,10 @@ impl ConfigSchemaGenerator {
                     fk.foreign_table,
                     fk.foreign_columns.join(", ")
                 );
-                (fk.constraint_name.clone(), described_ref("foreign_key", description))
+                (
+                    fk.constraint_name.clone(),
+                    described_ref("foreign_key", description),
+                )
             })
             .collect();
         let mut virtual_fk_properties = Self::relation_naming();

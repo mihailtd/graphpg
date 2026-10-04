@@ -13,9 +13,11 @@ pub use compiler::{CompiledQuery, SqlCompiler};
 pub use config::ConfigSchemaGenerator;
 pub use execution::{ConstraintViolation, ExecutionEngine, ExecutionError};
 pub use plan::{
-    ColumnValue, ConnectionSelections, JoinCondition, MutationKind, OperationPlan, SelectedField, Step, StepId,
-    WhereCondition,
+    ColumnValue, ConnectionSelections, JoinCondition, MutationKind, OperationPlan, SelectedField,
+    Step, StepId, WhereCondition,
 };
 pub use planner::{InputError, PlannerError, QueryPlanner};
 pub use schema::{SchemaBuildError, SchemaBuilder};
-pub use server::{create_pool, create_router, DebugOptions, GraphQLRequest, GraphQLResponse, ServerState};
+pub use server::{
+    create_pool, create_router, DebugOptions, GraphQLRequest, GraphQLResponse, ServerState,
+};

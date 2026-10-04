@@ -38,8 +38,17 @@ impl RequestCache {
     }
 
     /// The compiled operation `operation_name` of `query` with `variables`, if compiled before.
-    pub fn operation(&self, query: &str, operation_name: Option<&str>, variables: Option<&serde_json::Value>) -> Option<Arc<CompiledOperation>> {
-        self.operations.lock().unwrap().get(&Self::key(query, operation_name, variables)).cloned()
+    pub fn operation(
+        &self,
+        query: &str,
+        operation_name: Option<&str>,
+        variables: Option<&serde_json::Value>,
+    ) -> Option<Arc<CompiledOperation>> {
+        self.operations
+            .lock()
+            .unwrap()
+            .get(&Self::key(query, operation_name, variables))
+            .cloned()
     }
 
     pub fn store_operation(
@@ -62,11 +71,19 @@ impl RequestCache {
         self.operations.lock().unwrap().clear();
     }
 
-    fn key(query: &str, operation_name: Option<&str>, variables: Option<&serde_json::Value>) -> OperationKey {
+    fn key(
+        query: &str,
+        operation_name: Option<&str>,
+        variables: Option<&serde_json::Value>,
+    ) -> OperationKey {
         let variables = match variables {
             None | Some(serde_json::Value::Null) => String::new(),
             Some(v) => v.to_string(),
         };
-        (query.to_string(), operation_name.map(str::to_string), variables)
+        (
+            query.to_string(),
+            operation_name.map(str::to_string),
+            variables,
+        )
     }
 }

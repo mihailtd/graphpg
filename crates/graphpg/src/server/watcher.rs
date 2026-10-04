@@ -92,17 +92,24 @@ async fn run_watcher_loop(
 
     // 3. Watch loop: listens for notifications AND periodically polls catalog state and the
     // config file
-    let fingerprint = |state: Arc<ServerState>, schemas: Vec<String>, config: Option<std::path::PathBuf>| async move {
+    let fingerprint = |state: Arc<ServerState>,
+                       schemas: Vec<String>,
+                       config: Option<std::path::PathBuf>| async move {
         let modified = config
             .and_then(|p| std::fs::metadata(p).ok())
             .and_then(|m| m.modified().ok())
             .map(|t| format!("{t:?}"))
             .unwrap_or_default();
-        format!("{}|{modified}", query_catalog_fingerprint(&state, &schemas).await)
+        format!(
+            "{}|{modified}",
+            query_catalog_fingerprint(&state, &schemas).await
+        )
     };
     // The schemas the last load inspected (the config file may change them)
     let mut schemas = load_config(&options).map(|c| c.schemas).unwrap_or_default();
-    let current = |schemas: &Vec<String>| fingerprint(state.clone(), schemas.clone(), options.config_path.clone());
+    let current = |schemas: &Vec<String>| {
+        fingerprint(state.clone(), schemas.clone(), options.config_path.clone())
+    };
     let mut last_class_fingerprint = current(&schemas).await;
 
     loop {
@@ -162,7 +169,9 @@ async fn query_catalog_fingerprint(state: &ServerState, schemas: &[String]) -> S
 }
 
 /// The config file (if any) with the environment and flag overrides applied, as at startup.
-fn load_config(options: &WatcherOptions) -> Result<EngineConfig, Box<dyn std::error::Error + Send + Sync>> {
+fn load_config(
+    options: &WatcherOptions,
+) -> Result<EngineConfig, Box<dyn std::error::Error + Send + Sync>> {
     let mut config = match &options.config_path {
         Some(path) => EngineConfig::load_from_file(path)?,
         None => EngineConfig::default(),
@@ -197,12 +206,17 @@ async fn reload_and_regenerate(
         }
         // Keep the config's JSON Schema current so the config can be fixed in the editor
         Err(err @ CatalogError::Config(_)) => {
-            let plain = inspector.inspect_base(&schemas, &EngineConfig::default()).await?;
+            let plain = inspector
+                .inspect_base(&schemas, &EngineConfig::default())
+                .await?;
             (Err(err), ConfigSchemaGenerator::generate(&plain))
         }
         Err(err) => return Err(err.into()),
     };
-    write_file(&options.config_schema_out, &serde_json::to_string_pretty(&config_json)?)?;
+    write_file(
+        &options.config_schema_out,
+        &serde_json::to_string_pretty(&config_json)?,
+    )?;
     let new_catalog = finalize(base?, &config)?;
 
     // 2. Re-build GraphQL Schema

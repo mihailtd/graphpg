@@ -36,7 +36,11 @@ pub struct ExportRequest {
     pub format: Option<String>,
 }
 
-fn json_error(status: StatusCode, message: impl Into<String>, extensions: Option<serde_json::Value>) -> Response {
+fn json_error(
+    status: StatusCode,
+    message: impl Into<String>,
+    extensions: Option<serde_json::Value>,
+) -> Response {
     let mut error = serde_json::json!({ "message": message.into() });
     if let Some(ext) = extensions {
         error["extensions"] = ext;
@@ -45,7 +49,11 @@ fn json_error(status: StatusCode, message: impl Into<String>, extensions: Option
 }
 
 /// `POST /export`.
-pub async fn export_handler(State(state): State<Arc<ServerState>>, request_headers: HeaderMap, Json(req): Json<ExportRequest>) -> Response {
+pub async fn export_handler(
+    State(state): State<Arc<ServerState>>,
+    request_headers: HeaderMap,
+    Json(req): Json<ExportRequest>,
+) -> Response {
     // Rows are read as the request's role, under its Row-Level Security policies
     let auth_ctx = match state.authenticate(&request_headers).await {
         Ok(ctx) => ctx,
@@ -54,7 +62,13 @@ pub async fn export_handler(State(state): State<Arc<ServerState>>, request_heade
     let csv = match req.format.as_deref() {
         None | Some("ndjson") => false,
         Some("csv") => true,
-        Some(other) => return json_error(StatusCode::BAD_REQUEST, format!("unknown export format `{other}` (ndjson or csv)"), None),
+        Some(other) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                format!("unknown export format `{other}` (ndjson or csv)"),
+                None,
+            )
+        }
     };
     let schema = state.current_schema();
     let catalog = state.current_catalog();
@@ -65,15 +79,30 @@ pub async fn export_handler(State(state): State<Arc<ServerState>>, request_heade
     let operation = match doc.operations.get(req.operation_name.as_deref()) {
         Ok(op) if op.operation_type.is_query() => op,
         Ok(_) => return json_error(StatusCode::BAD_REQUEST, "exports run queries", None),
-        Err(err) => return json_error(StatusCode::BAD_REQUEST, err.to_graphql_error(&doc.sources).message, None),
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                err.to_graphql_error(&doc.sources).message,
+                None,
+            )
+        }
     };
-    let planner = QueryPlanner::with_context(&catalog, &state.default_schema, Some(&doc), req.variables.as_ref());
+    let planner = QueryPlanner::with_context(
+        &catalog,
+        &state.default_schema,
+        Some(&doc),
+        req.variables.as_ref(),
+    );
     let plan = match planner.plan_operation(operation) {
         Ok(plan) => plan,
         Err(err) => return json_error(StatusCode::BAD_REQUEST, err.to_string(), None),
     };
     let Some(query) = SqlCompiler::compile_rows(&plan) else {
-        return json_error(StatusCode::BAD_REQUEST, "an export's operation selects exactly one connection field (its `nodes`)", None);
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "an export's operation selects exactly one connection field (its `nodes`)",
+            None,
+        );
     };
 
     let mut client = match state.read_pool(None).await {
@@ -88,7 +117,11 @@ pub async fn export_handler(State(state): State<Arc<ServerState>>, request_heade
                 auth.apply_on(&*transaction).await?;
             }
             let statement = transaction.prepare(&query.sql).await?;
-            let params: Vec<&(dyn ToSql + Sync)> = query.params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
+            let params: Vec<&(dyn ToSql + Sync)> = query
+                .params
+                .iter()
+                .map(|p| p as &(dyn ToSql + Sync))
+                .collect();
             let portal = transaction.bind(&statement, &params).await?;
             let mut header: Option<Vec<String>> = None;
             loop {
@@ -101,7 +134,10 @@ pub async fn export_handler(State(state): State<Arc<ServerState>>, request_heade
                     let value: serde_json::Value = row.get(0);
                     if csv {
                         let keys = header.get_or_insert_with(|| {
-                            let keys: Vec<String> = value.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+                            let keys: Vec<String> = value
+                                .as_object()
+                                .map(|o| o.keys().cloned().collect())
+                                .unwrap_or_default();
                             chunk.push_str(&csv_line(keys.iter().map(|k| Some(k.clone()))));
                             keys
                         });
@@ -130,11 +166,17 @@ pub async fn export_handler(State(state): State<Arc<ServerState>>, request_heade
                 let line = serde_json::json!({ "error": err.as_db_error().map(|d| d.message().to_string()).unwrap_or_else(|| err.to_string()) });
                 let _ = tx_out.send(Ok(Bytes::from(format!("{line}\n")))).await;
             }
-            let _ = tx_out.send(Err(std::io::Error::other(err.to_string()))).await;
+            let _ = tx_out
+                .send(Err(std::io::Error::other(err.to_string())))
+                .await;
         }
     });
 
-    let content_type = if csv { "text/csv; charset=utf-8" } else { "application/x-ndjson" };
+    let content_type = if csv {
+        "text/csv; charset=utf-8"
+    } else {
+        "application/x-ndjson"
+    };
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     (StatusCode::OK, headers, Body::from_stream(rx)).into_response()
@@ -145,7 +187,9 @@ fn csv_line(fields: impl Iterator<Item = Option<String>>) -> String {
     let cells: Vec<String> = fields
         .map(|f| match f {
             None => String::new(),
-            Some(text) if text.contains([',', '"', '\n', '\r']) => format!("\"{}\"", text.replace('"', "\"\"")),
+            Some(text) if text.contains([',', '"', '\n', '\r']) => {
+                format!("\"{}\"", text.replace('"', "\"\""))
+            }
             Some(text) => text,
         })
         .collect();
@@ -175,20 +219,51 @@ pub async fn import_handler(
     };
     let catalog = state.current_catalog();
     let Some(table_name) = catalog.table_for_type(&state.default_schema, &type_name) else {
-        return json_error(StatusCode::NOT_FOUND, format!("no type `{type_name}`"), None);
+        return json_error(
+            StatusCode::NOT_FOUND,
+            format!("no type `{type_name}`"),
+            None,
+        );
     };
     let Some(table) = catalog.find_table(&state.default_schema, table_name) else {
-        return json_error(StatusCode::NOT_FOUND, format!("no type `{type_name}`"), None);
+        return json_error(
+            StatusCode::NOT_FOUND,
+            format!("no type `{type_name}`"),
+            None,
+        );
     };
     if !table.operations.create {
-        return json_error(StatusCode::BAD_REQUEST, format!("`{type_name}` rows cannot be created"), None);
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            format!("`{type_name}` rows cannot be created"),
+            None,
+        );
     }
     let mut client = match state.pool.get().await {
         Ok(client) => client,
-        Err(err) => return json_error(StatusCode::SERVICE_UNAVAILABLE, format!("Database unavailable: {err}"), None),
+        Err(err) => {
+            return json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("Database unavailable: {err}"),
+                None,
+            )
+        }
     };
-    match import(&state, &catalog, table, &mut client, auth_ctx.as_ref(), body).await {
-        Ok(count) => (StatusCode::OK, Json(serde_json::json!({ "data": { "inserted": count } }))).into_response(),
+    match import(
+        &state,
+        &catalog,
+        table,
+        &mut client,
+        auth_ctx.as_ref(),
+        body,
+    )
+    .await
+    {
+        Ok(count) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "data": { "inserted": count } })),
+        )
+            .into_response(),
         Err(ImportError::Input(line, err)) => {
             let errors: Vec<serde_json::Value> = match &err {
                 PlannerError::Input(errors) => errors
@@ -197,21 +272,36 @@ pub async fn import_handler(
                     .collect(),
                 other => vec![serde_json::json!({ "message": other.to_string(), "extensions": { "code": "BAD_USER_INPUT", "line": line } })],
             };
-            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "errors": errors }))).into_response()
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "errors": errors })),
+            )
+                .into_response()
         }
         Err(ImportError::Body(message)) => json_error(StatusCode::BAD_REQUEST, message, None),
         Err(ImportError::Database(err)) => {
             let err = ExecutionError::Write {
                 error: err,
-                context: Some(WriteContext { schema: table.schema.clone(), table: table.name.clone(), verb: WriteVerb::Insert, rows: Vec::new() }),
+                context: Some(WriteContext {
+                    schema: table.schema.clone(),
+                    table: table.name.clone(),
+                    verb: WriteVerb::Insert,
+                    rows: Vec::new(),
+                }),
             };
             match err.violation(&catalog) {
                 Some(v) => json_error(
                     StatusCode::OK,
                     format!("{} (nothing was imported)", v.message),
-                    Some(serde_json::json!({ "code": v.code, "type": v.type_name, "constraint": v.constraint, "fields": v.fields })),
+                    Some(
+                        serde_json::json!({ "code": v.code, "type": v.type_name, "constraint": v.constraint, "fields": v.fields }),
+                    ),
                 ),
-                None => json_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err} (nothing was imported)"), None),
+                None => json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("{err} (nothing was imported)"),
+                    None,
+                ),
             }
         }
     }
@@ -249,16 +339,23 @@ async fn import(
     let mut line_no = 0usize;
     // Set by the first row: its fields are every row's
     let mut columns: Option<Vec<crate::plan::ColumnValue>> = None;
-    let mut writer: Option<std::pin::Pin<Box<tokio_postgres::binary_copy::BinaryCopyInWriter>>> = None;
+    let mut writer: Option<std::pin::Pin<Box<tokio_postgres::binary_copy::BinaryCopyInWriter>>> =
+        None;
 
-    let handle_line = |line: &[u8], line_no: usize| -> Result<Option<Vec<crate::plan::ColumnValue>>, ImportError> {
-        let text = std::str::from_utf8(line).map_err(|_| ImportError::Body(format!("line {line_no} is not UTF-8")))?.trim();
+    let handle_line = |line: &[u8],
+                       line_no: usize|
+     -> Result<Option<Vec<crate::plan::ColumnValue>>, ImportError> {
+        let text = std::str::from_utf8(line)
+            .map_err(|_| ImportError::Body(format!("line {line_no} is not UTF-8")))?
+            .trim();
         if text.is_empty() {
             return Ok(None);
         }
-        let row: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| ImportError::Body(format!("line {line_no} is not a JSON object: {e}")))?;
-        let values = planner.import_values(table, &row, &format!("line {line_no}")).map_err(|e| ImportError::Input(line_no, e))?;
+        let row: serde_json::Value = serde_json::from_str(text)
+            .map_err(|e| ImportError::Body(format!("line {line_no} is not a JSON object: {e}")))?;
+        let values = planner
+            .import_values(table, &row, &format!("line {line_no}"))
+            .map_err(|e| ImportError::Input(line_no, e))?;
         Ok(Some(values))
     };
 
@@ -266,7 +363,11 @@ async fn import(
     while !finished {
         let chunk = match stream.next().await {
             Some(Ok(chunk)) => chunk,
-            Some(Err(err)) => return Err(ImportError::Body(format!("reading the request body failed: {err}"))),
+            Some(Err(err)) => {
+                return Err(ImportError::Body(format!(
+                    "reading the request body failed: {err}"
+                )))
+            }
             None => {
                 finished = true;
                 Bytes::new()
@@ -282,34 +383,69 @@ async fn import(
         }
         for line in lines {
             line_no += 1;
-            let Some(values) = handle_line(&line, line_no)? else { continue };
+            let Some(values) = handle_line(&line, line_no)? else {
+                continue;
+            };
             if columns.is_none() {
                 // Stage every value as text; the insert converts them
-                let staging: Vec<String> = (0..values.len()).map(|j| format!("c{j} text")).collect();
+                let staging: Vec<String> =
+                    (0..values.len()).map(|j| format!("c{j} text")).collect();
                 transaction
-                    .batch_execute(&format!("CREATE TEMP TABLE _import ({}) ON COMMIT DROP", staging.join(", ")))
+                    .batch_execute(&format!(
+                        "CREATE TEMP TABLE _import ({}) ON COMMIT DROP",
+                        staging.join(", ")
+                    ))
                     .await?;
-                let sink = transaction.copy_in("COPY _import FROM STDIN (FORMAT binary)").await?;
-                writer = Some(Box::pin(tokio_postgres::binary_copy::BinaryCopyInWriter::new(sink, &vec![Type::TEXT; values.len()])));
+                let sink = transaction
+                    .copy_in("COPY _import FROM STDIN (FORMAT binary)")
+                    .await?;
+                writer = Some(Box::pin(
+                    tokio_postgres::binary_copy::BinaryCopyInWriter::new(
+                        sink,
+                        &vec![Type::TEXT; values.len()],
+                    ),
+                ));
                 columns = Some(values.clone());
             }
             let expected = columns.as_ref().expect("set above");
             let mut cells: Vec<Option<String>> = Vec::with_capacity(expected.len());
             for spec in expected {
-                cells.push(values.iter().find(|v| v.column == spec.column).and_then(|v| SqlCompiler::value_text(&v.value)));
+                cells.push(
+                    values
+                        .iter()
+                        .find(|v| v.column == spec.column)
+                        .and_then(|v| SqlCompiler::value_text(&v.value)),
+                );
             }
-            if values.len() != expected.len() || values.iter().any(|v| !expected.iter().any(|e| e.column == v.column)) {
-                return Err(ImportError::Body(format!("line {line_no} must set the same fields as the first row")));
+            if values.len() != expected.len()
+                || values
+                    .iter()
+                    .any(|v| !expected.iter().any(|e| e.column == v.column))
+            {
+                return Err(ImportError::Body(format!(
+                    "line {line_no} must set the same fields as the first row"
+                )));
             }
-            let refs: Vec<&(dyn ToSql + Sync)> = cells.iter().map(|c| c as &(dyn ToSql + Sync)).collect();
-            writer.as_mut().expect("set above").as_mut().write(&refs).await?;
+            let refs: Vec<&(dyn ToSql + Sync)> =
+                cells.iter().map(|c| c as &(dyn ToSql + Sync)).collect();
+            writer
+                .as_mut()
+                .expect("set above")
+                .as_mut()
+                .write(&refs)
+                .await?;
         }
     }
     let (Some(columns), Some(mut writer)) = (columns, writer) else {
         return Ok(0);
     };
     writer.as_mut().finish().await?;
-    let inserted = transaction.execute(&SqlCompiler::import_statement(&table.schema, &table.name, &columns, "_import"), &[]).await?;
+    let inserted = transaction
+        .execute(
+            &SqlCompiler::import_statement(&table.schema, &table.name, &columns, "_import"),
+            &[],
+        )
+        .await?;
     transaction.commit().await?;
     Ok(inserted)
 }

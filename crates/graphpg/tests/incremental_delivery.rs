@@ -10,7 +10,6 @@ use std::sync::Arc;
 use tokio_postgres::NoTls;
 use tower::ServiceExt;
 
-
 async fn setup_app() -> axum::Router {
     common::ensure_forum_fixture().await;
     let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
@@ -98,7 +97,12 @@ async fn test_defer_inline_fragment() {
     let res = app.oneshot(req).await.expect("handler failed");
     assert_eq!(res.status(), StatusCode::OK);
 
-    let content_type = res.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+    let content_type = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(
         content_type.contains("multipart/mixed"),
         "expected multipart/mixed, got: {content_type}"
@@ -107,7 +111,11 @@ async fn test_defer_inline_fragment() {
     let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
     let (parts, has_closing) = parse_multipart_body(&body_bytes);
 
-    assert_eq!(parts.len(), 2, "expected initial chunk and 1 deferred chunk");
+    assert_eq!(
+        parts.len(),
+        2,
+        "expected initial chunk and 1 deferred chunk"
+    );
     assert!(has_closing, "expected closing delimiter '-----'");
 
     // 1. Verify initial chunk
@@ -166,7 +174,12 @@ async fn test_defer_fragment_spread() {
     let res = app.oneshot(req).await.expect("handler failed");
     assert_eq!(res.status(), StatusCode::OK);
 
-    let content_type = res.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+    let content_type = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(content_type.contains("multipart/mixed"));
 
     let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
@@ -281,7 +294,12 @@ async fn test_defer_conditional_if_false_falls_back_to_single_json() {
     let res = app.oneshot(req).await.expect("handler failed");
     assert_eq!(res.status(), StatusCode::OK);
 
-    let content_type = res.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+    let content_type = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
     // Must NOT be multipart
     assert!(!content_type.contains("multipart/mixed"));
 
@@ -332,7 +350,12 @@ async fn test_defer_variable_condition() {
         .unwrap();
 
     let res_false = app.clone().oneshot(req_false).await.unwrap();
-    let ct_false = res_false.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+    let ct_false = res_false
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(!ct_false.contains("multipart/mixed"));
     let bytes_false = res_false.into_body().collect().await.unwrap().to_bytes();
     let json_false: serde_json::Value = serde_json::from_slice(&bytes_false).unwrap();
@@ -353,14 +376,21 @@ async fn test_defer_variable_condition() {
         .unwrap();
 
     let res_true = app.oneshot(req_true).await.unwrap();
-    let ct_true = res_true.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+    let ct_true = res_true
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct_true.contains("multipart/mixed"));
     let bytes_true = res_true.into_body().collect().await.unwrap().to_bytes();
     let (parts, has_closing) = parse_multipart_body(&bytes_true);
     assert_eq!(parts.len(), 2);
     assert!(has_closing);
     assert_eq!(parts[0]["hasNext"], true);
-    assert!(parts[0]["data"]["forum"].get("messagesConnection").is_none());
+    assert!(parts[0]["data"]["forum"]
+        .get("messagesConnection")
+        .is_none());
     assert_eq!(parts[1]["hasNext"], false);
     assert_eq!(parts[1]["incremental"][0]["label"], "var_messages");
 }
@@ -393,7 +423,12 @@ async fn test_stream_connection() {
     let res = app.oneshot(req).await.expect("handler failed");
     assert_eq!(res.status(), StatusCode::OK);
 
-    let content_type = res.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+    let content_type = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(content_type.contains("multipart/mixed"));
 
     let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
@@ -405,7 +440,9 @@ async fn test_stream_connection() {
     // Initial chunk capped to initialCount: 1
     let initial = &parts[0];
     assert_eq!(initial["hasNext"], true);
-    let initial_nodes = initial["data"]["allForumsConnection"]["nodes"].as_array().unwrap();
+    let initial_nodes = initial["data"]["allForumsConnection"]["nodes"]
+        .as_array()
+        .unwrap();
     assert_eq!(initial_nodes.len(), 1, "initialCount was 1");
 
     // Stream patch chunk
@@ -415,7 +452,10 @@ async fn test_stream_connection() {
     assert_eq!(inc["label"], "streamed_forums");
     assert_eq!(inc["path"], json!(["allForumsConnection", "nodes", 1]));
     let stream_items = inc["items"].as_array().unwrap();
-    assert!(!stream_items.is_empty(), "expected remaining streamed forums");
+    assert!(
+        !stream_items.is_empty(),
+        "expected remaining streamed forums"
+    );
 }
 
 #[tokio::test]
@@ -455,7 +495,9 @@ async fn test_stream_connection_initial_count_zero() {
     // Initial chunk has 0 items
     let initial = &parts[0];
     assert_eq!(initial["hasNext"], true);
-    let initial_nodes = initial["data"]["allForumsConnection"]["nodes"].as_array().unwrap();
+    let initial_nodes = initial["data"]["allForumsConnection"]["nodes"]
+        .as_array()
+        .unwrap();
     assert_eq!(initial_nodes.len(), 0, "initialCount was 0");
 
     // Stream patch chunk starts at index 0
@@ -474,12 +516,23 @@ async fn post_query(app: &axum::Router, query: &str) -> (String, Vec<u8>) {
         .method("POST")
         .uri("/graphql")
         .header(header::CONTENT_TYPE, "application/json")
-        .body(axum::body::Body::from(json!({ "query": query }).to_string()))
+        .body(axum::body::Body::from(
+            json!({ "query": query }).to_string(),
+        ))
         .unwrap();
     let res = app.clone().oneshot(req).await.expect("handler failed");
     assert_eq!(res.status(), StatusCode::OK);
-    let content_type = res.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap().to_string();
-    (content_type, res.into_body().collect().await.unwrap().to_bytes().to_vec())
+    let content_type = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    (
+        content_type,
+        res.into_body().collect().await.unwrap().to_bytes().to_vec(),
+    )
 }
 
 /// The data of `query` sent without incremental delivery.
@@ -493,14 +546,27 @@ async fn plain_data(app: &axum::Router, query: &str) -> serde_json::Value {
 #[tokio::test]
 async fn test_stream_keeps_first_and_offset() {
     let app = setup_app().await;
-    let expected = plain_data(&app, "{ allForumsConnection(first: 2, offset: 1) { nodes { id } } }").await;
-    let expected = expected["allForumsConnection"]["nodes"].as_array().unwrap().clone();
+    let expected = plain_data(
+        &app,
+        "{ allForumsConnection(first: 2, offset: 1) { nodes { id } } }",
+    )
+    .await;
+    let expected = expected["allForumsConnection"]["nodes"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert_eq!(expected.len(), 2, "fixture needs at least 3 forums");
 
-    let (_, body) = post_query(&app, "{ allForumsConnection(first: 2, offset: 1) @stream(initialCount: 1) { nodes { id } } }").await;
+    let (_, body) = post_query(
+        &app,
+        "{ allForumsConnection(first: 2, offset: 1) @stream(initialCount: 1) { nodes { id } } }",
+    )
+    .await;
     let (parts, _) = parse_multipart_body(&body);
     assert_eq!(parts.len(), 2);
-    let initial = parts[0]["data"]["allForumsConnection"]["nodes"].as_array().unwrap();
+    let initial = parts[0]["data"]["allForumsConnection"]["nodes"]
+        .as_array()
+        .unwrap();
     let streamed = parts[1]["incremental"][0]["items"].as_array().unwrap();
     // The stream starts after the initial rows of the field's own page and ends with it
     let all: Vec<_> = initial.iter().chain(streamed).cloned().collect();
@@ -510,23 +576,46 @@ async fn test_stream_keeps_first_and_offset() {
 #[tokio::test]
 async fn test_stream_initial_count_covering_first_is_not_streamed() {
     let app = setup_app().await;
-    let (content_type, body) = post_query(&app, "{ allForumsConnection(first: 2) @stream(initialCount: 5) { nodes { id } } }").await;
+    let (content_type, body) = post_query(
+        &app,
+        "{ allForumsConnection(first: 2) @stream(initialCount: 5) { nodes { id } } }",
+    )
+    .await;
     // Nothing is left to stream: a single response holding the field's own page
     assert!(!content_type.contains("multipart/mixed"), "{content_type}");
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(res["data"]["allForumsConnection"]["nodes"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        res["data"]["allForumsConnection"]["nodes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[tokio::test]
 async fn test_defer_under_list_patches_each_element() {
     let app = setup_app().await;
-    let expected = plain_data(&app, "{ allForumsConnection(first: 2) { nodes { id name } } }").await;
-    let expected = expected["allForumsConnection"]["nodes"].as_array().unwrap().clone();
+    let expected = plain_data(
+        &app,
+        "{ allForumsConnection(first: 2) { nodes { id name } } }",
+    )
+    .await;
+    let expected = expected["allForumsConnection"]["nodes"]
+        .as_array()
+        .unwrap()
+        .clone();
 
-    let (_, body) = post_query(&app, r#"{ allForumsConnection(first: 2) { nodes { id ... @defer(label: "names") { name } } } }"#).await;
+    let (_, body) = post_query(
+        &app,
+        r#"{ allForumsConnection(first: 2) { nodes { id ... @defer(label: "names") { name } } } }"#,
+    )
+    .await;
     let (parts, _) = parse_multipart_body(&body);
     assert_eq!(parts.len(), 2);
-    let initial = parts[0]["data"]["allForumsConnection"]["nodes"].as_array().unwrap();
+    let initial = parts[0]["data"]["allForumsConnection"]["nodes"]
+        .as_array()
+        .unwrap();
     assert!(initial.iter().all(|n| n.get("name").is_none()));
 
     let entries = parts[1]["incremental"].as_array().unwrap();
@@ -544,7 +633,10 @@ async fn test_stream_under_list_streams_each_element() {
     let app = setup_app().await;
     let query = "{ allForumsConnection(first: 2) { nodes { id messagesConnection(first: 3) { nodes { id } } } } }";
     let expected = plain_data(&app, query).await;
-    let expected = expected["allForumsConnection"]["nodes"].as_array().unwrap().clone();
+    let expected = expected["allForumsConnection"]["nodes"]
+        .as_array()
+        .unwrap()
+        .clone();
 
     let (_, body) = post_query(
         &app,
@@ -553,23 +645,49 @@ async fn test_stream_under_list_streams_each_element() {
     .await;
     let (parts, _) = parse_multipart_body(&body);
     assert_eq!(parts.len(), 2);
-    let initial = parts[0]["data"]["allForumsConnection"]["nodes"].as_array().unwrap();
-    let entries = parts[1]["incremental"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let initial = parts[0]["data"]["allForumsConnection"]["nodes"]
+        .as_array()
+        .unwrap();
+    let entries = parts[1]["incremental"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
 
     for (i, forum) in expected.iter().enumerate() {
         let messages = forum["messagesConnection"]["nodes"].as_array().unwrap();
-        let first = initial[i]["messagesConnection"]["nodes"].as_array().unwrap();
+        let first = initial[i]["messagesConnection"]["nodes"]
+            .as_array()
+            .unwrap();
         assert_eq!(first.as_slice(), &messages[..messages.len().min(1)]);
-        let path = json!(["allForumsConnection", "nodes", i, "messagesConnection", "nodes", 1]);
-        let streamed = entries.iter().find(|e| e["path"] == path).map(|e| e["items"].as_array().unwrap().clone()).unwrap_or_default();
-        assert_eq!(streamed.as_slice(), &messages[messages.len().min(1)..], "forum {i}");
+        let path = json!([
+            "allForumsConnection",
+            "nodes",
+            i,
+            "messagesConnection",
+            "nodes",
+            1
+        ]);
+        let streamed = entries
+            .iter()
+            .find(|e| e["path"] == path)
+            .map(|e| e["items"].as_array().unwrap().clone())
+            .unwrap_or_default();
+        assert_eq!(
+            streamed.as_slice(),
+            &messages[messages.len().min(1)..],
+            "forum {i}"
+        );
     }
 }
 
 #[tokio::test]
 async fn test_incremental_initial_payload_answers_typename() {
     let app = setup_app().await;
-    let (_, body) = post_query(&app, "{ __typename allForumsConnection(first: 1) { nodes { id ... @defer { name } } } }").await;
+    let (_, body) = post_query(
+        &app,
+        "{ __typename allForumsConnection(first: 1) { nodes { id ... @defer { name } } } }",
+    )
+    .await;
     let (parts, _) = parse_multipart_body(&body);
     assert_eq!(parts[0]["data"]["__typename"], "Query");
     assert!(parts[0]["data"]["allForumsConnection"]["nodes"].is_array());

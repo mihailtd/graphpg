@@ -1,9 +1,10 @@
+#![allow(clippy::field_reassign_with_default, clippy::len_zero)] // test setup builds configs field by field
+
 mod common;
 use graphpg::catalog::CatalogInspector;
 use graphpg::config::{EngineConfig, FederationConfig, RbacConfig};
 use graphpg::schema::SchemaBuilder;
 use tokio_postgres::NoTls;
-
 
 async fn setup_test_roles(client: &tokio_postgres::Client) {
     let sql = r#"
@@ -37,7 +38,10 @@ async fn setup_test_roles(client: &tokio_postgres::Client) {
         GRANT USAGE ON SCHEMA app_public TO rbac_col_role;
         GRANT SELECT (id, name) ON app_public.forums TO rbac_col_role;
     "#;
-    client.batch_execute(sql).await.expect("Failed to setup test roles");
+    client
+        .batch_execute(sql)
+        .await
+        .expect("Failed to setup test roles");
 }
 
 static INIT: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
@@ -81,18 +85,39 @@ async fn test_rbac_read_only_table_has_no_mutations_and_prunes_other_tables() {
     // 1. User should be present for reading
     assert!(sdl.contains("type User"), "User type should exist in SDL");
     assert!(sdl.contains("users: [User!]!"), "Query.users should exist");
-    assert!(sdl.contains("user(id: UUID!): User"), "Query.user should exist");
+    assert!(
+        sdl.contains("user(id: UUID!): User"),
+        "Query.user should exist"
+    );
 
     // 2. Unpermitted tables (Forums, Messages) should be completely pruned
-    assert!(!sdl.contains("type Forum"), "Forum should be pruned for rbac_reader_role");
-    assert!(!sdl.contains("type Message"), "Message should be pruned for rbac_reader_role");
+    assert!(
+        !sdl.contains("type Forum"),
+        "Forum should be pruned for rbac_reader_role"
+    );
+    assert!(
+        !sdl.contains("type Message"),
+        "Message should be pruned for rbac_reader_role"
+    );
     assert!(!sdl.contains("forums:"), "Query.forums should not exist");
-    assert!(!sdl.contains("messages:"), "Query.messages should not exist");
+    assert!(
+        !sdl.contains("messages:"),
+        "Query.messages should not exist"
+    );
 
     // 3. User mutations must NOT exist (read-only role)
-    assert!(!sdl.contains("createUser("), "createUser mutation must not exist");
-    assert!(!sdl.contains("updateUser("), "updateUser mutation must not exist");
-    assert!(!sdl.contains("deleteUser("), "deleteUser mutation must not exist");
+    assert!(
+        !sdl.contains("createUser("),
+        "createUser mutation must not exist"
+    );
+    assert!(
+        !sdl.contains("updateUser("),
+        "updateUser mutation must not exist"
+    );
+    assert!(
+        !sdl.contains("deleteUser("),
+        "deleteUser mutation must not exist"
+    );
 
     // Validates with apollo-compiler
     let schema = SchemaBuilder::build(&catalog).expect("Schema must validate");
@@ -132,14 +157,32 @@ async fn test_rbac_writer_role_has_full_mutations_for_permitted_table() {
 
     // 1. Forum should be present with read queries and mutations
     assert!(sdl.contains("type Forum"), "Forum type should exist in SDL");
-    assert!(sdl.contains("forums: [Forum!]!"), "Query.forums should exist");
-    assert!(sdl.contains("createForum("), "createForum mutation must exist");
-    assert!(sdl.contains("updateForum("), "updateForum mutation must exist");
-    assert!(sdl.contains("deleteForum("), "deleteForum mutation must exist");
+    assert!(
+        sdl.contains("forums: [Forum!]!"),
+        "Query.forums should exist"
+    );
+    assert!(
+        sdl.contains("createForum("),
+        "createForum mutation must exist"
+    );
+    assert!(
+        sdl.contains("updateForum("),
+        "updateForum mutation must exist"
+    );
+    assert!(
+        sdl.contains("deleteForum("),
+        "deleteForum mutation must exist"
+    );
 
     // 2. Users and Messages must be pruned
-    assert!(!sdl.contains("type User"), "User should be pruned for rbac_writer_role");
-    assert!(!sdl.contains("type Message"), "Message should be pruned for rbac_writer_role");
+    assert!(
+        !sdl.contains("type User"),
+        "User should be pruned for rbac_writer_role"
+    );
+    assert!(
+        !sdl.contains("type Message"),
+        "Message should be pruned for rbac_writer_role"
+    );
 
     // Validates cleanly with apollo-compiler
     let schema = SchemaBuilder::build(&catalog).expect("Schema must validate");
@@ -175,15 +218,23 @@ async fn test_rbac_column_level_pruning() {
         .await
         .expect("Failed to inspect schema with rbac config");
 
-    let forum = catalog.find_table("app_public", "forums").expect("forums table found");
+    let forum = catalog
+        .find_table("app_public", "forums")
+        .expect("forums table found");
     let visible_cols: Vec<_> = forum.visible_columns().map(|c| c.name.as_str()).collect();
 
     // Permitted columns: id, name
     assert!(visible_cols.contains(&"id"), "id column should be visible");
-    assert!(visible_cols.contains(&"name"), "name column should be visible");
+    assert!(
+        visible_cols.contains(&"name"),
+        "name column should be visible"
+    );
 
     // Non-permitted columns (e.g. description, created_at, updated_at) must be omitted
-    assert!(!visible_cols.contains(&"description"), "description should be pruned");
+    assert!(
+        !visible_cols.contains(&"description"),
+        "description should be pruned"
+    );
 
     let schema = SchemaBuilder::build(&catalog).expect("Schema must validate");
     let schema_ref = schema.as_ref();

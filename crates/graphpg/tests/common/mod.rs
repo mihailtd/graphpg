@@ -15,7 +15,9 @@ const INTERFACES_SQL: &str = include_str!("../fixtures/interfaces_and_unions.sql
 /// Connection string of the test database.
 pub fn db_url() -> &'static str {
     static URL: OnceLock<String> = OnceLock::new();
-    URL.get_or_init(|| std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string()))
+    URL.get_or_init(|| {
+        std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string())
+    })
 }
 
 /// Create the `app_public` forum fixture (users, forums, messages) unless it already exists.
@@ -37,14 +39,26 @@ async fn ensure_fixture(schema: &str, sql: &str) {
     tokio::spawn(async move {
         let _ = connection.await;
     });
-    client.batch_execute("SELECT pg_advisory_lock(7461001)").await.expect("advisory lock");
+    client
+        .batch_execute("SELECT pg_advisory_lock(7461001)")
+        .await
+        .expect("advisory lock");
     let exists: bool = client
-        .query_one("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)", &[&schema])
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)",
+            &[&schema],
+        )
         .await
         .expect("fixture check")
         .get(0);
     if !exists {
-        client.batch_execute(sql).await.unwrap_or_else(|e| panic!("Failed to create the {schema} fixture: {e}"));
+        client
+            .batch_execute(sql)
+            .await
+            .unwrap_or_else(|e| panic!("Failed to create the {schema} fixture: {e}"));
     }
-    client.batch_execute("SELECT pg_advisory_unlock(7461001)").await.expect("advisory unlock");
+    client
+        .batch_execute("SELECT pg_advisory_unlock(7461001)")
+        .await
+        .expect("advisory unlock");
 }
