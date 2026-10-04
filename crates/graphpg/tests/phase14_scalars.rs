@@ -6,7 +6,7 @@
 //! Uses a `scalar_fixture` schema created on demand (recreated when `FIXTURE_VERSION` changes).
 mod common;
 use graphpg::catalog::CatalogInspector;
-use graphpg::config::EngineConfig;
+use graphpg::config::Config;
 use graphpg::execution::ExecutionEngine;
 use graphpg::planner::QueryPlanner;
 use graphpg::schema::SchemaBuilder;
@@ -94,7 +94,7 @@ struct Env {
 async fn setup_with(config: &str) -> Env {
     let client = connect().await;
     ensure_fixture(&client).await;
-    let config = EngineConfig::from_yaml(config).expect("config parses");
+    let config = Config::from_yaml(config).expect("config parses");
     let catalog = CatalogInspector::new(&client)
         .inspect_schema_with_config(SCHEMA, &config)
         .await

@@ -398,21 +398,7 @@ fn check(config: &AuthConfig) -> Result<Checked, String> {
         errors.push("auth.audience: required (a token's `aud` must contain it)".to_string());
     }
 
-    let secret = match config.secret.as_deref() {
-        None => None,
-        Some(raw) => match raw.strip_prefix("env:") {
-            Some(var) => match std::env::var(var) {
-                Ok(value) if !value.is_empty() => Some(value),
-                _ => {
-                    errors.push(format!(
-                        "auth.secret: the environment variable `{var}` is not set"
-                    ));
-                    None
-                }
-            },
-            None => Some(raw.to_string()),
-        },
-    };
+    let secret = config.secret.clone();
     if let Some(secret) = &secret {
         // RFC 7518 §3.2: an HMAC key at least as long as the hash
         if secret.len() < 32 {

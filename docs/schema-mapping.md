@@ -1,6 +1,6 @@
 # Schema mapping
 
-How a PostgreSQL database becomes a GraphQL schema. graphpg reads the system catalogs (`pg_class`, `pg_attribute`, `pg_type`, `pg_proc`, `pg_constraint`, `pg_index`) in a fixed number of catalog-wide queries, not one per table, and generates the schema and its SQL from what it finds. Schema design (tables, constraints, types, functions, indexes) stays in SQL; [`engine.config.yaml`](configuration.md) only adjusts the GraphQL surface.
+How a PostgreSQL database becomes a GraphQL schema. graphpg reads the system catalogs (`pg_class`, `pg_attribute`, `pg_type`, `pg_proc`, `pg_constraint`, `pg_index`) in a fixed number of catalog-wide queries, not one per table, and generates the schema and its SQL from what it finds. Schema design (tables, constraints, types, functions, indexes) stays in SQL; [`graphpg.yaml`](configuration.md) only adjusts the GraphQL surface.
 
 ## Overview
 
@@ -12,8 +12,8 @@ How a PostgreSQL database becomes a GraphQL schema. graphpg reads the system cat
 | **Generated Columns** (`GENERATED ALWAYS AS ... STORED`) | `pg_attribute.attgenerated = 's'` | Read-only output fields | Bare column select (pre-computed on disk) | Automatically excluded from Create & Update inputs |
 | **Functions** (any `LANGUAGE`) | `pg_proc` (`prokind = 'f'`), return and argument types, volatility | Root fields typed by what they return (`User`, a `UserConnection`, scalars, enums, composites, `<Func>Row`); functions of a row are fields of its type | `FROM schema."func"(args)`, inlinable by PostgreSQL | `VOLATILE` functions are mutations |
 | **Exclusive Arcs** (`CHECK num_nonnulls(...) = 1`) | `pg_constraint.conbin` regex parsing | GraphQL `union <TargetUnion>` | `CASE WHEN ... THEN (SELECT JSON_OBJECT(...))` | Validated by PostgreSQL check constraint |
-| **Views & Materialized Views** | `pg_class.relkind IN ('v', 'm')` (also foreign tables; partitions are hidden behind their partitioned table) | Object types with list/connection root fields; keys and relations declared in `engine.config.yaml` | Same as tables | Only for updatable views (`pg_relation_is_updatable`) |
-| **Virtual JSON_TABLE Views** | View + key/foreign key declared in `engine.config.yaml` | Relational 1:M child collections | Standard `LEFT JOIN LATERAL` | Managed via parent table JSONB mutations |
+| **Views & Materialized Views** | `pg_class.relkind IN ('v', 'm')` (also foreign tables; partitions are hidden behind their partitioned table) | Object types with list/connection root fields; keys and relations declared in `graphpg.yaml` | Same as tables | Only for updatable views (`pg_relation_is_updatable`) |
+| **Virtual JSON_TABLE Views** | View + key/foreign key declared in `graphpg.yaml` | Relational 1:M child collections | Standard `LEFT JOIN LATERAL` | Managed via parent table JSONB mutations |
 | **Composite Keys** | Multi-column `pg_constraint.conkey`/`confkey` | One relation per foreign key; lookups/updates/deletes take one argument per key column | Multi-column join conditions, row-value cursors | Rows addressed by every key column |
 | **Scalar & Array Types** | `pg_type` (domains as scalars of their own, over their base type) | A scalar per type (`BigInt`, `Decimal`, `Datetime`, `LocalDatetime`, `Interval`, `Base64`, `InternetAddress`, ...); ranges as objects; arrays as lists | Output in each scalar's format (exact numbers as strings, non-finite floats as null, ISO 8601 durations, base64) | Inputs checked against their scalar before any SQL runs |
 | **Native UUIDv7** | `uuidv7()` default | `UUID` scalar (`databaseId`), `ID!` Relay global ID | Standard B-Tree equality/range | Generated natively in database |
@@ -22,7 +22,7 @@ How a PostgreSQL database becomes a GraphQL schema. graphpg reads the system cat
 | **Search Indexes** (`pg_trgm`, `pgvector`, ParadeDB BM25) | Index access method and operator class from `pg_index`/`pg_opclass` | `<list>FuzzySearch`, `<list>SemanticSearch`, `<list>Bm25Search`, `<list>HybridSearch` root fields: best matches, no pagination | Ordered by the index's own operator, `LIMIT first + 1` | — |
 | **Relay Node Interface & Global IDs** | Single-column PK inspection | `interface Node { id: ID! }`, `databaseId`, `Query.node(id: ID!): Node` | Nanosecond in-memory routing to table + PK index seek | Accepts both Global ID & raw PK in mutations & queries |
 | **Event Trigger DDL Watcher** | `ddl_command_end`, `sql_drop` | Zero-downtime hot reload | `LISTEN graphpg_watch` notification | Auto-exports `schema.graphql` and the config JSON Schema |
-| **Engine Config** (`engine.config.yaml`) | Keyed by relation/column/constraint/function/type name | Rename, describe or hide types, fields and enum values; pick root operations; mount functions | — | — |
+| **Engine Config** (`graphpg.yaml`) | Keyed by relation/column/constraint/function/type name | Rename, describe or hide types, fields and enum values; pick root operations; mount functions | — | — |
 | **Extension Objects** | `pg_depend.deptype = 'e'` | Hidden unless the extension is listed in `extensions.expose` | — | — |
 | **Ordered Mutations** | — | Root mutation fields | One statement per field, payload re-read by key | Run in order in one transaction; any failure rolls back all |
 | **Constraint-Aware Errors** | Every unique/primary/foreign key, `CHECK` and exclusion constraint and unique index (`pg_constraint`, `pg_index`) | `enum <Type>ErrorCode` (`EMAIL_TAKEN`, `TEAM_NOT_FOUND`, `REFERENCED_BY_PLAYERS`, ...) | — | Violations reported with the code and the input fields (`extensions.fields`) |
@@ -51,7 +51,7 @@ ALTER TABLE customers ADD COLUMN billing_address address;
    type Address { street: String, city: String, postalCode: String, country: String }
    input AddressInput { street: String, city: String, postalCode: String, country: String }
    ```
-   The column is `billingAddress: Address` (`AddressInput` on writes); arrays are `[Address]`. Rename types and attributes under `types` in `engine.config.yaml`.
+   The column is `billingAddress: Address` (`AddressInput` on writes); arrays are `[Address]`. Rename types and attributes under `types` in `graphpg.yaml`.
 3. **Reads** project only the selected attributes; a NULL value stays `null`:
    ```sql
    CASE WHEN (t."billing_address")::text IS NULL THEN NULL ELSE JSON_OBJECT(
@@ -123,7 +123,7 @@ The engine recognises `num_nonnulls(...) = 1` in `pg_constraint.conbin`, creates
 
 ## Views with declared keys (`JSON_TABLE`)
 
-Views are introspected like tables (`relkind = 'v'` or `'m'`), but PostgreSQL cannot attach primary or foreign keys to a view. Declare them in `engine.config.yaml` and the view becomes a relation. This pairs well with PostgreSQL 17's `JSON_TABLE`, which turns a `jsonb` array into virtual rows without a child table:
+Views are introspected like tables (`relkind = 'v'` or `'m'`), but PostgreSQL cannot attach primary or foreign keys to a view. Declare them in `graphpg.yaml` and the view becomes a relation. This pairs well with PostgreSQL 17's `JSON_TABLE`, which turns a `jsonb` array into virtual rows without a child table:
 
 ```sql
 CREATE VIEW customer_phone_view AS
@@ -185,7 +185,7 @@ The field name drops the table's name from the function's (`teams_captain` → `
 
 ### Functions returning columns of their own, mounted on a table
 
-A set-returning function with `TABLE (...)` columns, whose first argument takes a table's primary key (`flatten_questionnaire_items(q_id uuid)` and table `questionnaires`), is also mounted as a field of that table's type: `Questionnaire.items: [FlattenQuestionnaireItemsRow!]!`. `engine.config.yaml` can mount it elsewhere or map more arguments to columns (`functions.<name>.mount`).
+A set-returning function with `TABLE (...)` columns, whose first argument takes a table's primary key (`flatten_questionnaire_items(q_id uuid)` and table `questionnaires`), is also mounted as a field of that table's type: `Questionnaire.items: [FlattenQuestionnaireItemsRow!]!`. `graphpg.yaml` can mount it elsewhere or map more arguments to columns (`functions.<name>.mount`).
 
 ### Config
 
@@ -227,7 +227,7 @@ Every column type has a GraphQL type whose values round-trip:
 
 **Inputs are checked before any SQL runs.** Every value, in arguments, inputs, conditions, filters, range bounds and function arguments, is checked against its scalar (UUID syntax, 64-bit integer range, decimal syntax, ISO 8601 dates, times, offsets and durations, base64, IP addresses and networks, MAC addresses) and converted to what PostgreSQL parses. All invalid values of an operation are reported together, each naming its field (`` `ip`: "10.0.0.300" is not an InternetAddress ``), and nothing is executed.
 
-**Domains** (`CREATE DOMAIN email AS citext CHECK (value ~ '@')`) become scalars of their own, described by the domain's comment. Values are those of the base type: checked and converted like them (a domain's custom scalar gets GraphQL's built-in checks for `Int`, `Float`, `Boolean` and `String` from the engine), while the domain's `CHECK` constraints are enforced by PostgreSQL. `types.<domain>` in `engine.config.yaml` renames (`type_name`) or describes the scalar. Domains over arrays, ranges, composites and enums use their base type's GraphQL type.
+**Domains** (`CREATE DOMAIN email AS citext CHECK (value ~ '@')`) become scalars of their own, described by the domain's comment. Values are those of the base type: checked and converted like them (a domain's custom scalar gets GraphQL's built-in checks for `Int`, `Float`, `Boolean` and `String` from the engine), while the domain's `CHECK` constraints are enforced by PostgreSQL. `types.<domain>` in `graphpg.yaml` renames (`type_name`) or describes the scalar. Domains over arrays, ranges, composites and enums use their base type's GraphQL type.
 
 Each scalar and enum has a matching filter input (`BigIntFilter`, `DatetimeFilter`, `IntervalFilter`, `InternetAddressFilter`, `<Enum>Filter`, ...); domain columns filter like their base type, `money` like `Decimal`; `bytea` and `vector` columns are not filtered. `citext` compares case-insensitively. Array columns get `<T>ListFilter` with `equalTo`, `contains` (`@>`), `containedBy` (`<@`) and `overlaps` (`&&`). In `StringFilter`, `startsWith`/`endsWith`/`contains` match the given text literally (`%` and `_` are escaped); `like`/`ilike` take SQL patterns.
 

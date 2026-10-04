@@ -7,7 +7,7 @@ mod common;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use graphpg::catalog::{CatalogError, CatalogInspector};
-use graphpg::config::EngineConfig;
+use graphpg::config::Config;
 use graphpg::execution::ExecutionEngine;
 use graphpg::planner::QueryPlanner;
 use graphpg::schema::SchemaBuilder;
@@ -125,7 +125,6 @@ ALTER EXTENSION tablefunc ADD FUNCTION ext_numbers(int);
 "#;
 
 const CONFIG: &str = r#"
-version: "1.0"
 entities:
   authors:
     type_name: Writer
@@ -228,7 +227,7 @@ struct Env {
 async fn setup_with(config: &str) -> Env {
     let client = connect().await;
     ensure_fixture(&client).await;
-    let config = EngineConfig::from_yaml(config).expect("config parses");
+    let config = Config::from_yaml(config).expect("config parses");
     let catalog = CatalogInspector::new(&client)
         .inspect_schema_with_config(SCHEMA, &config)
         .await
@@ -804,7 +803,7 @@ async fn test_mutations_run_in_order() {
 async fn test_config_errors_are_reported_together() {
     let client = connect().await;
     ensure_fixture(&client).await;
-    let config = EngineConfig::from_yaml(
+    let config = Config::from_yaml(
         r#"
 entities:
   nope: { type_name: X }
@@ -844,7 +843,7 @@ functions:
     }
 
     // Structural problems stop before naming ones are checked; those are reported together too
-    let config = EngineConfig::from_yaml(
+    let config = Config::from_yaml(
         r#"
 entities:
   authors:
@@ -876,7 +875,7 @@ types:
         assert!(text.contains(expected), "missing `{expected}` in:\n{text}");
     }
 
-    let config = EngineConfig::from_yaml("extensions: { expose: [nope] }").unwrap();
+    let config = Config::from_yaml("extensions: { expose: [nope] }").unwrap();
     let err = CatalogInspector::new(&client)
         .inspect_schema_with_config(SCHEMA, &config)
         .await
@@ -1134,7 +1133,7 @@ async fn test_search_fields() {
         .try_run("{ booksSemanticSearch(vector: [1, 0, 0], first: 3) { hasMore } }")
         .await
         .is_err());
-    let config = EngineConfig::from_yaml(&format!(
+    let config = Config::from_yaml(&format!(
         "{CONFIG}\nsearch: {{ default_limit: 20, max_limit: 5 }}\n"
     ))
     .unwrap();

@@ -158,82 +158,205 @@ impl ConfigSchemaGenerator {
                 .or_insert(schema);
         }
 
+        let mut settings = Map::new();
+        settings.insert("server".to_string(), Self::server_schema());
+        settings.insert("database".to_string(), Self::database_schema());
+        settings.insert("auth".to_string(), Self::auth_schema());
+        settings.insert(
+            "rbac".to_string(),
+            json!({
+                "type": "object",
+                "description": "Prune the generated APIs to what a PostgreSQL role may access",
+                "properties": {
+                    "enabled": Self::switch(),
+                    "role": { "type": "string", "description": "Role whose privileges are inspected (default: the connected user)" }
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "debug".to_string(),
+            json!({
+                "type": "object",
+                "description": "Diagnostics added to responses. Never enable them in production",
+                "properties": {
+                    "sql": Self::switch_described("Include the generated SQL in the response `extensions`"),
+                    "explain": Self::switch_described("Include PostgreSQL's EXPLAIN (ANALYZE) output of every statement")
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "graphql".to_string(),
+            json!({
+                "type": "object",
+                "description": "The GraphQL API",
+                "properties": {
+                    "enabled": Self::switch_described("Serve the GraphQL API at /graphql (default true)"),
+                    "ui": Self::switch_described("Serve the GraphiQL IDE at /graphiql (default: on in dev mode, off in prod)"),
+                    "federation": {
+                        "type": "object",
+                        "description": "Apollo Federation subgraph mode",
+                        "properties": {
+                            "enabled": Self::switch(),
+                            "version": { "type": "string", "description": "Federation spec version (default v2.3)" }
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "openapi".to_string(),
+            json!({
+                "type": "object",
+                "description": "The REST API and its OpenAPI description",
+                "properties": {
+                    "enabled": Self::switch_described("Serve the REST API (default false)")
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "entities".to_string(),
+            json!({
+                "type": "object",
+                "description": "Tables, views, materialized views and foreign tables, shared by every API",
+                "properties": entity_properties,
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "functions".to_string(),
+            json!({
+                "type": "object",
+                "description": "Table-valued and computed-column functions",
+                "properties": function_properties,
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "types".to_string(),
+            json!({
+                "type": "object",
+                "description": "Enum and composite types (CHECK-closed text columns as <table>.<column>)",
+                "properties": Self::type_properties(catalog),
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "extensions".to_string(),
+            json!({
+                "type": "object",
+                "description": "Objects owned by extensions are hidden unless their extension is exposed",
+                "properties": {
+                    "expose": {
+                        "type": "array",
+                        "items": { "type": "string", "enum": std::iter::once("*").chain(catalog.extensions.iter().map(String::as_str)).collect::<Vec<_>>() },
+                        "uniqueItems": true,
+                        "description": "Extensions whose tables, views and functions are exposed (\"*\": all)"
+                    }
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "search".to_string(),
+            json!({
+                "type": "object",
+                "description": "Search root fields return the best matches, without pagination",
+                "properties": {
+                    "default_limit": { "type": "integer", "minimum": 1, "description": "Hits returned without `first` (default 10)" },
+                    "max_limit": { "type": "integer", "minimum": 1, "description": "Largest accepted `first` (default 50)" }
+                },
+                "additionalProperties": false
+            }),
+        );
+
+        // Each setting is defined once and referenced from the root and from both mode
+        // blocks, so the entity and column lists are not repeated
+        let mut root_properties = Map::new();
+        let mut block_properties = Map::new();
+        for (name, schema) in settings {
+            let key = format!("settings.{name}");
+            let reference = json!({ "$ref": format!("#/$defs/{key}") });
+            defs.insert(key, schema);
+            root_properties.insert(name.clone(), reference.clone());
+            block_properties.insert(name, reference);
+        }
+        defs.insert(
+            "mode".to_string(),
+            json!({
+                "type": "object",
+                "properties": block_properties,
+                "additionalProperties": false
+            }),
+        );
+        root_properties.insert(
+            "dev".to_string(),
+            json!({ "$ref": "#/$defs/mode", "description": "Settings that differ in dev mode (`--dev`), merged over the ones above" }),
+        );
+        root_properties.insert(
+            "prod".to_string(),
+            json!({ "$ref": "#/$defs/mode", "description": "Settings that differ in prod mode (the default), merged over the ones above" }),
+        );
+
         json!({
             "$schema": "http://json-schema.org/draft-07/schema#",
-            "title": "Engine configuration",
-            "description": "Changes to the generated GraphQL schema, keyed by database object name",
+            "title": "graphpg configuration",
+            "description": "One file for every environment: shared settings, then `dev:` and `prod:` blocks for what differs. Strings may read the environment: ${NAME} or ${NAME:-default} (quote them inside [] and {})",
             "type": "object",
+            "properties": root_properties,
+            "additionalProperties": false,
+            "$defs": defs
+        })
+    }
+
+    /// A boolean, or text that reads as one (`${NAME}`): the switches of the config.
+    fn switch() -> Value {
+        json!({ "type": ["boolean", "string"] })
+    }
+
+    fn switch_described(description: &str) -> Value {
+        json!({ "type": ["boolean", "string"], "description": description })
+    }
+
+    /// `server`: the HTTP listener.
+    fn server_schema() -> Value {
+        json!({
+            "type": "object",
+            "description": "The HTTP listener",
             "properties": {
-                "version": { "type": "string", "enum": ["1.0"], "description": "Configuration format version" },
-                "entities": {
-                    "type": "object",
-                    "description": "Tables, views, materialized views and foreign tables",
-                    "properties": entity_properties,
-                    "additionalProperties": false
-                },
-                "functions": {
-                    "type": "object",
-                    "description": "Table-valued and computed-column functions",
-                    "properties": function_properties,
-                    "additionalProperties": false
-                },
-                "types": {
-                    "type": "object",
-                    "description": "Enum and composite types (CHECK-closed text columns as <table>.<column>)",
-                    "properties": Self::type_properties(catalog),
-                    "additionalProperties": false
-                },
-                "extensions": {
-                    "type": "object",
-                    "description": "Objects owned by extensions are hidden unless their extension is exposed",
-                    "properties": {
-                        "expose": {
-                            "type": "array",
-                            "items": { "type": "string", "enum": std::iter::once("*").chain(catalog.extensions.iter().map(String::as_str)).collect::<Vec<_>>() },
-                            "uniqueItems": true,
-                            "description": "Extensions whose tables, views and functions are exposed (\"*\": all)"
-                        }
-                    },
-                    "additionalProperties": false
-                },
-                "search": {
-                    "type": "object",
-                    "description": "Search root fields return the best matches, without pagination",
-                    "properties": {
-                        "default_limit": { "type": "integer", "minimum": 1, "description": "Hits returned without `first` (default 10)" },
-                        "max_limit": { "type": "integer", "minimum": 1, "description": "Largest accepted `first` (default 50)" }
-                    },
-                    "additionalProperties": false
-                },
+                "host": { "type": "string", "description": "Address to listen on (default 0.0.0.0)" },
+                "port": { "type": ["integer", "string"], "description": "Port to listen on (default 4000)" }
+            },
+            "additionalProperties": false
+        })
+    }
+
+    /// `database`: the connection, the schemas and the replicas.
+    fn database_schema() -> Value {
+        json!({
+            "type": "object",
+            "description": "The PostgreSQL connection, the schemas to expose and the read replicas",
+            "properties": {
+                "url": { "type": "string", "description": "Connection string; keep credentials out of the file: ${DATABASE_URL}" },
+                "pool_size": { "type": ["integer", "string"], "description": "Connections in the pool (default 10)" },
                 "schemas": {
                     "type": "array",
                     "items": { "type": "string" },
                     "uniqueItems": true,
-                    "description": "Database schemas to inspect, the first being the default (DATABASE_SCHEMAS overrides; else DATABASE_SCHEMA, else app_public)"
+                    "description": "Database schemas to expose, the first being the default (default app_public)"
                 },
-                "federation": {
-                    "type": "object",
-                    "description": "Apollo Federation subgraph mode",
-                    "properties": {
-                        "enabled": { "type": "boolean" },
-                        "version": { "type": "string", "description": "Federation spec version (default v2.3)" }
-                    },
-                    "additionalProperties": false
+                "replicas": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Connection strings of read replicas; queries run on those that are standbys"
                 },
-                "rbac": {
-                    "type": "object",
-                    "description": "Prune the GraphQL schema to what a PostgreSQL role may access",
-                    "properties": {
-                        "enabled": { "type": "boolean" },
-                        "role": { "type": "string", "description": "Role whose privileges are inspected (default: the connected user)" }
-                    },
-                    "additionalProperties": false
-                },
-                "auth": Self::auth_schema(),
-                "graphiql": { "type": "boolean", "description": "Serve the GraphiQL IDE at /graphiql, for development and pre-production (default false; GRAPHIQL overrides)" }
+                "sql_comments": Self::switch_described("Append a sqlcommenter comment to every statement (default true)")
             },
-            "additionalProperties": false,
-            "$defs": defs
+            "additionalProperties": false
         })
     }
 
@@ -242,16 +365,16 @@ impl ConfigSchemaGenerator {
         let setting = json!({ "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$" });
         json!({
             "type": "object",
-            "description": "Authentication with OAuth 2.0 access tokens (`Authorization: Bearer <token>`), whose claims set the PostgreSQL role and the settings Row-Level Security policies read. Off by default. Environment: AUTH_ENABLED, AUTH_ISSUER, AUTH_AUDIENCE, AUTH_JWKS_URI, AUTH_JWT_SECRET",
+            "description": "Authentication with OAuth 2.0 access tokens (`Authorization: Bearer <token>`), whose claims set the PostgreSQL role and the settings Row-Level Security policies read. Off by default",
             "properties": {
-                "enabled": { "type": "boolean", "description": "Whether requests are authenticated (AUTH_ENABLED)" },
-                "issuer": { "type": "string", "format": "uri", "description": "Authorization server issuer: tokens' `iss` must equal it; signing keys are discovered from its metadata (AUTH_ISSUER)" },
+                "enabled": Self::switch_described("Whether requests are authenticated (default false)"),
+                "issuer": { "type": "string", "format": "uri", "description": "Authorization server issuer: tokens' `iss` must equal it; signing keys are discovered from its metadata" },
                 "audience": {
-                    "description": "This API's identifier(s): tokens' `aud` must contain one (AUTH_AUDIENCE)",
+                    "description": "This API's identifier(s): tokens' `aud` must contain one",
                     "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" }, "minItems": 1 }]
                 },
-                "jwks_uri": { "type": "string", "format": "uri", "description": "JSON Web Key Set URL, when not discovered from the issuer (AUTH_JWKS_URI)" },
-                "secret": { "type": "string", "description": "Shared secret for HMAC-signed tokens instead of a key set; `env:NAME` reads it from the environment; at least 32 bytes (AUTH_JWT_SECRET)" },
+                "jwks_uri": { "type": "string", "format": "uri", "description": "JSON Web Key Set URL, when not discovered from the issuer" },
+                "secret": { "type": "string", "description": "Shared secret for HMAC-signed tokens instead of a key set, at least 32 bytes; keep it out of the file: ${AUTH_JWT_SECRET}" },
                 "algorithms": {
                     "type": "array",
                     "items": { "type": "string", "enum": ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA", "HS256", "HS384", "HS512"] },

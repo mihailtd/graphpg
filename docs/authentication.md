@@ -18,7 +18,7 @@ Authentication is **off by default**. Every request then runs as graphpg's datab
 
 ## Configuration
 
-In `engine.config.yaml` (the editor validates it against `.engine/schema.config.json`):
+In `graphpg.yaml` (the editor validates it against `.engine/schema.config.json`):
 
 ```yaml
 auth:
@@ -39,7 +39,7 @@ auth:
       org_id: app.current_org_id         # further settings, from a claim name or dot path
 ```
 
-For HMAC-signed tokens (a shared secret instead of a key set), set `secret: env:JWT_SECRET` (at least 32 bytes) in place of discovery. Asymmetric keys are preferable.
+For HMAC-signed tokens (a shared secret instead of a key set), set `secret: ${JWT_SECRET}` (at least 32 bytes, read from the environment) in place of discovery. Asymmetric keys are preferable.
 
 Environment variables override the file. Empty values are ignored.
 
@@ -80,7 +80,7 @@ Each request runs in a transaction that starts with one statement setting `role`
 
 ## GraphiQL
 
-The GraphiQL IDE at `/graphiql` is for development and pre-production. It is off by default. Turn it on with `graphiql: true` in the config, `GRAPHIQL=true` or `--graphiql`. When it is off, `/graphiql` returns 404.
+The GraphiQL IDE at `/graphiql` is for development and pre-production. It is on in dev mode (`--dev`) and off in prod. Set `graphql.ui: true` (or `false`) in the config to choose otherwise. When it is off, `/graphiql` returns 404.
 
 ## Bulk endpoints
 

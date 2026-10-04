@@ -1,6 +1,6 @@
 # Federation and role-based schema pruning
 
-This guide explains how **Apollo Federation Subgraphs** and **Role-Based Schema Pruning (RBAC)** work in graphpg, how they can be used independently or combined, and what you need to configure in PostgreSQL and `engine.config.yaml` to take full advantage of them.
+This guide explains how **Apollo Federation Subgraphs** and **Role-Based Schema Pruning (RBAC)** work in graphpg, how they can be used independently or combined, and what you need to configure in PostgreSQL and `graphpg.yaml` to take full advantage of them.
 
 ---
 
@@ -10,8 +10,8 @@ Federation and RBAC address two distinct architectural concerns:
 
 ```mermaid
 flowchart LR
-    subgraph EngineConfig["engine.config.yaml"]
-        FedCfg["federation:<br/>enabled: true<br/>version: 'v2.3'"]
+    subgraph Config["graphpg.yaml"]
+        FedCfg["graphql.federation:<br/>enabled: true<br/>version: 'v2.3'"]
         RbacCfg["rbac:<br/>enabled: true<br/>role: 'billing_svc'"]
     end
 
@@ -117,15 +117,14 @@ During introspection, the engine queries PostgreSQL's native catalog functions:
 
 ## Configuration
 
-Both features are configured in `engine.config.yaml`:
+Both features are configured in `graphpg.yaml`:
 
 ```yaml
-version: "1.0"
-
 # 1. Federation Subgraph Settings
-federation:
-  enabled: true       # Turn on Apollo Federation Subgraph mode (default: false)
-  version: "v2.3"     # Federation spec version (default: "v2.3")
+graphql:
+  federation:
+    enabled: true     # Turn on Apollo Federation Subgraph mode (default: false)
+    version: "v2.3"   # Federation spec version (default: "v2.3")
 
 # 2. Role-Based Schema Pruning (RBAC) Settings
 rbac:
@@ -175,7 +174,7 @@ GRANT SELECT, INSERT ON app_public.messages TO api_public_user;
 GRANT SELECT (id, username, created_at) ON app_public.users TO api_public_user;
 ```
 
-#### Configure `engine.config.yaml`
+#### Configure `graphpg.yaml`
 ```yaml
 rbac:
   enabled: true
@@ -233,8 +232,9 @@ GRANT SELECT (id) ON TABLE public.customers TO billing_svc;
 
 #### Configure Subgraph 1: Sales Service (`sales.config.yaml`)
 ```yaml
-federation:
-  enabled: true
+graphql:
+  federation:
+    enabled: true
 rbac:
   enabled: true
   role: "sales_svc"
@@ -247,8 +247,9 @@ PORT=4001 ENGINE_CONFIG=sales.config.yaml graphpg
 
 #### Configure Subgraph 2: Billing Service (`billing.config.yaml`)
 ```yaml
-federation:
-  enabled: true
+graphql:
+  federation:
+    enabled: true
 rbac:
   enabled: true
   role: "billing_svc"

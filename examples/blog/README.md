@@ -1,6 +1,6 @@
 # Blog example
 
-A small schema (authors, posts, comments, tags) that graphpg turns into a GraphQL API. Everything you see in the API comes from [`schema.sql`](schema.sql); [`engine.config.yaml`](engine.config.yaml) only adds a description and turns off one mutation.
+A small schema (authors, posts, comments, tags) that graphpg turns into a GraphQL API. Everything you see in the API comes from [`schema.sql`](schema.sql); [`graphpg.yaml`](graphpg.yaml) selects the schema, turns on GraphiQL, adds a description and turns off one mutation.
 
 ```bash
 docker compose up --build        # PostgreSQL 18 + graphpg
@@ -72,4 +72,4 @@ A function that returns a table becomes a field: `{ popularTags(first: 5) { node
 
 ## Editor support for the config
 
-`graphpg export-config-schema` writes `.engine/schema.config.json`, a JSON Schema listing the real tables, columns, constraints and functions of your database. `engine.config.yaml` points at it, so editors that use the YAML language server offer completion and validation.
+`graphpg export-config-schema` writes `.engine/schema.config.json`, a JSON Schema listing the real tables, columns, constraints and functions of your database. `graphpg.yaml` points at it, so editors that use the YAML language server offer completion and validation.
