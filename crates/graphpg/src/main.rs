@@ -335,6 +335,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let state = Arc::new(
         ServerState::new(pool, schema, catalog, default_schema, config.debug.into())
+            .with_mode(mode)
             .with_sql_comments(config.database.sql_comments)
             .with_replicas(replicas)
             .with_auth(authenticator)

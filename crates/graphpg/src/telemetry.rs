@@ -64,7 +64,7 @@ pub fn init() -> TelemetryGuard {
             }
         }
         registry.init();
-        return TelemetryGuard { provider: None };
+        TelemetryGuard { provider: None }
     }
 
     #[cfg(not(feature = "otel"))]

@@ -29,12 +29,408 @@ const CURSOR_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'~');
 
 use super::auth::AuthSessionContext;
-use super::http::execution_error;
 use super::ServerState;
-use crate::catalog::{ColumnMetadata, DatabaseCatalog, FieldKind, PgType, TableMetadata};
+use crate::catalog::{
+    ColumnMetadata, DatabaseCatalog, FieldKind, MutationAction, PgType, TableMetadata,
+};
 use crate::compiler::SqlCompiler;
 use crate::execution::ExecutionEngine;
 use crate::planner::{QueryPlanner, RequestField, RequestOperation, ResponseShaper, RestPageInfo};
+
+/// RFC 9457 Problem Details object (`application/problem+json`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProblemDetails {
+    #[serde(rename = "type")]
+    pub problem_type: String,
+    pub title: String,
+    pub status: u16,
+    pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<String>>,
+    #[serde(rename = "requestId", skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+}
+
+impl ProblemDetails {
+    pub fn new(status: StatusCode, title: impl Into<String>, detail: impl Into<String>) -> Self {
+        let s = status.as_u16();
+        Self {
+            problem_type: format!("https://graphpg.dev/errors/HTTP_{s}"),
+            title: title.into(),
+            status: s,
+            detail: detail.into(),
+            instance: None,
+            code: None,
+            fields: None,
+            request_id: None,
+        }
+    }
+
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        let c = code.into();
+        self.problem_type = format!("https://graphpg.dev/errors/{c}");
+        self.code = Some(c);
+        self
+    }
+
+    pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
+        self.instance = Some(instance.into());
+        self
+    }
+
+    pub fn with_fields(mut self, fields: Vec<String>) -> Self {
+        if !fields.is_empty() {
+            self.fields = Some(fields);
+        }
+        self
+    }
+
+    pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
+        self.request_id = Some(request_id.into());
+        self
+    }
+
+    pub fn bad_request(detail: impl Into<String>, instance: Option<&str>) -> Self {
+        let mut p =
+            Self::new(StatusCode::BAD_REQUEST, "Bad Request", detail).with_code("BAD_REQUEST");
+        if let Some(inst) = instance {
+            p = p.with_instance(inst);
+        }
+        p
+    }
+
+    pub fn not_found(detail: impl Into<String>, instance: Option<&str>) -> Self {
+        let mut p = Self::new(StatusCode::NOT_FOUND, "Not Found", detail).with_code("NOT_FOUND");
+        if let Some(inst) = instance {
+            p = p.with_instance(inst);
+        }
+        p
+    }
+
+    pub fn conflict(
+        detail: impl Into<String>,
+        code: impl Into<String>,
+        instance: Option<&str>,
+    ) -> Self {
+        let mut p = Self::new(StatusCode::CONFLICT, "Conflict", detail).with_code(code);
+        if let Some(inst) = instance {
+            p = p.with_instance(inst);
+        }
+        p
+    }
+
+    pub fn unprocessable(
+        detail: impl Into<String>,
+        code: impl Into<String>,
+        instance: Option<&str>,
+    ) -> Self {
+        let mut p = Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Unprocessable Content",
+            detail,
+        )
+        .with_code(code);
+        if let Some(inst) = instance {
+            p = p.with_instance(inst);
+        }
+        p
+    }
+
+    pub fn precondition_failed(detail: impl Into<String>, instance: Option<&str>) -> Self {
+        let mut p = Self::new(
+            StatusCode::PRECONDITION_FAILED,
+            "Precondition Failed",
+            detail,
+        )
+        .with_code("STALE_VERSION");
+        if let Some(inst) = instance {
+            p = p.with_instance(inst);
+        }
+        p
+    }
+
+    pub fn from_execution_error(
+        err: &crate::execution::ExecutionError,
+        catalog: &DatabaseCatalog,
+        instance: Option<&str>,
+        is_prod: bool,
+    ) -> Self {
+        if let Some(v) = err.violation(catalog) {
+            let status = match v.code.as_str() {
+                "STALE_VERSION" => StatusCode::PRECONDITION_FAILED,
+                code if code.ends_with("_TAKEN")
+                    || code.ends_with("_CONFLICT")
+                    || code == "UNIQUE_VIOLATION"
+                    || code == "PRIMARY_KEY_VIOLATION" =>
+                {
+                    StatusCode::CONFLICT
+                }
+                code if code.ends_with("_NOT_FOUND") || code == "FOREIGN_KEY_VIOLATION" => {
+                    StatusCode::CONFLICT
+                }
+                _ => StatusCode::UNPROCESSABLE_ENTITY,
+            };
+            let title = match status {
+                StatusCode::PRECONDITION_FAILED => "Precondition Failed",
+                StatusCode::CONFLICT => "Conflict",
+                StatusCode::UNPROCESSABLE_ENTITY => "Unprocessable Content",
+                _ => "Error",
+            };
+            let mut p = Self::new(status, title, v.message)
+                .with_code(v.code)
+                .with_fields(v.fields);
+            if let Some(inst) = instance {
+                p = p.with_instance(inst);
+            }
+            if is_prod {
+                p = p.with_request_id(uuid::Uuid::new_v4().to_string());
+            }
+            return p;
+        }
+
+        match err {
+            crate::execution::ExecutionError::EmptyResult => {
+                Self::not_found("No matching record found", instance)
+            }
+            crate::execution::ExecutionError::Rejected(msg) => {
+                Self::unprocessable(msg.clone(), "REJECTED", instance)
+            }
+            crate::execution::ExecutionError::StaleVersion { table, .. } => {
+                Self::precondition_failed(
+                    format!("The `{table}` row changed since `expectedVersion` was read"),
+                    instance,
+                )
+            }
+            _ => {
+                let req_id = uuid::Uuid::new_v4().to_string();
+                let detail = if is_prod {
+                    "An unexpected database error occurred".to_string()
+                } else {
+                    err.to_string()
+                };
+                let mut p = Self::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal Server Error",
+                    detail,
+                )
+                .with_code("INTERNAL_SERVER_ERROR")
+                .with_request_id(req_id);
+                if let Some(inst) = instance {
+                    p = p.with_instance(inst);
+                }
+                p
+            }
+        }
+    }
+}
+
+impl IntoResponse for ProblemDetails {
+    fn into_response(self) -> Response {
+        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            "application/problem+json; charset=utf-8".parse().unwrap(),
+        );
+        (status, headers, Json(self)).into_response()
+    }
+}
+
+/// Client representation return preference (`Prefer: return=minimal` vs `return=representation`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReturnPreference {
+    #[default]
+    Representation,
+    Minimal,
+}
+
+pub fn parse_prefer_header(headers: &HeaderMap) -> ReturnPreference {
+    if let Some(prefer) = headers.get("prefer").and_then(|h| h.to_str().ok()) {
+        for part in prefer.split(';') {
+            for item in part.split(',') {
+                let item = item.trim();
+                if item.eq_ignore_ascii_case("return=minimal") {
+                    return ReturnPreference::Minimal;
+                }
+                if item.eq_ignore_ascii_case("return=representation") {
+                    return ReturnPreference::Representation;
+                }
+            }
+        }
+    }
+    ReturnPreference::Representation
+}
+
+pub fn parse_if_match_header(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::IF_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            let s = s.trim();
+            let stripped = s.strip_prefix("W/").unwrap_or(s);
+            stripped.trim_matches('"').to_string()
+        })
+        .filter(|s| !s.is_empty())
+}
+
+pub fn extract_etag(row: &mut serde_json::Value, table: &TableMetadata) -> Option<String> {
+    let mut etag = None;
+    if let Some(v) = row.get("rowVersion").and_then(|v| v.as_str()) {
+        etag = Some(format!("\"{v}\""));
+    } else if let Some(vc) = &table.version_column {
+        if let Some(v) = row.get(vc) {
+            let s = v
+                .as_str()
+                .map(String::from)
+                .unwrap_or_else(|| v.to_string());
+            etag = Some(format!("\"{s}\""));
+        }
+    }
+    if !table.columns.iter().any(|c| c.field_name == "rowVersion") {
+        if let Some(obj) = row.as_object_mut() {
+            obj.remove("rowVersion");
+        }
+    }
+    etag
+}
+
+pub fn resolve_table<'a>(
+    catalog: &'a DatabaseCatalog,
+    default_schema: &str,
+    resource: &str,
+) -> Option<&'a TableMetadata> {
+    catalog
+        .find_table(default_schema, resource)
+        .or_else(|| catalog.find_table_any(resource))
+        .or_else(|| {
+            catalog
+                .tables
+                .iter()
+                .find(|t| t.name.eq_ignore_ascii_case(resource) || t.list_field == resource)
+        })
+}
+
+#[allow(clippy::result_large_err)]
+pub fn check_table_permissions(
+    table: &TableMetadata,
+    config: Option<&crate::config::Config>,
+    operation: crate::config::models::Operation,
+) -> Result<(), ProblemDetails> {
+    if let Some(cfg) = config {
+        if let Some(entity_cfg) = cfg.entities.get(&table.name) {
+            if entity_cfg.omit {
+                return Err(ProblemDetails::not_found(
+                    format!("Resource `{}` not found", table.name),
+                    None,
+                ));
+            }
+            if entity_cfg.omit_operations.contains(&operation) {
+                return Err(ProblemDetails::new(
+                    StatusCode::FORBIDDEN,
+                    "Forbidden",
+                    format!(
+                        "Operation {:?} on resource `{}` is forbidden",
+                        operation, table.name
+                    ),
+                )
+                .with_code("FORBIDDEN"));
+            }
+        }
+    }
+
+    let allowed =
+        match operation {
+            crate::config::models::Operation::Read
+            | crate::config::models::Operation::List
+            | crate::config::models::Operation::Connection => {
+                table.operations.read || table.operations.list || table.operations.connection
+            }
+            crate::config::models::Operation::Create => table.operations.create,
+            crate::config::models::Operation::CreateMany => table.operations.create_many,
+            crate::config::models::Operation::Update
+            | crate::config::models::Operation::UpdateMany => table.operations.update,
+            crate::config::models::Operation::Delete
+            | crate::config::models::Operation::DeleteMany => table.operations.delete,
+            crate::config::models::Operation::Upsert => {
+                table.operations.create || table.operations.update
+            }
+        };
+
+    if !allowed {
+        return Err(ProblemDetails::new(
+            StatusCode::FORBIDDEN,
+            "Forbidden",
+            format!(
+                "Operation {:?} on resource `{}` is not permitted",
+                operation, table.name
+            ),
+        )
+        .with_code("FORBIDDEN"));
+    }
+
+    Ok(())
+}
+
+pub fn parse_primary_key(
+    key_str: &str,
+    table: &TableMetadata,
+) -> Result<serde_json::Value, String> {
+    if table.primary_key.is_empty() {
+        return Err(format!("Resource `{}` has no primary key", table.name));
+    }
+    // Unwrap Relay Global ID (`base64("<TypeName>:<raw_pk>")`) if passed
+    let raw_key = if let Some((_, raw_pk)) = crate::schema::SchemaBuilder::decode_global_id(key_str)
+    {
+        raw_pk
+    } else {
+        key_str.to_string()
+    };
+    let key_str = raw_key.as_str();
+
+    if table.primary_key.len() == 1 {
+        let pk_col = table
+            .get_column(&table.primary_key[0])
+            .ok_or_else(|| format!("Primary key column `{}` not found", table.primary_key[0]))?;
+        if pk_col.pg_type.is_numeric() {
+            if let Ok(n) = key_str.parse::<i64>() {
+                return Ok(serde_json::Value::Number(n.into()));
+            }
+            if let Ok(f) = key_str.parse::<f64>() {
+                if let Some(num) = serde_json::Number::from_f64(f) {
+                    return Ok(serde_json::Value::Number(num));
+                }
+            }
+            return Err(format!("Invalid numeric primary key: {key_str}"));
+        }
+        if pk_col.pg_type == PgType::Uuid && uuid::Uuid::parse_str(key_str).is_err() {
+            return Err(format!("Invalid UUID primary key: {key_str}"));
+        }
+        return Ok(parse_scalar_value(key_str, Some(pk_col)));
+    }
+
+    // Composite primary key (comma-separated)
+    let parts: Vec<&str> = key_str.split(',').map(str::trim).collect();
+    if parts.len() != table.primary_key.len() {
+        return Err(format!(
+            "Composite key expects {} values separated by commas, got {}",
+            table.primary_key.len(),
+            parts.len()
+        ));
+    }
+    let mut obj = serde_json::Map::new();
+    for (i, pk_name) in table.primary_key.iter().enumerate() {
+        let col = table.get_column(pk_name).unwrap();
+        obj.insert(
+            col.field_name.clone(),
+            parse_scalar_value(parts[i], Some(col)),
+        );
+    }
+    Ok(serde_json::Value::Object(obj))
+}
 
 /// Parsed REST collection query options.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -619,46 +1015,27 @@ async fn execute_rest_query(
     auth_ctx: &Option<AuthSessionContext>,
 ) -> Response {
     let catalog = state.current_catalog();
+    let instance = format!("/rest/{resource}");
 
     // Look up table by resource name
-    let table = match catalog
-        .find_table(&state.default_schema, resource)
-        .or_else(|| catalog.find_table_any(resource))
-        .or_else(|| {
-            catalog
-                .tables
-                .iter()
-                .find(|t| t.name.eq_ignore_ascii_case(resource) || t.list_field == resource)
-        }) {
+    let table = match resolve_table(&catalog, &state.default_schema, resource) {
         Some(t) => t,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": format!("Resource `{resource}` not found")
-                })),
+            return ProblemDetails::not_found(
+                format!("Resource `{resource}` not found"),
+                Some(&instance),
             )
-                .into_response();
+            .into_response();
         }
     };
 
     // Permission checks
-    if let Some(config) = &state.config {
-        if let Some(entity_cfg) = config.entities.get(&table.name) {
-            if entity_cfg.omit {
-                return (StatusCode::NOT_FOUND, "Not Found").into_response();
-            }
-            if entity_cfg.omit_operations.iter().any(|op| {
-                *op == crate::config::models::Operation::Read
-                    || *op == crate::config::models::Operation::List
-            }) {
-                return (StatusCode::FORBIDDEN, "Forbidden").into_response();
-            }
-        }
-    }
-
-    if !table.operations.read && !table.operations.list && !table.operations.connection {
-        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    if let Err(problem) = check_table_permissions(
+        table,
+        state.config.as_ref(),
+        crate::config::models::Operation::Read,
+    ) {
+        return problem.with_instance(&instance).into_response();
     }
 
     // Determine row fields (projections & inclusions)
@@ -674,13 +1051,11 @@ async fn execute_rest_query(
                     row_fields.push(RequestField::new(&col.field_name));
                 }
             } else {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": format!("Unknown field `{f}` for resource `{resource}`")
-                    })),
+                return ProblemDetails::bad_request(
+                    format!("Unknown field `{f}` for resource `{resource}`"),
+                    Some(&instance),
                 )
-                    .into_response();
+                .into_response();
             }
         }
     } else {
@@ -699,11 +1074,7 @@ async fn execute_rest_query(
             match build_include_field(&catalog, &table.schema, &table.name, &parts) {
                 Ok(field) => row_fields.push(field),
                 Err(err_msg) => {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(serde_json::json!({ "error": err_msg })),
-                    )
-                        .into_response();
+                    return ProblemDetails::bad_request(err_msg, Some(&instance)).into_response();
                 }
             }
         }
@@ -753,13 +1124,14 @@ async fn execute_rest_query(
                 .with_children(row_fields),
         )
     } else {
-        return (
+        return ProblemDetails::new(
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "error": format!("Listing `{resource}` is not permitted")
-            })),
+            "Forbidden",
+            format!("Listing `{resource}` is not permitted"),
         )
-            .into_response();
+        .with_code("FORBIDDEN")
+        .with_instance(&instance)
+        .into_response();
     };
 
     let request_op = RequestOperation::query(vec![request_field]);
@@ -769,12 +1141,7 @@ async fn execute_rest_query(
     let plan = match planner.plan_request(&request_op) {
         Ok(p) => p,
         Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!("Planning error: {err}")
-                })),
-            )
+            return ProblemDetails::bad_request(format!("Planning error: {err}"), Some(&instance))
                 .into_response();
         }
     };
@@ -794,13 +1161,14 @@ async fn execute_rest_query(
     let (client, _database) = match state.read_pool(None).await {
         Ok(acq) => acq,
         Err(err) => {
-            return (
+            return ProblemDetails::new(
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "error": format!("Database unavailable: {err}")
-                })),
+                "Service Unavailable",
+                format!("Database unavailable: {err}"),
             )
-                .into_response();
+            .with_code("DATABASE_UNAVAILABLE")
+            .with_instance(&instance)
+            .into_response();
         }
     };
 
@@ -815,23 +1183,27 @@ async fn execute_rest_query(
         Ok(res) => res,
         Err(err) => {
             tracing::error!(error = %err, "the operation's task failed");
-            return (
+            return ProblemDetails::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": "the operation failed" })),
+                "Internal Server Error",
+                "The operation failed",
             )
-                .into_response();
+            .with_code("INTERNAL_SERVER_ERROR")
+            .with_instance(&instance)
+            .into_response();
         }
     };
 
     let data = match result {
         Ok(d) => d,
         Err(err) => {
-            let (status, err_obj) = execution_error(&err, &catalog);
-            return (
-                status,
-                Json(serde_json::json!({ "error": err_obj.message })),
+            return ProblemDetails::from_execution_error(
+                &err,
+                &catalog,
+                Some(&instance),
+                state.is_production(),
             )
-                .into_response();
+            .into_response();
         }
     };
 
@@ -857,13 +1229,88 @@ async fn execute_rest_query(
             }
             (StatusCode::OK, headers, Json(shaped.rows)).into_response()
         }
-        Err(err) => (
+        Err(err) => ProblemDetails::new(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": format!("Response shaping failed: {err}")
-            })),
+            "Internal Server Error",
+            format!("Response shaping failed: {err}"),
         )
-            .into_response(),
+        .with_code("SHAPING_ERROR")
+        .with_instance(&instance)
+        .into_response(),
+    }
+}
+
+/// Executes a database mutation in a single transaction via [`QueryPlanner`] and [`ExecutionEngine`].
+#[allow(clippy::result_large_err)]
+async fn execute_mutation(
+    state: &Arc<ServerState>,
+    resource: &str,
+    method: &str,
+    request_op: RequestOperation,
+    auth_ctx: &Option<AuthSessionContext>,
+    instance: &str,
+) -> Result<serde_json::Value, ProblemDetails> {
+    let catalog = state.current_catalog();
+    let default_schema = &state.default_schema;
+
+    // Plan operation using protocol-neutral planner
+    let planner = QueryPlanner::new(&catalog, default_schema);
+    let plan = planner.plan_request(&request_op).map_err(|err| {
+        ProblemDetails::bad_request(format!("Planning error: {err}"), Some(instance))
+    })?;
+
+    // Compile plan into single SQL statement / transaction
+    let mut compiled = SqlCompiler::compile_operation(&plan);
+    if state.sql_comments {
+        compiled.tag(&[
+            ("application", "graphpg"),
+            ("rest_resource", resource),
+            ("rest_method", method),
+        ]);
+    }
+    let compiled = Arc::new(compiled);
+
+    // Acquire write connection from primary pool
+    let client = state.pool.get().await.map_err(|err| {
+        ProblemDetails::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Service Unavailable",
+            format!("Database unavailable: {err}"),
+        )
+        .with_code("DATABASE_UNAVAILABLE")
+        .with_instance(instance)
+    })?;
+
+    let span =
+        tracing::info_span!("rest.mutation", rest.resource = %resource, rest.method = %method);
+    let task = {
+        let compiled = compiled.clone();
+        let auth_ctx = auth_ctx.clone();
+        async move { ExecutionEngine::run_with_auth(&*client, &compiled, None, auth_ctx.as_ref()).await }
+    };
+
+    let result = match tokio::spawn(task.instrument(span)).await {
+        Ok(res) => res,
+        Err(err) => {
+            tracing::error!(error = %err, "the operation's task failed");
+            return Err(ProblemDetails::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error",
+                "The operation failed",
+            )
+            .with_code("INTERNAL_SERVER_ERROR")
+            .with_instance(instance));
+        }
+    };
+
+    match result {
+        Ok(data) => Ok(data),
+        Err(err) => Err(ProblemDetails::from_execution_error(
+            &err,
+            &catalog,
+            Some(instance),
+            state.is_production(),
+        )),
     }
 }
 
@@ -884,35 +1331,22 @@ pub async fn rest_list_handler(
     };
 
     let catalog = state.current_catalog();
-    let table = match catalog
-        .find_table(&state.default_schema, &resource)
-        .or_else(|| catalog.find_table_any(&resource))
-        .or_else(|| {
-            catalog
-                .tables
-                .iter()
-                .find(|t| t.name.eq_ignore_ascii_case(&resource) || t.list_field == resource)
-        }) {
+    let instance = format!("/rest/{resource}");
+    let table = match resolve_table(&catalog, &state.default_schema, &resource) {
         Some(t) => t,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": format!("Resource `{resource}` not found")
-                })),
+            return ProblemDetails::not_found(
+                format!("Resource `{resource}` not found"),
+                Some(&instance),
             )
-                .into_response();
+            .into_response();
         }
     };
 
     let query = match parse_query_params(raw_query.as_deref().unwrap_or(""), table, &catalog) {
         Ok(q) => q,
         Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": err })),
-            )
-                .into_response();
+            return ProblemDetails::bad_request(err, Some(&instance)).into_response();
         }
     };
 
@@ -945,35 +1379,22 @@ pub async fn rest_search_handler(
     };
 
     let catalog = state.current_catalog();
-    let table = match catalog
-        .find_table(&state.default_schema, &resource)
-        .or_else(|| catalog.find_table_any(&resource))
-        .or_else(|| {
-            catalog
-                .tables
-                .iter()
-                .find(|t| t.name.eq_ignore_ascii_case(&resource) || t.list_field == resource)
-        }) {
+    let instance = format!("/rest/{resource}/search");
+    let table = match resolve_table(&catalog, &state.default_schema, &resource) {
         Some(t) => t,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": format!("Resource `{resource}` not found")
-                })),
+            return ProblemDetails::not_found(
+                format!("Resource `{resource}` not found"),
+                Some(&instance),
             )
-                .into_response();
+            .into_response();
         }
     };
 
     let mut query = match parse_query_params(raw_query.as_deref().unwrap_or(""), table, &catalog) {
         Ok(q) => q,
         Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": err })),
-            )
-                .into_response();
+            return ProblemDetails::bad_request(err, Some(&instance)).into_response();
         }
     };
 
@@ -982,13 +1403,11 @@ pub async fn rest_search_handler(
         let body_json: serde_json::Value = match serde_json::from_slice(&body) {
             Ok(v) => v,
             Err(e) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": format!("Invalid JSON request body: {e}")
-                    })),
+                return ProblemDetails::bad_request(
+                    format!("Invalid JSON request body: {e}"),
+                    Some(&instance),
                 )
-                    .into_response();
+                .into_response();
             }
         };
 
@@ -1061,6 +1480,900 @@ pub async fn rest_search_handler(
         &auth_ctx,
     )
     .await
+}
+
+/// Handler for `POST /rest/{resource}` (single or bulk create).
+pub async fn rest_create_handler(
+    State(state): State<Arc<ServerState>>,
+    Path(resource): Path<String>,
+    request_headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if !state.openapi_enabled {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+
+    let auth_ctx = match state.authenticate(&request_headers).await {
+        Ok(ctx) => ctx,
+        Err(err) => return err.into_response(),
+    };
+
+    let catalog = state.current_catalog();
+    let instance = format!("/rest/{resource}");
+    let table = match resolve_table(&catalog, &state.default_schema, &resource) {
+        Some(t) => t,
+        None => {
+            return ProblemDetails::not_found(
+                format!("Resource `{resource}` not found"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    if let Err(problem) = check_table_permissions(
+        table,
+        state.config.as_ref(),
+        crate::config::models::Operation::Create,
+    ) {
+        return problem.with_instance(&instance).into_response();
+    }
+
+    if body.is_empty() {
+        return ProblemDetails::bad_request("Request body cannot be empty", Some(&instance))
+            .into_response();
+    }
+
+    let body_json: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return ProblemDetails::bad_request(
+                format!("Invalid JSON request body: {e}"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    let prefer = parse_prefer_header(&request_headers);
+    let mutation_fields = catalog.table_mutation_fields(table);
+
+    // Bulk create (array body)
+    if let serde_json::Value::Array(_) = &body_json {
+        if let Err(problem) = check_table_permissions(
+            table,
+            state.config.as_ref(),
+            crate::config::models::Operation::CreateMany,
+        ) {
+            return problem.with_instance(&instance).into_response();
+        }
+
+        let m = match mutation_fields
+            .iter()
+            .find(|m| m.action == MutationAction::CreateMany)
+        {
+            Some(m) => m,
+            None => {
+                return ProblemDetails::bad_request(
+                    format!("Bulk creation is not supported for `{resource}`"),
+                    Some(&instance),
+                )
+                .into_response();
+            }
+        };
+
+        let payload_field = m.action.payload_field_name(table);
+        let row_columns: Vec<RequestField> = table
+            .columns
+            .iter()
+            .filter(|c| !c.omit)
+            .map(|c| RequestField::new(&c.field_name))
+            .collect();
+
+        let mut args = HashMap::new();
+        args.insert("inputs".to_string(), body_json);
+
+        let req_field = RequestField::new(&m.name)
+            .with_arguments(args)
+            .with_children(vec![
+                RequestField::new(&payload_field).with_children(row_columns)
+            ]);
+
+        let request_op = RequestOperation::mutation(vec![req_field]);
+        let data =
+            match execute_mutation(&state, &resource, "POST", request_op, &auth_ctx, &instance)
+                .await
+            {
+                Ok(d) => d,
+                Err(problem) => return problem.into_response(),
+            };
+
+        match ResponseShaper::unwrap_mutation(&data, &m.name, Some(&payload_field)) {
+            Ok(rows) => {
+                if prefer == ReturnPreference::Minimal {
+                    StatusCode::NO_CONTENT.into_response()
+                } else {
+                    let mut headers = HeaderMap::new();
+                    headers.insert(
+                        header::CONTENT_TYPE,
+                        "application/json; charset=utf-8".parse().unwrap(),
+                    );
+                    (StatusCode::CREATED, headers, Json(rows)).into_response()
+                }
+            }
+            Err(err) => ProblemDetails::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error",
+                format!("Response shaping failed: {err}"),
+            )
+            .with_code("SHAPING_ERROR")
+            .with_instance(&instance)
+            .into_response(),
+        }
+    } else {
+        // Single create (object body)
+        let m = match mutation_fields
+            .iter()
+            .find(|m| m.action == MutationAction::Create)
+        {
+            Some(m) => m,
+            None => {
+                return ProblemDetails::bad_request(
+                    format!("Creation is not supported for `{resource}`"),
+                    Some(&instance),
+                )
+                .into_response();
+            }
+        };
+
+        let payload_field = m.action.payload_field_name(table);
+        let mut row_columns: Vec<RequestField> = table
+            .columns
+            .iter()
+            .filter(|c| !c.omit)
+            .map(|c| RequestField::new(&c.field_name))
+            .collect();
+        if table.has_row_version() {
+            row_columns.push(RequestField::new("rowVersion"));
+        }
+
+        let mut args = HashMap::new();
+        args.insert("input".to_string(), body_json);
+
+        let req_field = RequestField::new(&m.name)
+            .with_arguments(args)
+            .with_children(vec![
+                RequestField::new(&payload_field).with_children(row_columns)
+            ]);
+
+        let request_op = RequestOperation::mutation(vec![req_field]);
+        let data =
+            match execute_mutation(&state, &resource, "POST", request_op, &auth_ctx, &instance)
+                .await
+            {
+                Ok(d) => d,
+                Err(problem) => return problem.into_response(),
+            };
+
+        match ResponseShaper::unwrap_mutation(&data, &m.name, Some(&payload_field)) {
+            Ok(mut row) => {
+                let mut headers = HeaderMap::new();
+                if let Some(pk_name) = table.primary_key.first() {
+                    let pk_field = table
+                        .get_column(pk_name)
+                        .map(|c| c.field_name.as_str())
+                        .unwrap_or(pk_name.as_str());
+                    if let Some(pk_val) = row.get(pk_field).or_else(|| row.get("id")) {
+                        let val_str = pk_val
+                            .as_str()
+                            .map(String::from)
+                            .unwrap_or_else(|| pk_val.to_string());
+                        if let Ok(loc) = format!("/rest/{}/{}", resource, val_str).parse() {
+                            headers.insert(header::LOCATION, loc);
+                        }
+                    }
+                }
+
+                let etag = extract_etag(&mut row, table);
+                if let Some(et) = etag {
+                    if let Ok(val) = et.parse() {
+                        headers.insert(header::ETAG, val);
+                    }
+                }
+
+                if prefer == ReturnPreference::Minimal {
+                    (StatusCode::NO_CONTENT, headers).into_response()
+                } else {
+                    headers.insert(
+                        header::CONTENT_TYPE,
+                        "application/json; charset=utf-8".parse().unwrap(),
+                    );
+                    (StatusCode::CREATED, headers, Json(row)).into_response()
+                }
+            }
+            Err(err) => ProblemDetails::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error",
+                format!("Response shaping failed: {err}"),
+            )
+            .with_code("SHAPING_ERROR")
+            .with_instance(&instance)
+            .into_response(),
+        }
+    }
+}
+
+/// Handler for `GET /rest/{resource}/{key}` (single row lookup).
+pub async fn rest_item_handler(
+    State(state): State<Arc<ServerState>>,
+    Path((resource, key)): Path<(String, String)>,
+    RawQuery(raw_query): RawQuery,
+    request_headers: HeaderMap,
+) -> Response {
+    if !state.openapi_enabled {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+
+    let auth_ctx = match state.authenticate(&request_headers).await {
+        Ok(ctx) => ctx,
+        Err(err) => return err.into_response(),
+    };
+
+    let catalog = state.current_catalog();
+    let instance = format!("/rest/{resource}/{key}");
+    let table = match resolve_table(&catalog, &state.default_schema, &resource) {
+        Some(t) => t,
+        None => {
+            return ProblemDetails::not_found(
+                format!("Resource `{resource}` not found"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    if let Err(problem) = check_table_permissions(
+        table,
+        state.config.as_ref(),
+        crate::config::models::Operation::Read,
+    ) {
+        return problem.with_instance(&instance).into_response();
+    }
+
+    let parsed_key = match parse_primary_key(&key, table) {
+        Ok(k) => k,
+        Err(err) => return ProblemDetails::bad_request(err, Some(&instance)).into_response(),
+    };
+
+    let query = match parse_query_params(raw_query.as_deref().unwrap_or(""), table, &catalog) {
+        Ok(q) => q,
+        Err(err) => return ProblemDetails::bad_request(err, Some(&instance)).into_response(),
+    };
+
+    // Determine row fields (projections & inclusions)
+    let mut row_fields: Vec<RequestField> = Vec::new();
+    if let Some(requested_fields) = &query.fields {
+        for f in requested_fields {
+            if let Some(col) = table
+                .columns
+                .iter()
+                .find(|c| &c.field_name == f || &c.name == f)
+            {
+                if !col.omit {
+                    row_fields.push(RequestField::new(&col.field_name));
+                }
+            } else {
+                return ProblemDetails::bad_request(
+                    format!("Unknown field `{f}` for resource `{resource}`"),
+                    Some(&instance),
+                )
+                .into_response();
+            }
+        }
+    } else {
+        row_fields = table
+            .columns
+            .iter()
+            .filter(|c| !c.omit)
+            .map(|c| RequestField::new(&c.field_name))
+            .collect();
+    }
+
+    if let Some(included) = &query.include {
+        for inc in included {
+            let parts: Vec<&str> = inc.split('.').collect();
+            match build_include_field(&catalog, &table.schema, &table.name, &parts) {
+                Ok(field) => row_fields.push(field),
+                Err(err_msg) => {
+                    return ProblemDetails::bad_request(err_msg, Some(&instance)).into_response();
+                }
+            }
+        }
+    }
+
+    if table.has_row_version() {
+        row_fields.push(RequestField::new("rowVersion"));
+    }
+
+    let mut args = HashMap::new();
+    if table.primary_key.len() == 1 {
+        let pk_col = table.get_column(&table.primary_key[0]).unwrap();
+        args.insert(pk_col.field_name.clone(), parsed_key.clone());
+        args.insert("id".to_string(), parsed_key.clone());
+    } else if let Some(obj) = parsed_key.as_object() {
+        for (k, v) in obj {
+            args.insert(k.clone(), v.clone());
+        }
+    }
+
+    let request_field = RequestField::new(&table.single_field)
+        .with_arguments(args)
+        .with_children(row_fields);
+
+    let request_op = RequestOperation::query(vec![request_field]);
+    let planner = QueryPlanner::new(&catalog, &table.schema);
+    let plan = match planner.plan_request(&request_op) {
+        Ok(p) => p,
+        Err(err) => {
+            return ProblemDetails::bad_request(format!("Planning error: {err}"), Some(&instance))
+                .into_response();
+        }
+    };
+
+    let mut compiled = SqlCompiler::compile_operation(&plan);
+    if state.sql_comments {
+        compiled.tag(&[
+            ("application", "graphpg"),
+            ("rest_resource", &resource),
+            ("rest_method", "GET"),
+        ]);
+    }
+    let compiled = Arc::new(compiled);
+
+    let (client, _database) = match state.read_pool(None).await {
+        Ok(acq) => acq,
+        Err(err) => {
+            return ProblemDetails::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Service Unavailable",
+                format!("Database unavailable: {err}"),
+            )
+            .with_code("DATABASE_UNAVAILABLE")
+            .with_instance(&instance)
+            .into_response();
+        }
+    };
+
+    let span = tracing::info_span!("rest.item", rest.resource = %resource);
+    let task = {
+        let compiled = compiled.clone();
+        let auth_ctx = auth_ctx.clone();
+        async move { ExecutionEngine::run_with_auth(&*client, &compiled, None, auth_ctx.as_ref()).await }
+    };
+
+    let result = match tokio::spawn(task.instrument(span)).await {
+        Ok(res) => res,
+        Err(err) => {
+            tracing::error!(error = %err, "the operation's task failed");
+            return ProblemDetails::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error",
+                "The operation failed",
+            )
+            .with_code("INTERNAL_SERVER_ERROR")
+            .with_instance(&instance)
+            .into_response();
+        }
+    };
+
+    let data = match result {
+        Ok(d) => d,
+        Err(err) => {
+            return ProblemDetails::from_execution_error(
+                &err,
+                &catalog,
+                Some(&instance),
+                state.is_production(),
+            )
+            .into_response();
+        }
+    };
+
+    match ResponseShaper::unwrap_single(&data, &table.single_field) {
+        Ok(mut row) => {
+            if row.is_null() {
+                return ProblemDetails::not_found(
+                    format!("No `{}` found with key `{key}`", table.name),
+                    Some(&instance),
+                )
+                .into_response();
+            }
+
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                "application/json; charset=utf-8".parse().unwrap(),
+            );
+
+            let etag = extract_etag(&mut row, table);
+            if let Some(et) = etag {
+                if let Ok(val) = et.parse() {
+                    headers.insert(header::ETAG, val);
+                }
+            }
+
+            (StatusCode::OK, headers, Json(row)).into_response()
+        }
+        Err(err) => ProblemDetails::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+            format!("Response shaping failed: {err}"),
+        )
+        .with_code("SHAPING_ERROR")
+        .with_instance(&instance)
+        .into_response(),
+    }
+}
+
+/// Handler for `PATCH /rest/{resource}/{key}` (update row by key).
+pub async fn rest_update_handler(
+    State(state): State<Arc<ServerState>>,
+    Path((resource, key)): Path<(String, String)>,
+    request_headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if !state.openapi_enabled {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+
+    let auth_ctx = match state.authenticate(&request_headers).await {
+        Ok(ctx) => ctx,
+        Err(err) => return err.into_response(),
+    };
+
+    let catalog = state.current_catalog();
+    let instance = format!("/rest/{resource}/{key}");
+    let table = match resolve_table(&catalog, &state.default_schema, &resource) {
+        Some(t) => t,
+        None => {
+            return ProblemDetails::not_found(
+                format!("Resource `{resource}` not found"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    if let Err(problem) = check_table_permissions(
+        table,
+        state.config.as_ref(),
+        crate::config::models::Operation::Update,
+    ) {
+        return problem.with_instance(&instance).into_response();
+    }
+
+    let parsed_key = match parse_primary_key(&key, table) {
+        Ok(k) => k,
+        Err(err) => return ProblemDetails::bad_request(err, Some(&instance)).into_response(),
+    };
+
+    let body_json: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return ProblemDetails::bad_request(
+                format!("Invalid JSON request body: {e}"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    if !body_json.is_object() {
+        return ProblemDetails::bad_request("Request body must be a JSON object", Some(&instance))
+            .into_response();
+    }
+
+    let if_match = parse_if_match_header(&request_headers);
+    let prefer = parse_prefer_header(&request_headers);
+
+    let mutation_fields = catalog.table_mutation_fields(table);
+    let m = match mutation_fields
+        .iter()
+        .find(|m| m.action == MutationAction::Update && m.unique_key.is_empty())
+    {
+        Some(m) => m,
+        None => {
+            return ProblemDetails::bad_request(
+                format!("Updating `{resource}` by primary key is not supported"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    let payload_field = m.action.payload_field_name(table);
+    let mut row_columns: Vec<RequestField> = table
+        .columns
+        .iter()
+        .filter(|c| !c.omit)
+        .map(|c| RequestField::new(&c.field_name))
+        .collect();
+    if table.has_row_version() {
+        row_columns.push(RequestField::new("rowVersion"));
+    }
+
+    let mut args = HashMap::new();
+    args.insert("input".to_string(), body_json);
+    if table.primary_key.len() == 1 {
+        let pk_col = table.get_column(&table.primary_key[0]).unwrap();
+        args.insert(pk_col.field_name.clone(), parsed_key.clone());
+        args.insert("id".to_string(), parsed_key.clone());
+    } else if let Some(obj) = parsed_key.as_object() {
+        for (k, v) in obj {
+            args.insert(k.clone(), v.clone());
+        }
+    }
+
+    if let Some(exp) = if_match {
+        args.insert(
+            "expectedVersion".to_string(),
+            serde_json::Value::String(exp),
+        );
+    }
+
+    let req_field = RequestField::new(&m.name)
+        .with_arguments(args)
+        .with_children(vec![
+            RequestField::new(&payload_field).with_children(row_columns)
+        ]);
+
+    let request_op = RequestOperation::mutation(vec![req_field]);
+    let data = match execute_mutation(&state, &resource, "PATCH", request_op, &auth_ctx, &instance)
+        .await
+    {
+        Ok(d) => d,
+        Err(problem) => return problem.into_response(),
+    };
+
+    match ResponseShaper::unwrap_mutation(&data, &m.name, Some(&payload_field)) {
+        Ok(mut row) => {
+            if row.is_null() {
+                return ProblemDetails::not_found(
+                    format!("No `{}` row found with key `{key}`", table.name),
+                    Some(&instance),
+                )
+                .into_response();
+            }
+
+            let mut headers = HeaderMap::new();
+            let etag = extract_etag(&mut row, table);
+            if let Some(et) = etag {
+                if let Ok(val) = et.parse() {
+                    headers.insert(header::ETAG, val);
+                }
+            }
+
+            if prefer == ReturnPreference::Minimal {
+                (StatusCode::NO_CONTENT, headers).into_response()
+            } else {
+                headers.insert(
+                    header::CONTENT_TYPE,
+                    "application/json; charset=utf-8".parse().unwrap(),
+                );
+                (StatusCode::OK, headers, Json(row)).into_response()
+            }
+        }
+        Err(err) => ProblemDetails::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+            format!("Response shaping failed: {err}"),
+        )
+        .with_code("SHAPING_ERROR")
+        .with_instance(&instance)
+        .into_response(),
+    }
+}
+
+/// Handler for `PUT /rest/{resource}/{key}` (upsert row by key).
+pub async fn rest_upsert_handler(
+    State(state): State<Arc<ServerState>>,
+    Path((resource, key)): Path<(String, String)>,
+    request_headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if !state.openapi_enabled {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+
+    let auth_ctx = match state.authenticate(&request_headers).await {
+        Ok(ctx) => ctx,
+        Err(err) => return err.into_response(),
+    };
+
+    let catalog = state.current_catalog();
+    let instance = format!("/rest/{resource}/{key}");
+    let table = match resolve_table(&catalog, &state.default_schema, &resource) {
+        Some(t) => t,
+        None => {
+            return ProblemDetails::not_found(
+                format!("Resource `{resource}` not found"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    if let Err(problem) = check_table_permissions(
+        table,
+        state.config.as_ref(),
+        crate::config::models::Operation::Upsert,
+    ) {
+        return problem.with_instance(&instance).into_response();
+    }
+
+    let parsed_key = match parse_primary_key(&key, table) {
+        Ok(k) => k,
+        Err(err) => return ProblemDetails::bad_request(err, Some(&instance)).into_response(),
+    };
+
+    let mut body_json: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return ProblemDetails::bad_request(
+                format!("Invalid JSON request body: {e}"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    if !body_json.is_object() {
+        return ProblemDetails::bad_request("Request body must be a JSON object", Some(&instance))
+            .into_response();
+    }
+
+    // Inject primary key into input object
+    if table.primary_key.len() == 1 {
+        let pk_col = table.get_column(&table.primary_key[0]).unwrap();
+        body_json
+            .as_object_mut()
+            .unwrap()
+            .insert(pk_col.field_name.clone(), parsed_key.clone());
+    } else if let Some(obj) = parsed_key.as_object() {
+        for (k, v) in obj {
+            body_json
+                .as_object_mut()
+                .unwrap()
+                .insert(k.clone(), v.clone());
+        }
+    }
+
+    let prefer = parse_prefer_header(&request_headers);
+
+    let mutation_fields = catalog.table_mutation_fields(table);
+    let m = match mutation_fields
+        .iter()
+        .find(|m| m.action == MutationAction::Create)
+    {
+        Some(m) => m,
+        None => {
+            return ProblemDetails::bad_request(
+                format!("Upserting `{resource}` is not supported"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    let payload_field = m.action.payload_field_name(table);
+    let mut row_columns: Vec<RequestField> = table
+        .columns
+        .iter()
+        .filter(|c| !c.omit)
+        .map(|c| RequestField::new(&c.field_name))
+        .collect();
+    if table.has_row_version() {
+        row_columns.push(RequestField::new("rowVersion"));
+    }
+
+    let update_cols: Vec<serde_json::Value> = table
+        .writable_columns()
+        .filter(|c| !c.is_primary_key)
+        .map(|c| serde_json::Value::String(c.order_by_name()))
+        .collect();
+
+    let on_conflict = if update_cols.is_empty() {
+        serde_json::json!({
+            "key": "PRIMARY_KEY",
+            "action": "NOTHING"
+        })
+    } else {
+        serde_json::json!({
+            "key": "PRIMARY_KEY",
+            "action": "UPDATE",
+            "update": update_cols
+        })
+    };
+
+    let mut args = HashMap::new();
+    args.insert("input".to_string(), body_json);
+    args.insert("onConflict".to_string(), on_conflict);
+
+    let req_field = RequestField::new(&m.name)
+        .with_arguments(args)
+        .with_children(vec![
+            RequestField::new(&payload_field).with_children(row_columns)
+        ]);
+
+    let request_op = RequestOperation::mutation(vec![req_field]);
+    let data =
+        match execute_mutation(&state, &resource, "PUT", request_op, &auth_ctx, &instance).await {
+            Ok(d) => d,
+            Err(problem) => return problem.into_response(),
+        };
+
+    match ResponseShaper::unwrap_mutation(&data, &m.name, Some(&payload_field)) {
+        Ok(mut row) => {
+            let mut headers = HeaderMap::new();
+            let etag = extract_etag(&mut row, table);
+            if let Some(et) = etag {
+                if let Ok(val) = et.parse() {
+                    headers.insert(header::ETAG, val);
+                }
+            }
+
+            if prefer == ReturnPreference::Minimal {
+                (StatusCode::NO_CONTENT, headers).into_response()
+            } else {
+                headers.insert(
+                    header::CONTENT_TYPE,
+                    "application/json; charset=utf-8".parse().unwrap(),
+                );
+                (StatusCode::OK, headers, Json(row)).into_response()
+            }
+        }
+        Err(err) => ProblemDetails::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+            format!("Response shaping failed: {err}"),
+        )
+        .with_code("SHAPING_ERROR")
+        .with_instance(&instance)
+        .into_response(),
+    }
+}
+
+/// Handler for `DELETE /rest/{resource}/{key}` (delete row by key).
+pub async fn rest_delete_handler(
+    State(state): State<Arc<ServerState>>,
+    Path((resource, key)): Path<(String, String)>,
+    request_headers: HeaderMap,
+) -> Response {
+    if !state.openapi_enabled {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+
+    let auth_ctx = match state.authenticate(&request_headers).await {
+        Ok(ctx) => ctx,
+        Err(err) => return err.into_response(),
+    };
+
+    let catalog = state.current_catalog();
+    let instance = format!("/rest/{resource}/{key}");
+    let table = match resolve_table(&catalog, &state.default_schema, &resource) {
+        Some(t) => t,
+        None => {
+            return ProblemDetails::not_found(
+                format!("Resource `{resource}` not found"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    if let Err(problem) = check_table_permissions(
+        table,
+        state.config.as_ref(),
+        crate::config::models::Operation::Delete,
+    ) {
+        return problem.with_instance(&instance).into_response();
+    }
+
+    let parsed_key = match parse_primary_key(&key, table) {
+        Ok(k) => k,
+        Err(err) => return ProblemDetails::bad_request(err, Some(&instance)).into_response(),
+    };
+
+    let if_match = parse_if_match_header(&request_headers);
+    let prefer = parse_prefer_header(&request_headers);
+
+    let mutation_fields = catalog.table_mutation_fields(table);
+    let m = match mutation_fields
+        .iter()
+        .find(|m| m.action == MutationAction::Delete && m.unique_key.is_empty())
+    {
+        Some(m) => m,
+        None => {
+            return ProblemDetails::bad_request(
+                format!("Deleting `{resource}` by primary key is not supported"),
+                Some(&instance),
+            )
+            .into_response();
+        }
+    };
+
+    let payload_field = m.action.payload_field_name(table);
+    let row_columns: Vec<RequestField> = table
+        .columns
+        .iter()
+        .filter(|c| !c.omit)
+        .map(|c| RequestField::new(&c.field_name))
+        .collect();
+
+    let mut args = HashMap::new();
+    if table.primary_key.len() == 1 {
+        let pk_col = table.get_column(&table.primary_key[0]).unwrap();
+        args.insert(pk_col.field_name.clone(), parsed_key.clone());
+        args.insert("id".to_string(), parsed_key.clone());
+    } else if let Some(obj) = parsed_key.as_object() {
+        for (k, v) in obj {
+            args.insert(k.clone(), v.clone());
+        }
+    }
+
+    if let Some(exp) = if_match {
+        args.insert(
+            "expectedVersion".to_string(),
+            serde_json::Value::String(exp),
+        );
+    }
+
+    let req_field = RequestField::new(&m.name)
+        .with_arguments(args)
+        .with_children(vec![
+            RequestField::new(&payload_field).with_children(row_columns)
+        ]);
+
+    let request_op = RequestOperation::mutation(vec![req_field]);
+    let data = match execute_mutation(
+        &state, &resource, "DELETE", request_op, &auth_ctx, &instance,
+    )
+    .await
+    {
+        Ok(d) => d,
+        Err(problem) => return problem.into_response(),
+    };
+
+    match ResponseShaper::unwrap_mutation(&data, &m.name, Some(&payload_field)) {
+        Ok(row) => {
+            if row.is_null() {
+                return ProblemDetails::not_found(
+                    format!("No `{}` row found with key `{key}`", table.name),
+                    Some(&instance),
+                )
+                .into_response();
+            }
+
+            if prefer == ReturnPreference::Minimal {
+                StatusCode::NO_CONTENT.into_response()
+            } else {
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    header::CONTENT_TYPE,
+                    "application/json; charset=utf-8".parse().unwrap(),
+                );
+                (StatusCode::OK, headers, Json(row)).into_response()
+            }
+        }
+        Err(err) => ProblemDetails::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+            format!("Response shaping failed: {err}"),
+        )
+        .with_code("SHAPING_ERROR")
+        .with_instance(&instance)
+        .into_response(),
+    }
 }
 
 #[cfg(test)]
