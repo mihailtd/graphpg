@@ -4,3 +4,8 @@ target
 examples
 docs
 benchmarks
+node_modules
+e2e
+.moon
+drizzle
+.github

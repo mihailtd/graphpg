@@ -40,3 +40,8 @@ tasks:
     inputs: ["@globs(sources)", /target/debug/graphpg]
     options:
       cache: false
+  watch:
+    # re-run the end-to-end suite when tests or migrations change (needs a built graphpg)
+    command: pnpm exec vitest
+    deps: [graphpg:build]
+    preset: server

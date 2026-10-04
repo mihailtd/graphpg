@@ -6,3 +6,8 @@ projects:
 vcs:
   client: git
   defaultBranch: main
+  # installed into .git/hooks the next time moon runs, so there is nothing to set up by hand
+  sync: true
+  hooks:
+    pre-commit:
+      - moon run :typecheck :lint :format --affected --status staged --no-actions

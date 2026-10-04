@@ -11,6 +11,14 @@ fileGroups:
     - /Cargo.lock
 
 tasks:
+  dev:
+    # run the server against DATABASE_URL (copy .env.example to .env); GraphiQL on, port 4000
+    command: cargo run --locked --bin graphpg
+    preset: server
+    env:
+      GRAPHIQL: "true"
+    options:
+      runFromWorkspaceRoot: true
   build:
     command: cargo build --locked -p graphpg
     inputs: ["@globs(sources)"]

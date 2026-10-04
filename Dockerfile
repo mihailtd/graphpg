@@ -6,10 +6,18 @@ FROM rust:1.98.1-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed
 RUN apk add --no-cache musl-dev build-base cmake perl
 WORKDIR /src
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+COPY crates/graphpg/Cargo.toml crates/graphpg/Cargo.toml
+# Compile the dependencies against empty stand-in sources first. This layer only changes when a
+# Cargo manifest or the lockfile does, so it is reused (including from the CI layer cache)
+# across source-only changes, which is what makes rebuilds fast.
+RUN mkdir -p crates/graphpg/src \
+    && echo 'fn main() {}' > crates/graphpg/src/main.rs && touch crates/graphpg/src/lib.rs \
+    && cargo build --release --locked --bin graphpg --features otel \
+    && rm -rf crates/graphpg/src
 COPY crates ./crates
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --release --locked --bin graphpg --features otel \
+# The real sources must look newer than the stand-ins, or cargo would reuse the stand-in build
+RUN touch crates/graphpg/src/main.rs crates/graphpg/src/lib.rs \
+    && cargo build --release --locked --bin graphpg --features otel \
     && cp target/release/graphpg /graphpg
 
 # --- Runtime: distroless static --------------------------------------------------------

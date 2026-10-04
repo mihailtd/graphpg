@@ -4,3 +4,8 @@ packages:
 # esbuild (used by vitest and drizzle-kit) downloads its platform binary in a postinstall script
 allowBuilds:
   esbuild: true
+
+# drizzle-kit pins old esbuild versions (0.18, 0.25) that carry security advisories (< 0.28.1);
+# it works with the current one. Drop once drizzle-kit ships with a patched esbuild.
+overrides:
+  esbuild: ^0.28.2

@@ -6,17 +6,21 @@
     "node": ">=26"
   },
   "scripts": {
+    "dev": "moon run graphpg:dev",
     "build": "moon run graphpg:build",
-    "test": "moon run graphpg:test e2e:test",
+    "test": "moon run :test",
     "test:rust": "moon run graphpg:test",
     "test:e2e": "moon run e2e:test",
-    "lint": "moon run :lint",
-    "check": "moon run :typecheck :lint :format :test",
-    "db:generate": "moon run e2e:generate",
-    "db:up": "docker compose up -d --wait postgres",
+    "test:e2e:watch": "moon run e2e:watch",
     "typecheck": "moon run :typecheck",
+    "lint": "moon run :lint",
     "format": "moon run :format",
     "fix": "moon run :fix",
-    "verify": "moon run :typecheck :lint :format"
+    "verify": "moon run :typecheck :lint :format",
+    "check": "moon run :typecheck :lint :format :test",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d --wait postgres",
+    "db:generate": "moon run e2e:generate"
   }
 }
