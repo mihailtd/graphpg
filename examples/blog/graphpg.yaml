@@ -12,6 +12,7 @@ graphql:
 openapi:
   enabled: true
   ui: true # the Scalar API reference; on by default only in dev mode, so the demo asks for it
+  spec: true # the OpenAPI 3.1 document at /openapi.json; on by default only in dev mode
 
 # What the database cannot express, keyed by database object name
 

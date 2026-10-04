@@ -214,7 +214,12 @@ impl ConfigSchemaGenerator {
                 "description": "The REST API and its OpenAPI description",
                 "properties": {
                     "enabled": Self::switch_described("Serve the REST API at /rest (default true)"),
-                    "ui": Self::switch_described("Serve the Scalar API reference at /scalar (default: on in dev mode, off in prod)")
+                    "ui": Self::switch_described("Serve the Scalar API reference at /scalar (default: on in dev mode, off in prod)"),
+                    "spec": Self::switch_described("Serve the OpenAPI 3.1 document at `path` (default: on in dev mode, off in prod)"),
+                    "path": json!({
+                        "type": "string",
+                        "description": "Path to serve the OpenAPI document at (default: /openapi.json)"
+                    })
                 },
                 "additionalProperties": false
             }),
@@ -226,7 +231,12 @@ impl ConfigSchemaGenerator {
                 "description": "Alias for openapi: the REST API and its OpenAPI description",
                 "properties": {
                     "enabled": Self::switch_described("Serve the REST API at /rest (default true)"),
-                    "ui": Self::switch_described("Serve the Scalar API reference at /scalar (default: on in dev mode, off in prod)")
+                    "ui": Self::switch_described("Serve the Scalar API reference at /scalar (default: on in dev mode, off in prod)"),
+                    "spec": Self::switch_described("Serve the OpenAPI 3.1 document at `path` (default: on in dev mode, off in prod)"),
+                    "path": json!({
+                        "type": "string",
+                        "description": "Path to serve the OpenAPI document at (default: /openapi.json)"
+                    })
                 },
                 "additionalProperties": false
             }),

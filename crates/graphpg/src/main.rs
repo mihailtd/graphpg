@@ -96,6 +96,9 @@ pub fn prod_warnings(mode: Mode, config: &Config) -> Vec<String> {
         if config.openapi.ui {
             warnings.push("openapi.ui is enabled in production mode".to_string());
         }
+        if config.openapi.spec {
+            warnings.push("openapi.spec is enabled in production mode".to_string());
+        }
         if config.watch.enabled {
             warnings.push("watch.enabled is enabled in production mode".to_string());
         }
@@ -405,6 +408,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
             config.server.port
         );
     }
+    if config.openapi.enabled && config.openapi.spec {
+        let path = if config.openapi.path.starts_with('/') {
+            config.openapi.path.clone()
+        } else {
+            format!("/{}", config.openapi.path)
+        };
+        tracing::info!(
+            "OpenAPI document available at http://localhost:{}{}",
+            config.server.port,
+            path
+        );
+    }
     if config.debug.sql || config.debug.explain {
         tracing::warn!(
             explain = config.debug.explain,
@@ -463,12 +478,14 @@ mod tests {
         let mut custom_prod = Config::defaults(Mode::Prod);
         custom_prod.graphql.ui = true;
         custom_prod.openapi.ui = true;
+        custom_prod.openapi.spec = true;
         custom_prod.watch.enabled = true;
         let warnings = prod_warnings(Mode::Prod, &custom_prod);
-        assert_eq!(warnings.len(), 3);
+        assert_eq!(warnings.len(), 4);
         assert!(warnings[0].contains("graphql.ui"));
         assert!(warnings[1].contains("openapi.ui"));
-        assert!(warnings[2].contains("watch.enabled"));
+        assert!(warnings[2].contains("openapi.spec"));
+        assert!(warnings[3].contains("watch.enabled"));
 
         // In dev mode, no warnings even if features are on
         let dev_cfg = Config::defaults(Mode::Dev);

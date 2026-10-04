@@ -46,7 +46,9 @@ impl Mode {
     /// Settings that differ from the field defaults by mode.
     fn defaults(self) -> &'static str {
         match self {
-            Mode::Dev => "graphql:\n  ui: true\nopenapi:\n  ui: true\nwatch:\n  enabled: true\n",
+            Mode::Dev => {
+                "graphql:\n  ui: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\n"
+            }
             Mode::Prod => "{}",
         }
     }
@@ -262,8 +264,18 @@ fn normalize_rest_key(val: &mut Value) {
                 match map.get_mut(&openapi_key) {
                     Some(openapi_val) => merge(openapi_val, rest_val),
                     None => {
-                        map.insert(openapi_key, rest_val);
+                        map.insert(openapi_key.clone(), rest_val);
                     }
+                }
+            }
+            if let Some(Value::Mapping(openapi_map)) = map.get_mut(&openapi_key) {
+                let schema_key = Value::String("schema".to_string());
+                if let Some(schema_val) = openapi_map.remove(&schema_key) {
+                    openapi_map.insert(Value::String("spec".to_string()), schema_val);
+                }
+                let spec_path_key = Value::String("spec_path".to_string());
+                if let Some(path_val) = openapi_map.remove(&spec_path_key) {
+                    openapi_map.insert(Value::String("path".to_string()), path_val);
                 }
             }
             for (_, v) in map.iter_mut() {
@@ -454,6 +466,8 @@ prod:
         assert!(!cfg.graphql.ui);
         assert!(cfg.openapi.enabled);
         assert!(!cfg.openapi.ui);
+        assert!(!cfg.openapi.spec);
+        assert_eq!(cfg.openapi.path, "/openapi.json");
 
         // default Dev
         let cfg = parse("", Mode::Dev).unwrap();
@@ -461,24 +475,31 @@ prod:
         assert!(cfg.graphql.ui);
         assert!(cfg.openapi.enabled);
         assert!(cfg.openapi.ui);
+        assert!(cfg.openapi.spec);
+        assert_eq!(cfg.openapi.path, "/openapi.json");
 
         // using openapi key
-        let yaml = "openapi: { enabled: false, ui: true }";
+        let yaml = "openapi: { enabled: false, ui: true, spec: true, path: '/api-docs.json' }";
         let cfg = parse(yaml, Mode::Prod).unwrap();
         assert!(!cfg.openapi.enabled);
         assert!(cfg.openapi.ui);
+        assert!(cfg.openapi.spec);
+        assert_eq!(cfg.openapi.path, "/api-docs.json");
 
-        // using rest alias key
-        let yaml = "rest: { enabled: false, ui: true }";
+        // using rest alias key and schema alias
+        let yaml = "rest: { enabled: false, ui: true, schema: true, spec_path: '/spec.json' }";
         let cfg = parse(yaml, Mode::Prod).unwrap();
         assert!(!cfg.openapi.enabled);
         assert!(cfg.openapi.ui);
+        assert!(cfg.openapi.spec);
+        assert_eq!(cfg.openapi.path, "/spec.json");
 
         // using both merges with openapi taking precedence
-        let yaml = "rest: { enabled: false }\nopenapi: { ui: true }";
-        let cfg = parse(yaml, Mode::Prod).unwrap();
+        let yaml = "rest: { enabled: false }\nopenapi: { ui: true, spec: false }";
+        let cfg = parse(yaml, Mode::Dev).unwrap();
         assert!(!cfg.openapi.enabled);
         assert!(cfg.openapi.ui);
+        assert!(!cfg.openapi.spec);
     }
 
     #[test]

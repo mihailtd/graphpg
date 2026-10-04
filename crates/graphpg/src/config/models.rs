@@ -216,6 +216,10 @@ impl Default for GraphqlConfig {
     }
 }
 
+fn default_openapi_path() -> String {
+    "/openapi.json".to_string()
+}
+
 /// The REST API and its OpenAPI description.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -224,9 +228,15 @@ pub struct OpenapiConfig {
     #[serde(deserialize_with = "switch", default = "default_true")]
     pub enabled: bool,
     /// Serve the Scalar API reference at `/scalar`, showing the OpenAPI document at
-    /// `/openapi.json` once the REST surface serves one. On in `dev` mode, off in `prod`.
+    /// `/openapi.json`. On in `dev` mode, off in `prod`.
     #[serde(default, deserialize_with = "switch")]
     pub ui: bool,
+    /// Serve the OpenAPI 3.1 document at `path` (default `/openapi.json`). On in `dev` mode, off in `prod`.
+    #[serde(default, alias = "schema", deserialize_with = "switch")]
+    pub spec: bool,
+    /// Path to serve the OpenAPI document at (defaults to `/openapi.json`).
+    #[serde(default = "default_openapi_path", alias = "spec_path")]
+    pub path: String,
 }
 
 impl Default for OpenapiConfig {
@@ -234,6 +244,8 @@ impl Default for OpenapiConfig {
         Self {
             enabled: true,
             ui: false,
+            spec: false,
+            path: default_openapi_path(),
         }
     }
 }
