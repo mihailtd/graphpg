@@ -73,8 +73,10 @@ jobs:
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
+      # The JavaScript build only: the Rust crates are compiled by the steps below, with the cache
+      # restored (`graphpg-ui:build` would also compile them here, before the cache exists)
       - name: Build UI assets
-        run: moon run graphpg-ui:build
+        run: moon run graphiql-ui:build
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.98.1
