@@ -2,13 +2,13 @@ use crate::catalog::DatabaseCatalog;
 use crate::compiler::{CompiledOperation, CompiledQuery, SqlCompiler};
 use crate::execution::{ExecutionEngine, ExecutionError};
 use crate::openapi::OpenApiGenerator;
-use crate::planner::{PlannerError, QueryPlanner, RequestField, RequestOperation, ResponseShaper};
+use crate::planner::{PlannerError, QueryPlanner};
 use crate::server::cache::RequestCache;
 use apollo_compiler::executable::Operation;
 use apollo_compiler::response::JsonMap;
 use apollo_compiler::validation::Valid;
 use apollo_compiler::{ExecutableDocument, Schema};
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -16,7 +16,6 @@ use deadpool_postgres::{
     CreatePoolError, ManagerConfig, Pool, PoolConfig, RecyclingMethod, Runtime,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_postgres::NoTls;
 use tracing::Instrument;
@@ -471,192 +470,6 @@ pub(crate) async fn health_handler() -> impl IntoResponse {
 
 pub(crate) async fn rest_handler() -> impl IntoResponse {
     (StatusCode::OK, "hello world")
-}
-
-pub(crate) async fn rest_resource_handler(
-    State(state): State<Arc<ServerState>>,
-    Path(resource): Path<String>,
-    request_headers: HeaderMap,
-) -> Response {
-    if !state.openapi_enabled {
-        return (StatusCode::NOT_FOUND, "Not Found").into_response();
-    }
-
-    // Authenticate before anything else is looked at
-    let auth_ctx = match state.authenticate(&request_headers).await {
-        Ok(ctx) => ctx,
-        Err(err) => return err.into_response(),
-    };
-
-    let catalog = state.current_catalog();
-
-    // Look up table by resource name (first in default_schema, then any schema, then matching list_field or case-insensitive)
-    let table = match catalog
-        .find_table(&state.default_schema, &resource)
-        .or_else(|| catalog.find_table_any(&resource))
-        .or_else(|| {
-            catalog
-                .tables
-                .iter()
-                .find(|t| t.name.eq_ignore_ascii_case(&resource) || t.list_field == resource)
-        }) {
-        Some(t) => t,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": format!("Resource `{resource}` not found")
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    // Check if table read/list is permitted by config / catalog
-    if let Some(config) = &state.config {
-        if let Some(entity_cfg) = config.entities.get(&table.name) {
-            if entity_cfg.omit {
-                return (StatusCode::NOT_FOUND, "Not Found").into_response();
-            }
-            if entity_cfg.omit_operations.iter().any(|op| {
-                *op == crate::config::models::Operation::Read
-                    || *op == crate::config::models::Operation::List
-            }) {
-                return (StatusCode::FORBIDDEN, "Forbidden").into_response();
-            }
-        }
-    }
-
-    if !table.operations.read && !table.operations.list && !table.operations.connection {
-        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
-    }
-
-    // Collect exposed, non-omitted columns as fields to select
-    let row_fields: Vec<RequestField> = table
-        .columns
-        .iter()
-        .filter(|c| !c.omit)
-        .map(|c| RequestField::new(&c.field_name))
-        .collect();
-
-    // Determine root field name: prefer list_field, then connection_field
-    let (root_field_name, request_field) = if table.operations.list {
-        (
-            table.list_field.clone(),
-            RequestField::new(&table.list_field).with_children(row_fields),
-        )
-    } else if table.operations.connection {
-        (
-            table.connection_field.clone(),
-            ResponseShaper::build_list_request(
-                &table.connection_field,
-                HashMap::new(),
-                row_fields,
-                false,
-                false,
-            ),
-        )
-    } else {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "error": format!("Listing `{resource}` is not permitted")
-            })),
-        )
-            .into_response();
-    };
-
-    let request_op = RequestOperation::query(vec![request_field]);
-
-    // Plan operation using protocol-neutral planner
-    let planner = QueryPlanner::new(&catalog, &table.schema);
-    let plan = match planner.plan_request(&request_op) {
-        Ok(p) => p,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!("Planning error: {err}")
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    // Compile plan into SQL
-    let mut compiled = SqlCompiler::compile_operation(&plan);
-    if state.sql_comments {
-        compiled.tag(&[
-            ("application", "graphpg"),
-            ("rest_resource", &resource),
-            ("rest_method", "GET"),
-        ]);
-    }
-    let compiled = Arc::new(compiled);
-
-    // Acquire pooled connection and execute
-    let (client, _database) = match state.read_pool(None).await {
-        Ok(acq) => acq,
-        Err(err) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "error": format!("Database unavailable: {err}")
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    let span = tracing::info_span!("rest.execute", rest.resource = %resource);
-    let task = {
-        let compiled = compiled.clone();
-        let auth_ctx = auth_ctx.clone();
-        async move { ExecutionEngine::run_with_auth(&*client, &compiled, None, auth_ctx.as_ref()).await }
-    };
-
-    let result = match tokio::spawn(task.instrument(span)).await {
-        Ok(res) => res,
-        Err(err) => {
-            tracing::error!(error = %err, "the operation's task failed");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": "the operation failed" })),
-            )
-                .into_response();
-        }
-    };
-
-    let data = match result {
-        Ok(d) => d,
-        Err(err) => {
-            let (status, err_obj) = execution_error(&err, &catalog);
-            return (
-                status,
-                Json(serde_json::json!({ "error": err_obj.message })),
-            )
-                .into_response();
-        }
-    };
-
-    // Shape the response: unwrap into plain rows array
-    match ResponseShaper::unwrap_list(&data, &root_field_name) {
-        Ok(shaped) => {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::CONTENT_TYPE,
-                "application/json; charset=utf-8".parse().unwrap(),
-            );
-            (StatusCode::OK, headers, Json(shaped.rows)).into_response()
-        }
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": format!("Response shaping error: {err}")
-            })),
-        )
-            .into_response(),
-    }
 }
 
 pub(crate) async fn openapi_spec_handler(

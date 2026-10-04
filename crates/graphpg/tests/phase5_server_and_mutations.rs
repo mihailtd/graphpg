@@ -1006,3 +1006,339 @@ async fn test_openapi_spec_serving_and_content_negotiation() {
         "Schemas should be empty after reloading with catalog without tables"
     );
 }
+
+#[tokio::test]
+async fn test_rest_reads_filtering() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app = create_router(state);
+
+    // 1. Equal filter: filter[name][eq]=Cats
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?filter[name][eq]=Cats")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["name"], "Cats");
+
+    // 2. Pattern filter: filter[name][like]=%Cat%
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?filter[name][like]=%25Cat%25")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["name"], "Cats");
+
+    // 3. In-list filter: filter[name][in]=Cats,Dogs
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?filter[name][in]=Cats,Dogs")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rows.len(), 2);
+    let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
+    assert!(names.contains(&"Cats"));
+    assert!(names.contains(&"Dogs"));
+}
+
+#[tokio::test]
+async fn test_rest_reads_ordering() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app = create_router(state);
+
+    // 1. Order by name:desc
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?order=name:desc")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
+    assert!(names.len() >= 3);
+    assert!(
+        names
+            .windows(2)
+            .all(|w| w[0].to_lowercase() >= w[1].to_lowercase()),
+        "Expected descending order: {names:?}"
+    );
+
+    // 2. Order by -name (unary minus shorthand)
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?order=-name")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
+    assert!(names.len() >= 3);
+    assert!(
+        names
+            .windows(2)
+            .all(|w| w[0].to_lowercase() >= w[1].to_lowercase()),
+        "Expected descending order: {names:?}"
+    );
+
+    // 3. Order by name:asc
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?order=name:asc")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
+    assert!(names.len() >= 3);
+    assert!(
+        names
+            .windows(2)
+            .all(|w| w[0].to_lowercase() <= w[1].to_lowercase()),
+        "Expected ascending order: {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_rest_reads_pagination_and_link_headers() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app = create_router(state);
+
+    // 1. First page: ?filter[name][in]=Cats,Dogs,Postgres&first=2&order=name:asc
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?filter[name][in]=Cats,Dogs,Postgres&first=2&order=name:asc")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers().get("x-total-count").unwrap(), "3");
+
+    let link_header = res
+        .headers()
+        .get(header::LINK)
+        .expect("Link header expected")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(link_header.contains("rel=\"next\""));
+    assert!(link_header.contains("after="));
+    assert!(
+        link_header.contains("filter%5Bname%5D%5Bin%5D=Cats%2CDogs%2CPostgres")
+            || link_header.contains("filter[name][in]=Cats,Dogs,Postgres")
+    );
+
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["name"], "Cats");
+    assert_eq!(rows[1]["name"], "Dogs");
+
+    // Extract next URL from link header: <URI>; rel="next"
+    let next_uri = link_header
+        .split(';')
+        .next()
+        .unwrap()
+        .trim_matches(|c| c == '<' || c == '>');
+
+    // 2. Fetch second page using next URL
+    let req = Request::builder()
+        .method("GET")
+        .uri(next_uri)
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers().get("x-total-count").unwrap(), "3");
+    let link_header_page2 = res
+        .headers()
+        .get(header::LINK)
+        .expect("Link header expected on page 2")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(link_header_page2.contains("rel=\"prev\""));
+    assert!(link_header_page2.contains("before="));
+
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["name"], "Postgres");
+
+    // 3. Offset pagination: ?filter[name][in]=Cats,Dogs,Postgres&limit=1&offset=1&order=name:asc
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?filter[name][in]=Cats,Dogs,Postgres&limit=1&offset=1&order=name:asc")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["name"], "Dogs");
+}
+
+#[tokio::test]
+async fn test_rest_reads_projection_and_embedding() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app = create_router(state);
+
+    // 1. Column projection: ?fields=name
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?fields=name")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert!(!rows.is_empty());
+    assert!(rows[0].get("name").is_some());
+    assert!(rows[0].get("id").is_none());
+
+    // 2. Unknown field in ?fields=invalid returns 400
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?fields=invalid_col")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // 3. Relation embedding: ?include=messages
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums?include=messages")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert!(!rows.is_empty());
+    assert!(rows[0].get("messages").is_some());
+    assert!(rows[0]["messages"].is_array());
+}
+
+#[tokio::test]
+async fn test_rest_reads_search_post() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app = create_router(state);
+
+    // 1. POST /rest/forums/search with {"filter": {"name": {"eq": "Cats"}}}
+    let search_body = serde_json::json!({
+        "filter": {
+            "name": { "eq": "Cats" }
+        }
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/rest/forums/search")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&search_body).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["name"], "Cats");
+
+    // 2. POST /rest/forums/search with raw or filter body
+    let search_body = serde_json::json!({
+        "or": [
+            { "name": { "like": "%Cat%" } },
+            { "name": { "like": "%Dog%" } }
+        ]
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/rest/forums/search")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&search_body).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rows.len(), 2);
+    let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
+    assert!(names.contains(&"Cats"));
+    assert!(names.contains(&"Dogs"));
+
+    // 3. POST /rest/forums/search with filter, orderBy, and first
+    let search_body = serde_json::json!({
+        "filter": {
+            "name": { "like": "%o%" }
+        },
+        "orderBy": ["NAME_DESC"],
+        "first": 1
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/rest/forums/search")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&search_body).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["name"], "Postgres");
+}

@@ -979,6 +979,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",

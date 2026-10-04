@@ -23,6 +23,7 @@ tower-http = { version = "0.7", features = ["cors"] }
 dotenvy = "0.15"
 serde_yaml = "0.9"
 futures = "0.3"
+percent-encoding = "2.3"
 # OAuth 2.0 access tokens (JWTs) and the authorization server's signing keys (JWKS)
 jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
