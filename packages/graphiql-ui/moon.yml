@@ -10,7 +10,8 @@ fileGroups:
 
 tasks:
   build:
-    command: node build.mjs
+    # through pnpm: moon installs the workspace dependencies before a pnpm task, not before a bare node
+    command: pnpm run build
     inputs:
       - src/**/*
       - build.mjs
@@ -19,7 +20,8 @@ tasks:
     outputs:
       - /crates/graphpg-ui/assets/graphiql/**
   dev:
-    command: node build.mjs --watch
+    # rebuilds on change; a debug graphpg reads the files from disk, so reload the page
+    command: pnpm run dev
     preset: server
   lint:
     command: pnpm exec biome lint

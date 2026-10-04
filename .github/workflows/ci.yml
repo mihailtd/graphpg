@@ -160,9 +160,13 @@ jobs:
         run: |
           docker run -d --name graphpg --network host \
             -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/blog \
-            -e DATABASE_SCHEMA=blog graphpg:ci
+            -e DATABASE_SCHEMA=blog -e GRAPHIQL=true graphpg:ci
           for i in $(seq 1 30); do curl -sf localhost:4000/health && break; sleep 1; done
           curl -sf localhost:4000/graphql -H 'content-type: application/json' \
             -d '{"query":"{ authors { username } }"}' | tee /dev/stderr | grep -q '"username":"ada"'
+          # The GraphiQL UI is part of the image: its page names a script, which is served
+          script=$(curl -sf localhost:4000/graphiql | grep -o '/graphiql/graphiql\.[A-Z0-9]*\.js')
+          test -n "$script"
+          curl -sf -H 'Accept-Encoding: gzip' -o /dev/null -w '%{size_download} bytes of %{content_type}\n' "localhost:4000$script"
           docker stop --time 5 graphpg
           test "$(docker inspect graphpg --format '{{.State.ExitCode}}')" = "0"

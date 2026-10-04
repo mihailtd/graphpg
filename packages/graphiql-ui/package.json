@@ -1,6 +1,5 @@
 {
-  "name": "@graphpg/ui-graphiql",
-  "version": "1.0.1",
+  "name": "@graphpg/graphiql-ui",
   "private": true,
   "type": "module",
   "scripts": {

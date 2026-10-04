@@ -3,12 +3,15 @@
 # --- Build: UI assets ------------------------------------------------------------------
 # Base images are pinned by digest; Dependabot proposes updates.
 FROM node:26-alpine@sha256:b341ca66519d9a1c25d4e41f254ffb6fe403fc0f9054c62b863f0660dcc1c199 AS ui
-RUN npm install -g pnpm@11.22.0
 WORKDIR /src
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# pnpm at the version package.json pins (Node 26 images no longer ship Corepack)
+RUN npm install --global "pnpm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
+# Dependencies first, so this layer is reused until a manifest or the lockfile changes
+COPY packages/graphiql-ui/package.json packages/graphiql-ui/package.json
+RUN pnpm install --frozen-lockfile --filter @graphpg/graphiql-ui
 COPY packages/graphiql-ui packages/graphiql-ui
-RUN pnpm install --frozen-lockfile --filter @graphpg/ui-graphiql
-RUN cd packages/graphiql-ui && node build.mjs
+RUN pnpm --filter @graphpg/graphiql-ui run build
 
 # --- Build: a fully static musl binary -------------------------------------------------
 # Base images are pinned by digest; Dependabot proposes updates.
