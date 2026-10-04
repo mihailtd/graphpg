@@ -805,6 +805,91 @@ async fn test_rest_endpoint_enabled_and_disabled() {
 }
 
 #[tokio::test]
+async fn test_rest_list_resource_endpoint() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state_enabled = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema.clone(),
+        catalog.clone(),
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app = create_router(state_enabled);
+
+    // 1. GET /rest/forums returns 200 with JSON array of plain rows (no Relay envelope)
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/json; charset=utf-8"
+    );
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).expect("Valid JSON");
+    let rows = json.as_array().expect("Expected JSON array of rows");
+    assert!(!rows.is_empty(), "Forums should not be empty");
+
+    let forum_names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
+    for expected in ["Cats", "Dogs", "Postgres"] {
+        assert!(
+            forum_names.contains(&expected),
+            "Missing forum {expected} in {forum_names:?}"
+        );
+    }
+    // Verify plain row fields without Relay envelope:
+    assert!(rows[0].get("id").is_some());
+    assert!(rows[0].get("name").is_some());
+    assert!(rows[0].get("node").is_none());
+    assert!(rows[0].get("edges").is_none());
+    assert!(rows[0].get("pageInfo").is_none());
+
+    // 2. GET /rest/users returns 200 with JSON array of users
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/users")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).expect("Valid JSON");
+    assert!(json.is_array());
+
+    // 3. GET /rest/nonexistent returns 404
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/nonexistent")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // 4. When openapi_enabled is false, GET /rest/forums returns 404
+    let state_disabled = Arc::new(
+        ServerState::new(
+            create_pool(common::db_url(), 2).expect("Failed to create pool"),
+            schema,
+            catalog,
+            "app_public".to_string(),
+            DebugOptions::default(),
+        )
+        .with_openapi_enabled(false),
+    );
+    let app_disabled = create_router(state_disabled);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/forums")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_disabled.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn test_openapi_spec_serving_and_content_negotiation() {
     let (_client, schema, catalog) = setup_test().await;
 

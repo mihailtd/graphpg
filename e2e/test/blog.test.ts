@@ -42,4 +42,16 @@ describe("the blog schema, migrated by Drizzle and served by graphpg", () => {
     });
     expect((await res.json()).errors).toBeDefined();
   });
+
+  it("serves tables over the REST API at /rest/<table_name>", async () => {
+    const restUrl = inject("graphqlUrl").replace("/graphql", "/rest/authors");
+    const res = await fetch(restUrl);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const rows = (await res.json()) as Array<{ username: string }>;
+    expect(Array.isArray(rows)).toBe(true);
+    const usernames = rows.map((r) => r.username);
+    expect(usernames).toContain("ada");
+    expect(usernames).toContain("grace");
+  });
 });
