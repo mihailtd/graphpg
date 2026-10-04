@@ -11,6 +11,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/graphpg_test
+  # The jobs that never serve the UI do not need it built (see crates/graphpg-ui/build.rs); the
+  # ones that run the tests set it to 1.
+  GRAPHPG_REQUIRE_UI: "0"
 
 # Caches: only runs on main write them (`save-if`), and pull requests read main's. A cache is
 # readable from the branch that wrote it and from main only, so a PR that saved its own copies
@@ -114,6 +117,15 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Load the blog example
         run: psql postgres://postgres:postgres@localhost:5432/blog -v ON_ERROR_STOP=1 -f examples/blog/schema.sql
+      - name: The example schema follows graphpg's own advice
+        working-directory: examples/blog
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/blog
+        run: |
+          cargo build --locked --manifest-path ../../Cargo.toml --bin graphpg
+          advice=$(../../target/debug/graphpg advise)
+          echo "$advice"
+          ! grep -q '^warning:' <<< "$advice"
       - name: Serve it and run a query
         working-directory: examples/blog
         env:

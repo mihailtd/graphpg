@@ -38,6 +38,7 @@ CREATE TABLE comments (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX comments_post_idx ON comments (post_id, created_at, id);
+CREATE INDEX comments_author_idx ON comments (author_id);
 
 CREATE TABLE tags (
     id uuid PRIMARY KEY DEFAULT uuidv7(),

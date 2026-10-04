@@ -1,0 +1,1 @@
+CREATE INDEX "comments_author_idx" ON "blog"."comments" USING btree ("author_id");
