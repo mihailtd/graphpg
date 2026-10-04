@@ -759,3 +759,47 @@ async fn test_graphql_disabled_returns_404() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_rest_endpoint_enabled_and_disabled() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state_enabled = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema.clone(),
+        catalog.clone(),
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app_enabled = create_router(state_enabled);
+
+    // GET /rest returns 200 OK with "hello world"
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_enabled.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..], b"hello world");
+
+    // When openapi_enabled is false, GET /rest returns 404
+    let state_disabled = Arc::new(
+        ServerState::new(
+            create_pool(common::db_url(), 2).expect("Failed to create pool"),
+            schema,
+            catalog,
+            "app_public".to_string(),
+            DebugOptions::default(),
+        )
+        .with_openapi_enabled(false),
+    );
+    let app_disabled = create_router(state_disabled);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_disabled.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}

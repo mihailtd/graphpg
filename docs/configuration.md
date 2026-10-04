@@ -42,8 +42,9 @@ OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOIN
 | Path | Method | |
 | :--- | :--- | :--- |
 | `/graphql` | `POST` | Queries, mutations, `@defer` / `@stream` (as `multipart/mixed`) and Federation `_entities` (404 when `graphql.enabled: false`) |
+| `/rest` | `GET` | REST API (404 when `openapi.enabled: false`) |
 | `/graphiql` | `GET` | GraphiQL IDE, when `graphql.ui` is on (404 otherwise) |
-| `/scalar` | `GET` | Scalar API reference, when `openapi.ui` is on (404 otherwise); it shows the OpenAPI document at `/openapi.json` once the REST API serves one |
+| `/scalar` | `GET` | Scalar API reference, when `openapi.ui` is on (404 otherwise); it shows the OpenAPI document at `/openapi.json` |
 | `/export` | `POST` | A connection query streamed as NDJSON or CSV (404 when `graphql.enabled: false`) |
 | `/import/{Type}` | `POST` | NDJSON rows of `Create<Type>Input`, inserted all-or-nothing with `COPY` (404 when `graphql.enabled: false`) |
 | `/health` | `GET` | Liveness |
@@ -105,7 +106,7 @@ graphql:
   ui: false                     # the GraphiQL IDE: on by default in dev mode only
   federation: { enabled: false }
 openapi:
-  enabled: false                # the REST API and its OpenAPI description
+  enabled: true                 # the REST API at /rest and its OpenAPI description (alias: rest)
   ui: false                     # the Scalar API reference: on by default in dev mode only
 
 dev:                            # settings that differ in dev mode
@@ -119,7 +120,7 @@ The effective config of a mode is built in four steps, each overriding the last:
 
 ### The UIs
 
-`graphql.ui` serves the GraphiQL IDE at `/graphiql` and `openapi.ui` the Scalar API reference at `/scalar`. Both are on in dev mode and off in prod, and either can be set explicitly. They are part of the binary (and of the container image), load nothing from other hosts, and work offline, so a strict Content-Security-Policy can allow `'self'` only.
+`graphql.ui` serves the GraphiQL IDE at `/graphiql` and `openapi.ui` (alias `rest.ui`) the Scalar API reference at `/scalar`. Both are on in dev mode and off in prod, and either can be set explicitly. They are part of the binary (and of the container image), load nothing from other hosts, and work offline, so a strict Content-Security-Policy can allow `'self'` only.
 
 The GraphiQL source is `packages/graphiql-ui`; `moon run graphiql-ui:build` builds it into `crates/graphpg-ui/assets`, which the server embeds. A build without those files still runs, and `/graphiql` says so.
 

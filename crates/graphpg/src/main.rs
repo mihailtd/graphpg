@@ -338,6 +338,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_graphiql(config.graphql.ui)
             .with_scalar(config.openapi.ui)
             .with_graphql_enabled(config.graphql.enabled)
+            .with_openapi_enabled(config.openapi.enabled)
             .with_config(config.clone()),
     );
 
@@ -385,7 +386,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if config.graphql.enabled {
         tracing::info!("graphpg listening on http://{}/graphql", addr);
-    } else {
+    }
+    if config.openapi.enabled {
+        tracing::info!("REST API listening on http://{}/rest", addr);
+    }
+    if !config.graphql.enabled && !config.openapi.enabled {
         tracing::info!("graphpg listening on http://{}", addr);
     }
     if config.graphql.ui {

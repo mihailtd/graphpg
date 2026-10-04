@@ -34,7 +34,7 @@ pub struct Config {
     #[serde(default)]
     pub graphql: GraphqlConfig,
     /// The REST API and its OpenAPI description.
-    #[serde(default)]
+    #[serde(default, alias = "rest")]
     pub openapi: OpenapiConfig,
     /// Schema watching on DDL changes and auto-export.
     #[serde(default)]
@@ -217,17 +217,28 @@ impl Default for GraphqlConfig {
 }
 
 /// The REST API and its OpenAPI description.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct OpenapiConfig {
-    /// Serve the REST API. Off until the REST surface exists.
-    #[serde(default, deserialize_with = "switch")]
+    /// Serve the REST API and OpenAPI document.
+    #[serde(deserialize_with = "switch", default = "default_true")]
     pub enabled: bool,
     /// Serve the Scalar API reference at `/scalar`, showing the OpenAPI document at
     /// `/openapi.json` once the REST surface serves one. On in `dev` mode, off in `prod`.
     #[serde(default, deserialize_with = "switch")]
     pub ui: bool,
 }
+
+impl Default for OpenapiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ui: false,
+        }
+    }
+}
+
+pub type RestConfig = OpenapiConfig;
 
 /// Apollo Federation configuration for exposing this engine as a federated subgraph.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

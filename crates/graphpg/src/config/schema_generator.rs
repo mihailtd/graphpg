@@ -213,7 +213,19 @@ impl ConfigSchemaGenerator {
                 "type": "object",
                 "description": "The REST API and its OpenAPI description",
                 "properties": {
-                    "enabled": Self::switch_described("Serve the REST API (default false)"),
+                    "enabled": Self::switch_described("Serve the REST API at /rest (default true)"),
+                    "ui": Self::switch_described("Serve the Scalar API reference at /scalar (default: on in dev mode, off in prod)")
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "rest".to_string(),
+            json!({
+                "type": "object",
+                "description": "Alias for openapi: the REST API and its OpenAPI description",
+                "properties": {
+                    "enabled": Self::switch_described("Serve the REST API at /rest (default true)"),
                     "ui": Self::switch_described("Serve the Scalar API reference at /scalar (default: on in dev mode, off in prod)")
                 },
                 "additionalProperties": false

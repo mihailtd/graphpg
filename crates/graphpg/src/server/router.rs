@@ -1,7 +1,7 @@
 //! Assembles the HTTP router from modular route definitions per feature:
 //! GraphQL, developer UIs, and health checks, with layered middleware.
 use super::bulk::{export_handler, import_handler};
-use super::http::{graphql_handler, health_handler};
+use super::http::{graphql_handler, health_handler, rest_handler};
 use super::ServerState;
 use crate::config::Config;
 use axum::routing::{get, post};
@@ -15,6 +15,11 @@ pub fn graphql_routes() -> Router<Arc<ServerState>> {
         .route("/graphql", post(graphql_handler))
         .route("/export", post(export_handler))
         .route("/import/{type_name}", post(import_handler))
+}
+
+/// Mounts the REST API routes: `/rest`.
+pub fn rest_routes() -> Router<Arc<ServerState>> {
+    Router::new().route("/rest", get(rest_handler))
 }
 
 /// Mounts developer tools: the GraphiQL IDE at `/graphiql` and the Scalar reference at `/scalar`.
@@ -45,6 +50,10 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
 
     if state.graphql_enabled {
         router = router.merge(graphql_routes());
+    }
+
+    if state.openapi_enabled {
+        router = router.merge(rest_routes());
     }
 
     router = router.merge(health_routes());

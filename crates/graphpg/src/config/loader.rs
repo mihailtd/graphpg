@@ -170,11 +170,13 @@ impl Config {
         }
 
         let mut shared = Value::Mapping(shared);
+        normalize_rest_key(&mut shared);
         interpolate(&mut shared, "", env, &mut problems);
         let blocks: Vec<(Mode, Value)> = blocks
             .into_iter()
             .map(|(m, block)| {
                 let mut block = Value::Mapping(block);
+                normalize_rest_key(&mut block);
                 interpolate(&mut block, m.as_str(), env, &mut problems);
                 (m, block)
             })
@@ -248,6 +250,32 @@ fn check_removed_secret_keys(val: &Value, prefix: &str, problems: &mut Vec<Strin
             }
             check_removed_secret_keys(v, &path, problems);
         }
+    }
+}
+
+fn normalize_rest_key(val: &mut Value) {
+    match val {
+        Value::Mapping(map) => {
+            let rest_key = Value::String("rest".to_string());
+            let openapi_key = Value::String("openapi".to_string());
+            if let Some(rest_val) = map.remove(&rest_key) {
+                match map.get_mut(&openapi_key) {
+                    Some(openapi_val) => merge(openapi_val, rest_val),
+                    None => {
+                        map.insert(openapi_key, rest_val);
+                    }
+                }
+            }
+            for (_, v) in map.iter_mut() {
+                normalize_rest_key(v);
+            }
+        }
+        Value::Sequence(seq) => {
+            for v in seq.iter_mut() {
+                normalize_rest_key(v);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -385,7 +413,7 @@ mod tests {
         assert_eq!(config.server.port, 4000);
         assert_eq!(config.database.pool_size, 10);
         assert!(config.graphql.enabled);
-        assert!(!config.openapi.enabled);
+        assert!(config.openapi.enabled);
         assert!(!config.graphql.ui && !config.openapi.ui);
         assert!(!config.watch.enabled && config.watch.export);
         assert_eq!(config.export.graphql, "schema.graphql");
@@ -416,6 +444,41 @@ prod:
         assert_eq!((dev.database.pool_size, prod.database.pool_size), (2, 20));
         // Deep merge: a block's setting does not drop its siblings
         assert!(dev.graphql.federation.enabled && prod.graphql.federation.enabled);
+    }
+
+    #[test]
+    fn test_openapi_config() {
+        // default Prod
+        let cfg = parse("", Mode::Prod).unwrap();
+        assert!(cfg.graphql.enabled);
+        assert!(!cfg.graphql.ui);
+        assert!(cfg.openapi.enabled);
+        assert!(!cfg.openapi.ui);
+
+        // default Dev
+        let cfg = parse("", Mode::Dev).unwrap();
+        assert!(cfg.graphql.enabled);
+        assert!(cfg.graphql.ui);
+        assert!(cfg.openapi.enabled);
+        assert!(cfg.openapi.ui);
+
+        // using openapi key
+        let yaml = "openapi: { enabled: false, ui: true }";
+        let cfg = parse(yaml, Mode::Prod).unwrap();
+        assert!(!cfg.openapi.enabled);
+        assert!(cfg.openapi.ui);
+
+        // using rest alias key
+        let yaml = "rest: { enabled: false, ui: true }";
+        let cfg = parse(yaml, Mode::Prod).unwrap();
+        assert!(!cfg.openapi.enabled);
+        assert!(cfg.openapi.ui);
+
+        // using both merges with openapi taking precedence
+        let yaml = "rest: { enabled: false }\nopenapi: { ui: true }";
+        let cfg = parse(yaml, Mode::Prod).unwrap();
+        assert!(!cfg.openapi.enabled);
+        assert!(cfg.openapi.ui);
     }
 
     #[test]
