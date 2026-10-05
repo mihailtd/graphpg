@@ -17,12 +17,12 @@ use std::collections::BTreeMap;
 pub struct OpenApiGenerator;
 
 /// `{"$ref": "#/components/schemas/<name>"}`.
-fn schema_ref(name: &str) -> Value {
+pub(super) fn schema_ref(name: &str) -> Value {
     json!({ "$ref": format!("#/components/schemas/{name}") })
 }
 
 /// A problem+json response.
-fn problem(description: &str) -> Value {
+pub(super) fn problem(description: &str) -> Value {
     json!({
         "description": description,
         "content": { "application/problem+json": { "schema": schema_ref("ProblemDetails") } }
@@ -30,7 +30,7 @@ fn problem(description: &str) -> Value {
 }
 
 /// The responses every operation can return, plus `extra` (status, description).
-fn responses(success: Value, extra: &[(&str, &str)]) -> Value {
+pub(super) fn responses(success: Value, extra: &[(&str, &str)]) -> Value {
     let mut out = match success {
         Value::Object(map) => map,
         _ => serde_json::Map::new(),
@@ -55,7 +55,7 @@ fn responses(success: Value, extra: &[(&str, &str)]) -> Value {
     Value::Object(out)
 }
 
-fn prefer_param(write: bool) -> Value {
+pub(super) fn prefer_param(write: bool) -> Value {
     if write {
         json!({
             "name": "Prefer", "in": "header",
@@ -80,7 +80,7 @@ fn if_match_param(description: &str) -> Value {
 }
 
 /// Makes a schema accept `null` (OpenAPI 3.1 / JSON Schema 2020-12).
-fn nullable(mut schema: Value) -> Value {
+pub(super) fn nullable(mut schema: Value) -> Value {
     match schema.get("type").cloned() {
         Some(Value::String(t)) => {
             schema["type"] = json!([t, "null"]);
@@ -95,7 +95,7 @@ fn nullable(mut schema: Value) -> Value {
 }
 
 /// A regex alternation of literal names.
-fn alternation(names: &[String]) -> String {
+pub(super) fn alternation(names: &[String]) -> String {
     let escaped: Vec<String> = names.iter().map(|n| regex_escape(n)).collect();
     format!("({})", escaped.join("|"))
 }
@@ -126,6 +126,17 @@ impl OpenApiGenerator {
     /// Generates an OpenAPI 3.1 document for the REST API of a server whose default schema is
     /// `default_schema` (the schema `/rest/<resource>` resolves names in first).
     pub fn generate_for(catalog: &DatabaseCatalog, config: &Config, default_schema: &str) -> Value {
+        Self::generate_with_schema(catalog, config, default_schema, None)
+    }
+
+    /// Like [`generate_for`](Self::generate_for), with the GraphQL schema the server serves:
+    /// the arguments of search methods are typed from its input types.
+    pub fn generate_with_schema(
+        catalog: &DatabaseCatalog,
+        config: &Config,
+        default_schema: &str,
+        graphql: Option<&apollo_compiler::Schema>,
+    ) -> Value {
         let mut paths = serde_json::Map::new();
         let mut schemas = serde_json::Map::new();
 
@@ -181,7 +192,11 @@ impl OpenApiGenerator {
                 Self::generate_search_request_schema(table, catalog),
             );
             Self::generate_table_paths(table, catalog, config, &mut paths);
+            Self::generate_aggregate_paths(table, config, &mut schemas, &mut paths);
+            Self::generate_search_method_paths(table, catalog, config, graphql, &mut paths);
         }
+        Self::generate_global_search_paths(catalog, config, &tables, &mut schemas, &mut paths);
+        Self::generate_rpc_paths(catalog, config, default_schema, &tables, &mut paths);
 
         json!({
             "openapi": "3.1.0",
@@ -446,14 +461,14 @@ impl OpenApiGenerator {
         json!({ "name": "key", "in": "path", "required": true, "description": description, "schema": schema })
     }
 
-    fn visible_fields(table: &TableMetadata) -> Vec<String> {
+    pub(super) fn visible_fields(table: &TableMetadata) -> Vec<String> {
         table
             .visible_columns()
             .map(|c| c.field_name.clone())
             .collect()
     }
 
-    fn fields_param(table: &TableMetadata) -> Value {
+    pub(super) fn fields_param(table: &TableMetadata) -> Value {
         json!({
             "name": "fields", "in": "query", "style": "form", "explode": false,
             "description": "Columns to return (default: all)",
@@ -462,7 +477,7 @@ impl OpenApiGenerator {
     }
 
     /// The to-one and to-many relations (not their connections) that can be embedded.
-    fn relation_names(table: &TableMetadata, catalog: &DatabaseCatalog) -> Vec<String> {
+    pub(super) fn relation_names(table: &TableMetadata, catalog: &DatabaseCatalog) -> Vec<String> {
         catalog
             .object_fields(&table.schema, &table.name)
             .iter()
@@ -472,7 +487,7 @@ impl OpenApiGenerator {
     }
 
     /// `include`, or null when the table has no relation to embed.
-    fn include_param(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
+    pub(super) fn include_param(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
         let relations = Self::relation_names(table, catalog);
         if relations.is_empty() {
             return Value::Null;
@@ -492,7 +507,10 @@ impl OpenApiGenerator {
     }
 
     /// Typed query parameters of the collection `GET`.
-    fn generate_list_parameters(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
+    pub(super) fn generate_list_parameters(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+    ) -> Value {
         let columns = Self::visible_fields(table);
         let order_item = format!("^[+-]?{}(:(asc|desc))?$", alternation(&columns));
         let mut params = vec![
@@ -541,6 +559,19 @@ impl OpenApiGenerator {
 
     /// The body of `POST …/search`.
     fn generate_search_request_schema(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
+        json!({
+            "type": "object",
+            "description": format!("Search request for `{}`; every member is optional, unknown members are a 400", table.name),
+            "properties": Self::search_request_properties(table, catalog),
+            "additionalProperties": false
+        })
+    }
+
+    /// The members of a list request in a JSON body (a search, or a function's options).
+    pub(super) fn search_request_properties(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+    ) -> Value {
         let columns = Self::visible_fields(table);
         let relations = Self::relation_names(table, catalog);
         let mut properties = json!({
@@ -565,12 +596,7 @@ impl OpenApiGenerator {
                 "items": { "type": "string", "pattern": format!("^{}(\\.[A-Za-z_][A-Za-z0-9_]*)*$", alternation(&relations)) }
             });
         }
-        json!({
-            "type": "object",
-            "description": format!("Search request for `{}`; every member is optional, unknown members are a 400", table.name),
-            "properties": properties,
-            "additionalProperties": false
-        })
+        properties
     }
 
     /// RFC 9457 Problem Details JSON Schema.
@@ -791,10 +817,13 @@ impl OpenApiGenerator {
     }
 
     /// Maps a column's PostgreSQL type to an OpenAPI 3.1 JSON Schema.
-    fn column_to_json_schema(col: &ColumnMetadata, catalog: &DatabaseCatalog) -> serde_json::Value {
+    pub(super) fn column_to_json_schema(
+        col: &ColumnMetadata,
+        catalog: &DatabaseCatalog,
+    ) -> serde_json::Value {
         let mut schema = if let Some(enum_key) = &col.enum_key {
             if let Some(enum_meta) = catalog.enums.iter().find(|e| &e.key == enum_key) {
-                let vals: Vec<&str> = enum_meta.values.iter().map(|v| v.label.as_str()).collect();
+                let vals: Vec<&str> = enum_meta.values.iter().map(|v| v.name.as_str()).collect();
                 json!({ "type": "string", "enum": vals })
             } else {
                 Self::pg_type_to_json_schema(&col.pg_type, catalog)
@@ -835,7 +864,10 @@ impl OpenApiGenerator {
     }
 
     /// Converts a [`PgType`] into its corresponding JSON Schema type and format.
-    fn pg_type_to_json_schema(pg_type: &PgType, catalog: &DatabaseCatalog) -> serde_json::Value {
+    pub(super) fn pg_type_to_json_schema(
+        pg_type: &PgType,
+        catalog: &DatabaseCatalog,
+    ) -> serde_json::Value {
         match pg_type {
             PgType::Int2 | PgType::Int4 => json!({ "type": "integer", "format": "int32" }),
             PgType::Int8 => json!({ "type": "integer", "format": "int64" }),
@@ -861,6 +893,22 @@ impl OpenApiGenerator {
                 let inner_schema = Self::pg_type_to_json_schema(inner, catalog);
                 json!({ "type": "array", "items": inner_schema })
             }
+            PgType::Composite(key) => match catalog.find_composite(key) {
+                Some(composite) => {
+                    let properties: BTreeMap<String, Value> = composite
+                        .attributes
+                        .iter()
+                        .map(|a| {
+                            (
+                                a.field_name.clone(),
+                                Self::pg_type_to_json_schema(&a.pg_type, catalog),
+                            )
+                        })
+                        .collect();
+                    json!({ "type": "object", "properties": properties })
+                }
+                None => json!({ "type": "object" }),
+            },
             PgType::Enum(name) => {
                 if let Some(enum_meta) = catalog.enums.iter().find(|e| {
                     &e.config_name == name
@@ -869,7 +917,7 @@ impl OpenApiGenerator {
                         || name.ends_with(&e.config_name)
                 }) {
                     let vals: Vec<&str> =
-                        enum_meta.values.iter().map(|v| v.label.as_str()).collect();
+                        enum_meta.values.iter().map(|v| v.name.as_str()).collect();
                     json!({ "type": "string", "enum": vals })
                 } else {
                     json!({ "type": "string" })

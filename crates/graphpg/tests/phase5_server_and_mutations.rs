@@ -998,10 +998,17 @@ async fn test_openapi_spec_serving_and_content_negotiation() {
     modified_catalog.tables.clear();
     state_enabled.reload(schema, modified_catalog);
     let updated_doc = state_enabled.current_openapi_document();
+    // Functions stay (they are not tables), but no table's paths do
+    let remaining: Vec<&String> = updated_doc["paths"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|p| !p.starts_with("/rest/rpc/"))
+        .collect();
     assert_eq!(
-        updated_doc["paths"].as_object().unwrap().len(),
-        1,
-        "Only /rest should remain after reloading with catalog without tables"
+        remaining,
+        ["/rest"],
+        "Only /rest and functions should remain after reloading with catalog without tables"
     );
     assert!(
         !updated_doc["components"]["schemas"]

@@ -11,6 +11,7 @@ use tokio_postgres::NoTls;
 const DEFAULT_URL: &str = "postgres://postgres:postgres@localhost:5432/graphpg_test";
 const FORUM_SQL: &str = include_str!("../fixtures/forum.sql");
 const INTERFACES_SQL: &str = include_str!("../fixtures/interfaces_and_unions.sql");
+const REST_EXTRAS_SQL: &str = include_str!("../fixtures/rest_extras.sql");
 
 /// Connection string of the test database.
 pub fn db_url() -> &'static str {
@@ -28,6 +29,12 @@ pub async fn ensure_forum_fixture() {
 /// Create the `interfaces_and_unions` fixture (single-table, class-table and union polymorphism).
 pub async fn ensure_interfaces_fixture() {
     ensure_fixture("interfaces_and_unions", INTERFACES_SQL).await;
+}
+
+/// Create the `rest_extras` fixture (views, aggregates, functions and search methods for the
+/// REST API) unless it already exists.
+pub async fn ensure_rest_extras_fixture() {
+    ensure_fixture("rest_extras", REST_EXTRAS_SQL).await;
 }
 
 /// Run `sql` unless `schema` already exists. Safe to call from tests running in parallel:

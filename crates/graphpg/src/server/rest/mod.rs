@@ -8,14 +8,24 @@
 // Handlers fail with a `ProblemDetails` that is sent as the response, so it is never on a hot path
 #![allow(clippy::result_large_err)]
 
+mod aggregates;
+mod functions;
 mod problem;
 mod query;
+mod search;
 mod validate;
 
+pub use aggregates::{
+    rest_aggregate_get_handler, rest_aggregate_post_handler, MAX_GROUPS, MAX_GROUP_KEYS,
+};
+pub use functions::{rest_rpc_handler, rpc_functions, RPC_RESOURCE};
 pub use problem::ProblemDetails;
 pub use query::{
     merge_json, normalize_filter_json, normalize_operator, parse_order_string, parse_prefer_header,
     parse_query_params, Preferences, QueryKind, RestQuery,
+};
+pub use search::{
+    method_segment, rest_global_search_handler, rest_search_method_handler, GLOBAL_SEARCH_RESOURCE,
 };
 
 use axum::extract::{Path, RawQuery, State};
@@ -74,6 +84,10 @@ pub fn resolve_table<'a>(
     default_schema: &str,
     resource: &str,
 ) -> Option<&'a TableMetadata> {
+    // `/rest/rpc/…` and `/rest/search` are not resources
+    if resource == RPC_RESOURCE || resource == GLOBAL_SEARCH_RESOURCE {
+        return None;
+    }
     catalog
         .find_table(default_schema, resource)
         .or_else(|| catalog.find_table_any(resource))
@@ -437,12 +451,12 @@ impl Ctx {
     /// primary, each in a single statement or transaction.
     async fn execute(
         &self,
-        table: &TableMetadata,
+        schema: &str,
         op: RequestOperation,
         method: &str,
         write: bool,
     ) -> Result<serde_json::Value, ProblemDetails> {
-        let plan = QueryPlanner::new(&self.catalog, &table.schema)
+        let plan = QueryPlanner::new(&self.catalog, schema)
             .plan_request(&op)
             .map_err(|err| ProblemDetails::bad_request(format!("Planning error: {err}")))?;
 
@@ -680,7 +694,7 @@ async fn run_write(
 ) -> Result<serde_json::Value, ProblemDetails> {
     let data = ctx
         .execute(
-            table,
+            &table.schema,
             mutation_op(m, table, args, write_columns(table)),
             method,
             true,
@@ -700,6 +714,37 @@ struct Listing {
     page_info: Option<RestPageInfo>,
 }
 
+/// Where a list reads from: a table's own list or connection field, or a function returning
+/// its rows (a connection) with the function's arguments.
+struct ListTarget<'a> {
+    table: &'a TableMetadata,
+    root: &'a str,
+    connection: bool,
+    args: HashMap<String, serde_json::Value>,
+}
+
+impl<'a> ListTarget<'a> {
+    /// A table's own root field: the connection when it has one, else the plain list.
+    fn of_table(table: &'a TableMetadata) -> Result<Self, ProblemDetails> {
+        let (root, connection) = if table.operations.connection {
+            (&table.connection_field, true)
+        } else if table.operations.list {
+            (&table.list_field, false)
+        } else {
+            return Err(ProblemDetails::forbidden(format!(
+                "Listing `{}` is not permitted",
+                table.name
+            )));
+        };
+        Ok(Self {
+            table,
+            root,
+            connection,
+            args: HashMap::new(),
+        })
+    }
+}
+
 async fn list(
     ctx: &Ctx,
     table: &TableMetadata,
@@ -707,6 +752,21 @@ async fn list(
     method: &str,
 ) -> Result<Listing, ProblemDetails> {
     ctx.allow(table, Operation::Read)?;
+    list_rows(ctx, ListTarget::of_table(table)?, query, method).await
+}
+
+async fn list_rows(
+    ctx: &Ctx,
+    target: ListTarget<'_>,
+    query: &RestQuery,
+    method: &str,
+) -> Result<Listing, ProblemDetails> {
+    let ListTarget {
+        table,
+        root,
+        connection,
+        mut args,
+    } = target;
     let row_fields = select_fields(
         &ctx.catalog,
         table,
@@ -714,18 +774,6 @@ async fn list(
         query.include.as_ref(),
     )?;
 
-    let root = if table.operations.connection {
-        &table.connection_field
-    } else if table.operations.list {
-        &table.list_field
-    } else {
-        return Err(ProblemDetails::forbidden(format!(
-            "Listing `{}` is not permitted",
-            table.name
-        )));
-    };
-
-    let mut args: HashMap<String, serde_json::Value> = HashMap::new();
     if let Some(filter) = &query.filter {
         ctx.validate(Root::Query, root, "filter", filter, "filter")?;
         args.insert("filter".into(), filter.clone());
@@ -746,7 +794,7 @@ async fn list(
         }
     }
 
-    let request = if table.operations.connection {
+    let request = if connection {
         ResponseShaper::build_list_request(root, args, row_fields, true, ctx.prefs.count_exact)
     } else {
         RequestField::new(root)
@@ -754,7 +802,12 @@ async fn list(
             .with_children(row_fields)
     };
     let data = ctx
-        .execute(table, RequestOperation::query(vec![request]), method, false)
+        .execute(
+            &table.schema,
+            RequestOperation::query(vec![request]),
+            method,
+            false,
+        )
         .await?;
     let shaped =
         ResponseShaper::unwrap_list(&data, root).map_err(|e| shaping_error(e, ctx.is_prod))?;
@@ -782,6 +835,40 @@ fn list_headers(listing: &Listing, prefs: Preferences) -> HeaderMap {
         }
     }
     headers
+}
+
+/// The response of a list: the rows with the count (if asked for) and either a `Link` header
+/// (a `GET` can be continued from its URL) or cursor headers (a search or function call with
+/// a body cannot: the cursors are sent back as `after` / `before`).
+fn listing_response(
+    listing: Listing,
+    prefs: Preferences,
+    link: Option<String>,
+    cursor_headers: bool,
+) -> Response {
+    let mut out = list_headers(&listing, prefs);
+    if let Some(link) = link {
+        set_header(&mut out, header::LINK, &link);
+    }
+    if cursor_headers {
+        if let Some(pi) = &listing.page_info {
+            if let (true, Some(c)) = (pi.has_next_page, &pi.end_cursor) {
+                set_header(
+                    &mut out,
+                    header::HeaderName::from_static("x-next-cursor"),
+                    c,
+                );
+            }
+            if let (true, Some(c)) = (pi.has_previous_page, &pi.start_cursor) {
+                set_header(
+                    &mut out,
+                    header::HeaderName::from_static("x-previous-cursor"),
+                    c,
+                );
+            }
+        }
+    }
+    (StatusCode::OK, out, Json(listing.rows)).into_response()
 }
 
 /// RFC 8288 `Link` headers (`rel="next"` / `rel="prev"`) for a GET list: the request's own
@@ -858,16 +945,13 @@ pub async fn rest_list_handler(
         .map_err(ProblemDetails::bad_request)?;
         let listing = list(&ctx, table, &query, "GET").await?;
 
-        let mut out = list_headers(&listing, ctx.prefs);
-        if let Some(link) = build_link_header(
+        let link = build_link_header(
             &table.name,
             raw_query.as_deref(),
             listing.page_info.as_ref(),
             &query,
-        ) {
-            set_header(&mut out, header::LINK, &link);
-        }
-        Ok((StatusCode::OK, out, Json(listing.rows)).into_response())
+        );
+        Ok(listing_response(listing, ctx.prefs, link, false))
     })
     .await
 }
@@ -973,26 +1057,7 @@ pub async fn rest_search_handler(
         let query = body.into_query(table, &ctx.catalog)?;
         let listing = list(&ctx, table, &query, "POST").await?;
 
-        // A search cannot be continued with a link (the filter is in the body), so the cursors
-        // are headers to send back as `after` / `before`.
-        let mut out = list_headers(&listing, ctx.prefs);
-        if let Some(pi) = &listing.page_info {
-            if let (true, Some(c)) = (pi.has_next_page, &pi.end_cursor) {
-                set_header(
-                    &mut out,
-                    header::HeaderName::from_static("x-next-cursor"),
-                    c,
-                );
-            }
-            if let (true, Some(c)) = (pi.has_previous_page, &pi.start_cursor) {
-                set_header(
-                    &mut out,
-                    header::HeaderName::from_static("x-previous-cursor"),
-                    c,
-                );
-            }
-        }
-        Ok((StatusCode::OK, out, Json(listing.rows)).into_response())
+        Ok(listing_response(listing, ctx.prefs, None, true))
     })
     .await
 }
@@ -1030,7 +1095,12 @@ pub async fn rest_item_handler(
             .with_arguments(key_args(table, &parsed_key))
             .with_children(fields);
         let data = ctx
-            .execute(table, RequestOperation::query(vec![request]), "GET", false)
+            .execute(
+                &table.schema,
+                RequestOperation::query(vec![request]),
+                "GET",
+                false,
+            )
             .await?;
         let mut row = ResponseShaper::unwrap_single(&data, &table.single_field)
             .map_err(|e| shaping_error(e, ctx.is_prod))?;
@@ -1099,7 +1169,7 @@ pub async fn rest_create_handler(
                 let args = HashMap::from([("inputs".to_string(), inputs)]);
                 let data = ctx
                     .execute(
-                        table,
+                        &table.schema,
                         mutation_op(&m, table, args, column_fields(table)),
                         "POST",
                         true,
@@ -1296,7 +1366,7 @@ pub async fn rest_delete_handler(
 
         let data = ctx
             .execute(
-                table,
+                &table.schema,
                 mutation_op(&m, table, args, column_fields(table)),
                 "DELETE",
                 true,

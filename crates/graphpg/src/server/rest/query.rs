@@ -124,7 +124,7 @@ pub fn normalize_operator(op: &str) -> &'static str {
     }
 }
 
-fn is_filter_operator(op: &str) -> bool {
+pub(super) fn is_filter_operator(op: &str) -> bool {
     !normalize_operator(op).is_empty()
 }
 
@@ -170,7 +170,7 @@ pub fn normalize_filter_json(val: serde_json::Value) -> serde_json::Value {
 }
 
 /// Parses an individual scalar literal, using the column type when known.
-fn parse_scalar_value(
+pub(super) fn parse_scalar_value(
     val: &str,
     col: Option<&ColumnMetadata>,
     what: &str,
@@ -255,7 +255,7 @@ fn parse_filter_value(
 }
 
 /// Extracts bracket path segments from a query key like `filter[name][eq]`.
-fn parse_bracket_path(key: &str) -> Option<(String, Vec<String>)> {
+pub(super) fn parse_bracket_path(key: &str) -> Option<(String, Vec<String>)> {
     let Some(first_bracket) = key.find('[') else {
         return Some((key.to_string(), Vec::new()));
     };
@@ -305,7 +305,7 @@ fn resolve_column_for_path<'a>(
 }
 
 /// Converts bracket segments and a string value into a nested filter JSON object.
-fn segments_to_filter(
+pub(super) fn segments_to_filter(
     segments: &[String],
     val: &str,
     table_meta: &TableMetadata,
@@ -388,7 +388,7 @@ pub fn parse_order_string(
     ))
 }
 
-fn split_list(val: &str) -> Vec<String> {
+pub(super) fn split_list(val: &str) -> Vec<String> {
     val.split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
