@@ -1,8 +1,8 @@
 # graphpg
 
-A GraphQL server for PostgreSQL. Point it at a database and it serves a GraphQL API generated from the schema: tables, relations, constraints, types, functions and privileges. There is no resolver code to write and no schema to maintain in two places.
+A GraphQL **and REST** server for PostgreSQL. Point it at a database and it serves a GraphQL API and a REST API (described by an OpenAPI 3.1 document) generated from the schema: tables, relations, constraints, types, functions and privileges. There is no resolver code to write and no schema to maintain in two places.
 
-graphpg is a single Rust binary. It reads PostgreSQL's catalogs at startup, builds the GraphQL schema, and compiles each request into one SQL statement (lateral joins and JSON aggregation, so nested selections don't cause N+1 queries).
+graphpg is a single Rust binary. It reads PostgreSQL's catalogs at startup, builds the APIs, and compiles each request into one SQL statement (lateral joins and JSON aggregation, so nested selections don't cause N+1 queries). Both APIs are planned onto the same engine, so they share filters, pagination, nested writes, typed errors, authorization and safety limits.
 
 > **Status:** 1.0. Versions follow [semantic versioning](https://semver.org); the behaviour documented here is covered by an integration test suite that runs against PostgreSQL 18. See the [changelog](CHANGELOG.md).
 
@@ -13,7 +13,7 @@ git clone https://github.com/mihailtd/graphpg && cd graphpg/examples/blog
 docker compose up --build
 ```
 
-Open <http://localhost:4000/graphiql>. The [blog example](examples/blog) loads a small schema and shows relations, filtering, pagination, search and nested writes.
+Open <http://localhost:4000/graphiql> for GraphQL, or <http://localhost:4000/scalar> for the REST API reference. The [blog example](examples/blog) loads a small schema and shows relations, filtering, pagination, search and nested writes in both.
 
 Run the published container image against your own database:
 
@@ -41,16 +41,27 @@ DATABASE_URL=postgres://user:pass@localhost/mydb graphpg --mode dev
 }
 ```
 
+The same data over REST:
+
+```bash
+curl -g 'localhost:4000/rest/posts?filter[status][eq]=PUBLISHED&order=-createdAt&first=5&include=tags'
+curl -X POST localhost:4000/rest/authors -H 'content-type: application/json' \
+     -d '{"username": "ada", "displayName": "Ada", "posts": {"create": [{"title": "Hello", "body": "Hi there"}]}}'    # a nested write
+```
+
 ## What it generates
 
 - **Types, relations and lookups** from tables, views, foreign keys (composite ones too), unique keys and many-to-many junction tables; Relay connections with keyset pagination, `node(id:)` and global IDs.
 - **Filtering, ordering and aggregates**, including filters across relations (`some` / `every` / `none`), grouped aggregates, and ordering by related columns.
 - **Mutations**: create, update, delete, upsert, bulk, and nested writes across relations, in one transaction. Constraint violations come back as typed error codes derived from the constraint (`EMAIL_TAKEN`, `AUTHOR_NOT_FOUND`).
+- **A REST API** at `/rest`: lists with typed filters, ordering, keyset pagination and embedding; single-row reads and writes with `ETag` / `If-Match`; nested writes and bulk creates; aggregates and grouped aggregates; functions at `/rest/rpc/…`; search endpoints; RFC 9457 `problem+json` errors with the same typed codes. It is described by an **OpenAPI 3.1** document (typed parameters, nested-write bodies) and a bundled Scalar reference. See the [REST API guide](docs/rest-api.md) and the [comparison with PostgREST](docs/comparison.md#compared-with-postgrest).
 - **Functions as fields**: `STABLE` functions become queries, `VOLATILE` ones mutations, and functions of a row become computed fields.
 - **PostgreSQL types**: enums, composite types, domains, arrays, ranges and multiranges, `ltree`, `jsonb`, pgvector, PostGIS.
 - **Search** fields from the indexes you have: trigram, full-text, pgvector, BM25 and hybrid.
 - **Modern PostgreSQL**: temporal keys (`WITHOUT OVERLAPS`, `PERIOD`), `RETURNING OLD`, `JSON_TABLE` views, `MERGE`-based syncing of children.
-- **Authorization from the database**: OAuth 2.0 bearer tokens are verified and their claims are made available to **Row-Level Security** policies; the GraphQL schema is pruned to what the connecting role may do, from `GRANT`s.
+- **Authorization from the database**: OAuth 2.0 bearer tokens are verified and their claims are made available to **Row-Level Security** policies; with `rbac.enabled`, the GraphQL schema, REST API and OpenAPI document are pruned to what the connecting role may do, from `GRANT`s.
+- **Safety limits for both APIs**: page size, query depth, estimated cost, bulk size, request size and `statement_timeout`, enforced on the plan before any SQL runs; production errors never carry PostgreSQL's own messages ([limits](docs/configuration.md#safety-limits)).
+- **Pinned schemas**: `graphpg schema export` writes the GraphQL SDL and the OpenAPI document; `--check` fails CI when they are out of date, and production refuses to start on drift.
 - **Apollo Federation v2** subgraph mode, `@defer` / `@stream`, streaming NDJSON/CSV export and `COPY` import, read replicas, OpenTelemetry spans.
 
 Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) renames and hides things and declares keys for views; it is not required.
@@ -59,19 +70,20 @@ Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) 
 
 | | |
 | :--- | :--- |
-| [Configuration](docs/configuration.md) | Running graphpg, environment variables, `graphpg.yaml`, multiple schemas, dev mode |
-| [Schema mapping](docs/schema-mapping.md) | How tables, types, functions and constraints become GraphQL |
-| [REST API](docs/rest-api.md) | Filtering, pagination, embedding, writes, row versions and RFC 9457 errors over REST |
-| [GraphQL API](docs/graphql-api.md) | Pagination, filtering, aggregates, mutations, nested writes, errors, search |
+| [Configuration](docs/configuration.md) | Running graphpg, environment variables, `graphpg.yaml`, safety limits, pinned schemas, multiple schemas, dev mode |
+| [Schema mapping](docs/schema-mapping.md) | How tables, types, functions and constraints become GraphQL and REST |
+| [GraphQL API](docs/graphql-api.md) | Pagination, filtering, aggregates, mutations, nested writes, errors, search, limits |
+| [REST API](docs/rest-api.md) | Filtering, pagination, embedding, writes and nested writes, aggregates, functions, search, errors, limits |
 | [Authentication](docs/authentication.md) | OAuth 2.0 resource server and Row-Level Security |
 | [Federation and RBAC](docs/federation-and-rbac.md) | Apollo Federation subgraphs and schema pruning by role |
 | [Performance](docs/performance.md) | Indexes and settings, replicas, observability |
-| [Comparison](docs/comparison.md) | How graphpg differs from PostGraphile and Hasura |
+| [Comparison](docs/comparison.md) | How graphpg differs from PostGraphile and Hasura (GraphQL) and from PostgREST (REST) |
 
 ## Security notes
 
 - Authentication is **off by default**: every request runs as the database user in `DATABASE_URL`. Turn it on and give the engine a low-privilege login role before exposing it ([guide](docs/authentication.md)).
-- GraphiQL and the `--debug` flags (which return generated SQL) are for development only.
+- GraphiQL, Scalar and the `debug.sql` / `debug.explain` settings (which return generated SQL) are for development: they are on or allowed only in `--mode dev`.
+- Requests are bounded by default (page size, depth, cost, bulk size, body size, a 30 s `statement_timeout`); review the [safety limits](docs/configuration.md#safety-limits) for your deployment.
 - Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Development

@@ -6,10 +6,13 @@ graphpg is configured by one optional file, `graphpg.yaml`, which serves every e
 
 ```bash
 graphpg                              # serve in prod mode on :4000
-graphpg --mode dev                   # dev mode (watch DDL, auto-export, GraphiQL/Scalar on)
+graphpg --mode dev                   # dev mode (watch DDL, auto-export, GraphiQL/Scalar on, OpenAPI document served)
 graphpg --config path/to/file.yaml   # explicit config file
 graphpg advise                       # print schema advice and exit
+graphpg schema export                # write GraphQL SDL + OpenAPI (+ subgraph) to the `export:` paths
+graphpg schema export --check        # CI: fail if the exported files are out of date
 graphpg export-graphql --out schema.graphql
+graphpg export-openapi --out openapi.json               # YAML for a .yaml path
 graphpg export-subgraph --out subgraph.graphql          # Apollo Federation SDL
 graphpg export-config-schema --out graphpg.schema.json
 ```
@@ -206,7 +209,7 @@ database:
   schemas: [auth, app, billing]
 ```
 
-The first schema listed is the default: where two schemas have a table of the same name, unqualified names in the config resolve to it. If `database.schemas` is omitted, graphpg defaults to `app_public`.
+The first schema listed is the default: where two schemas have a table of the same name, unqualified names in the config resolve to it, and the REST API (which names a resource after its table, without a prefix) serves the default schema's table only. If `database.schemas` is omitted, graphpg defaults to `app_public`.
 
 Foreign keys across schemas become ordinary relations, joined in the same single SQL statement (`app.posts.author_id` referencing `auth.users.id` gives `Post.user` and `User.posts`). `node(id:)` and Federation `_entities` route to the right schema.
 

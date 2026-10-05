@@ -23,3 +23,15 @@ entities:
   posts:
     columns:
       published_at: { description: When the post became visible to readers }
+
+# Safety limits, shared by GraphQL and REST (these are the defaults; `off` removes one)
+# limits:
+#   page_size: { default: 100, max: 1000 }
+#   depth: 10
+#   cost: 10000000
+#   statement_timeout: 30s
+
+# Pin the exported schemas: `graphpg schema export` writes them, `--check` verifies them in CI,
+# and a drifted file stops a prod start (warns in dev). The files do not exist here, so nothing is pinned.
+# export:
+#   pin: fail

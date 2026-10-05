@@ -71,40 +71,6 @@ fn shape<'a>(
     })
 }
 
-/// Selection of a composite value (or an array of them): every attribute, nested ones too.
-fn composite_selection(
-    catalog: &DatabaseCatalog,
-    pg_type: &PgType,
-    depth: usize,
-) -> Vec<RequestField> {
-    let element = match pg_type {
-        PgType::Array(inner) => inner.as_ref(),
-        other => other,
-    };
-    let PgType::Composite(key) = element else {
-        return Vec::new();
-    };
-    if depth >= 4 {
-        return Vec::new();
-    }
-    catalog
-        .find_composite(key)
-        .map(|composite| {
-            composite
-                .attributes
-                .iter()
-                .map(|a| {
-                    RequestField::new(&a.field_name).with_children(composite_selection(
-                        catalog,
-                        &a.pg_type,
-                        depth + 1,
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// A query-string value as the JSON the argument takes.
 fn parse_argument_text(
     text: &str,
@@ -320,7 +286,7 @@ pub async fn rest_rpc_handler(
                         let FunctionReturn::Value(pg_type) = &f.returns else {
                             unreachable!("a value shape")
                         };
-                        (composite_selection(&ctx.catalog, pg_type, 0), None)
+                        (value_selection(&ctx.catalog, pg_type, 0), None)
                     }
                     Shape::Record => {
                         options.into_query(None, &ctx)?;
@@ -329,7 +295,7 @@ pub async fn rest_rpc_handler(
                             .iter()
                             .map(|c| {
                                 RequestField::new(crate::catalog::models::to_camel_case(&c.name))
-                                    .with_children(composite_selection(&ctx.catalog, &c.pg_type, 0))
+                                    .with_children(value_selection(&ctx.catalog, &c.pg_type, 0))
                             })
                             .collect();
                         (columns, None)

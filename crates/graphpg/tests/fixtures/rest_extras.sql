@@ -41,6 +41,34 @@ CREATE TABLE sailors (
     name text NOT NULL
 );
 
+-- Columns of many types: what a row holds, and what the OpenAPI document says it holds
+CREATE TABLE typed (
+    id int PRIMARY KEY,
+    big int8,
+    price numeric(10, 2),
+    cash money,
+    ratio float8,
+    doc jsonb,
+    list json,
+    raw bytea,
+    point point2,
+    points point2[],
+    span int4range,
+    during tstzrange,
+    day_span daterange,
+    spans int4multirange,
+    stamp timestamp,
+    clock time,
+    wait interval,
+    mood order_status,
+    tags text[]
+);
+INSERT INTO typed VALUES
+    (1, 9007199254740993, 12.50, 3.25, 0.5, '{"a": {"b": [1, 2]}}', '[1, "two", null]', '\xdeadbeef',
+     ROW(1, 2), ARRAY[ROW(3, 4)::point2, ROW(5, 6)::point2], '[1,5)', '[2026-01-01 00:00+00,2026-01-02 00:00+00)',
+     '[2026-01-01,2026-02-01)', '{[1,3),[5,7)}', '2026-01-02 03:04:05', '10:11:12', '1 day 2 hours', 'paid', '{a,b}'),
+    (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'empty', '(,)', NULL, '{}', NULL, NULL, NULL, NULL, NULL);
+
 CREATE TABLE counters (id int PRIMARY KEY, value int NOT NULL DEFAULT 0);
 INSERT INTO counters VALUES (1, 0);
 

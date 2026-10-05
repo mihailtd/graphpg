@@ -1,6 +1,6 @@
 # Authentication and Row-Level Security
 
-graphpg is an **OAuth 2.0 resource server**. It does not issue tokens or log users in. Your authorization server does that (Keycloak, Auth0, Entra ID, Okta, Cognito, Supabase Auth, ...). graphpg verifies the access token on each request and makes its claims available as session settings. **PostgreSQL Row-Level Security policies then decide what the request can read and write**, by comparing those claims (user id, email, application roles, tenant, ...) with your data.
+graphpg is an **OAuth 2.0 resource server**, for its GraphQL and REST APIs alike. It does not issue tokens or log users in. Your authorization server does that (Keycloak, Auth0, Entra ID, Okta, Cognito, Supabase Auth, ...). graphpg verifies the access token on each request and makes its claims available as session settings. **PostgreSQL Row-Level Security policies then decide what the request can read and write**, by comparing those claims (user id, email, application roles, tenant, ...) with your data.
 
 graphpg gives claims no meaning. An application `role: editor` claim is data your policies compare, not a PostgreSQL role. Checking claims against the right columns is the schema author's job. The PostgreSQL role a request runs as is fixed by configuration, and tokens never choose it.
 
@@ -15,6 +15,10 @@ Authentication is **off by default**. Every request then runs as graphpg's datab
 | Verification | Signature with an allowed algorithm (never `none`), `iss`, `aud`, `exp`, `nbf` | RFC 8725 |
 | Keys | The issuer's JSON Web Key Set, found through OpenID Connect discovery or RFC 8414 metadata, cached and re-fetched when a token names an unknown `kid` (key rotation) | RFC 7517, RFC 8414 |
 | Errors | `401` + `WWW-Authenticate: Bearer error="invalid_token"`; `401` + `WWW-Authenticate: Bearer` when a token is required but missing; `400` `invalid_request` for a malformed `Authorization` header | RFC 6750 §3 |
+
+## REST
+
+The same token authenticates `/rest` and `/graphql`, and the same role and session settings reach PostgreSQL, so one set of Row-Level Security policies covers both. REST authentication failures are `application/problem+json` (`code: UNAUTHENTICATED`, status 401, or 400 for a malformed header) and keep the `WWW-Authenticate` challenge. A REST request for a row the policies hide is a 404. With `rbac.enabled`, the resources and operations the connecting role has no privilege for are not served (403) and are left out of the OpenAPI document (one document per container; run another container with another role for another audience, see [Federation and RBAC](federation-and-rbac.md)).
 
 ## Configuration
 
