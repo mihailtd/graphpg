@@ -47,7 +47,7 @@ impl Mode {
     fn defaults(self) -> &'static str {
         match self {
             Mode::Dev => {
-                "graphql:\n  ui: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\n"
+                "headers:\n  preset: relaxed\ngraphql:\n  ui: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\n"
             }
             Mode::Prod => "{}",
         }
@@ -465,6 +465,26 @@ prod:
         assert_eq!((dev.database.pool_size, prod.database.pool_size), (2, 20));
         // Deep merge: a block's setting does not drop its siblings
         assert!(dev.graphql.federation.enabled && prod.graphql.federation.enabled);
+    }
+
+    #[test]
+    fn headers_preset_follows_the_mode() {
+        use super::super::models::HeaderPreset;
+        assert_eq!(
+            parse("", Mode::Prod).unwrap().headers.preset,
+            HeaderPreset::Strict
+        );
+        assert_eq!(
+            parse("", Mode::Dev).unwrap().headers.preset,
+            HeaderPreset::Relaxed
+        );
+        let cfg = parse(
+            "headers: { preset: off, set: { x-frame-options: SAMEORIGIN } }",
+            Mode::Prod,
+        )
+        .unwrap();
+        assert_eq!(cfg.headers.preset, HeaderPreset::Off);
+        assert_eq!(cfg.headers.set["x-frame-options"], "SAMEORIGIN");
     }
 
     #[test]

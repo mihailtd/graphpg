@@ -9,8 +9,10 @@ use super::rest::{
     rest_upsert_handler, GLOBAL_SEARCH_RESOURCE, REST_PREFIX, RPC_RESOURCE,
 };
 use super::ServerState;
+use crate::config::models::{HeaderPreset, HeadersConfig};
 use crate::config::Config;
 use axum::extract::DefaultBodyLimit;
+use axum::http::{HeaderName, HeaderValue};
 use axum::routing::{get, post};
 use axum::Router;
 use std::sync::Arc;
@@ -96,8 +98,28 @@ pub fn health_routes() -> Router<Arc<ServerState>> {
 }
 
 /// Applies global middleware layers configured by [`Config`].
-pub fn apply_layers(router: Router, _config: &Config) -> Router {
-    router.layer(CorsLayer::permissive())
+pub fn apply_layers(router: Router, config: &Config) -> Router {
+    let headers = Arc::new(config.headers.clone());
+    router
+        .layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let headers = headers.clone();
+                async move {
+                    // The bundled UIs load scripts and styles the strict policy would block
+                    let ui = is_ui_path(request.uri().path());
+                    let mut response = next.run(request).await;
+                    apply_security_headers(&headers, ui, response.headers_mut());
+                    response
+                }
+            },
+        ))
+        .layer(CorsLayer::permissive())
+}
+
+fn is_ui_path(path: &str) -> bool {
+    ["/graphiql", "/scalar"]
+        .iter()
+        .any(|ui| path == *ui || path.starts_with(&format!("{ui}/")))
 }
 
 /// Assembles the complete Axum [`Router`] for the server.
@@ -124,4 +146,82 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
     let config = state.config.as_ref().cloned().unwrap_or_default();
     let router = router.with_state(state);
     apply_layers(router, &config)
+}
+
+/// Sets the headers of `config.preset`, then the overrides. Headers a handler already set stay.
+fn apply_security_headers(config: &HeadersConfig, ui: bool, out: &mut axum::http::HeaderMap) {
+    let preset: &[(&str, &str)] = match config.preset {
+        HeaderPreset::Off => &[],
+        HeaderPreset::Relaxed => &[
+            ("x-content-type-options", "nosniff"),
+            ("referrer-policy", "no-referrer"),
+        ],
+        HeaderPreset::Strict => &[
+            ("x-content-type-options", "nosniff"),
+            ("referrer-policy", "no-referrer"),
+            (
+                "strict-transport-security",
+                "max-age=31536000; includeSubDomains",
+            ),
+            ("x-frame-options", "DENY"),
+            (
+                "content-security-policy",
+                "default-src 'none'; frame-ancestors 'none'",
+            ),
+            ("cross-origin-opener-policy", "same-origin"),
+        ],
+    };
+    for (name, value) in preset {
+        if ui && matches!(*name, "content-security-policy" | "x-frame-options") {
+            continue;
+        }
+        if !out.contains_key(*name) {
+            out.insert(
+                HeaderName::from_static(name),
+                HeaderValue::from_static(value),
+            );
+        }
+    }
+    for (name, value) in &config.set {
+        let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+            continue;
+        };
+        if value.is_empty() {
+            out.remove(&name);
+        } else if let Ok(value) = HeaderValue::from_str(value) {
+            out.insert(name, value);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strict_sets_and_overrides_replace_or_remove() {
+        let mut config = HeadersConfig::default();
+        config
+            .set
+            .insert("x-frame-options".into(), "SAMEORIGIN".into());
+        config
+            .set
+            .insert("strict-transport-security".into(), String::new());
+        let mut out = axum::http::HeaderMap::new();
+        apply_security_headers(&config, false, &mut out);
+        assert_eq!(out["x-frame-options"], "SAMEORIGIN");
+        assert!(!out.contains_key("strict-transport-security"));
+        assert_eq!(out["x-content-type-options"], "nosniff");
+    }
+
+    #[test]
+    fn off_sets_nothing() {
+        let config = HeadersConfig {
+            preset: HeaderPreset::Off,
+            ..Default::default()
+        };
+        let mut out = axum::http::HeaderMap::new();
+        apply_security_headers(&config, false, &mut out);
+        assert!(out.is_empty());
+    }
 }
