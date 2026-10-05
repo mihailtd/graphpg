@@ -32,11 +32,87 @@ pub fn validate_argument(
     let Some(definition) = root_field(schema, root, field) else {
         return Ok(());
     };
+    validate_definition(schema, definition, arg, value, path)
+}
+
+/// Like [`validate_argument`], for field `field` of object type `type_name` (such as the
+/// `groupedAggregates` field of a connection type).
+pub fn validate_field_argument(
+    schema: &Schema,
+    type_name: &str,
+    field: &str,
+    arg: &str,
+    value: &serde_json::Value,
+    path: &str,
+) -> Result<(), ProblemDetails> {
+    let Some(definition) = object_field(schema, type_name, field) else {
+        return Ok(());
+    };
+    validate_definition(schema, definition, arg, value, path)
+}
+
+fn validate_definition(
+    schema: &Schema,
+    definition: &apollo_compiler::ast::FieldDefinition,
+    arg: &str,
+    value: &serde_json::Value,
+    path: &str,
+) -> Result<(), ProblemDetails> {
     let Some(argument) = definition.argument_by_name(arg) else {
         return Ok(());
     };
     check(schema, &argument.ty, value, path)
         .map_err(|(field, message)| ProblemDetails::invalid(message, field))
+}
+
+fn object_field<'a>(
+    schema: &'a Schema,
+    type_name: &str,
+    field: &str,
+) -> Option<&'a apollo_compiler::ast::FieldDefinition> {
+    match schema.types.get(type_name)? {
+        ExtendedType::Object(object) => object.fields.get(field).map(|f| &***f),
+        _ => None,
+    }
+}
+
+/// Name of the named type of field `field` of object type `type_name` (lists and non-null
+/// stripped).
+pub fn field_type_name(schema: &Schema, type_name: &str, field: &str) -> Option<String> {
+    object_field(schema, type_name, field).map(|f| f.ty.inner_named_type().to_string())
+}
+
+/// Name of the named type of root field `field`.
+pub fn root_field_type_name(schema: &Schema, root: Root, field: &str) -> Option<String> {
+    root_field(schema, root, field).map(|f| f.ty.inner_named_type().to_string())
+}
+
+/// Names of the fields of object type `type_name`.
+pub fn object_field_names(schema: &Schema, type_name: &str) -> Vec<String> {
+    match schema.types.get(type_name) {
+        Some(ExtendedType::Object(object)) => object.fields.keys().map(|k| k.to_string()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Arguments of root field `field` a caller has to give: non-null ones without a default.
+pub fn required_arguments(schema: &Schema, root: Root, field: &str) -> Vec<String> {
+    root_field(schema, root, field)
+        .map(|f| {
+            f.arguments
+                .iter()
+                .filter(|a| a.ty.is_non_null() && a.default_value.is_none())
+                .map(|a| a.name.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Names of the arguments of root field `field`.
+pub fn root_argument_names(schema: &Schema, root: Root, field: &str) -> Vec<String> {
+    root_field(schema, root, field)
+        .map(|f| f.arguments.iter().map(|a| a.name.to_string()).collect())
+        .unwrap_or_default()
 }
 
 /// Whether root field `field` takes an argument `arg`.

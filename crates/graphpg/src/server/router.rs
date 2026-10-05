@@ -3,8 +3,10 @@
 use super::bulk::{export_handler, import_handler};
 use super::http::{graphql_handler, health_handler, openapi_spec_handler, rest_handler};
 use super::rest::{
-    rest_create_handler, rest_delete_handler, rest_item_handler, rest_list_handler,
-    rest_search_handler, rest_update_handler, rest_upsert_handler, MAX_BODY_BYTES, REST_PREFIX,
+    rest_aggregate_get_handler, rest_aggregate_post_handler, rest_create_handler,
+    rest_delete_handler, rest_global_search_handler, rest_item_handler, rest_list_handler,
+    rest_rpc_handler, rest_search_handler, rest_search_method_handler, rest_update_handler,
+    rest_upsert_handler, GLOBAL_SEARCH_RESOURCE, MAX_BODY_BYTES, REST_PREFIX, RPC_RESOURCE,
 };
 use super::ServerState;
 use crate::config::Config;
@@ -26,6 +28,10 @@ pub fn graphql_routes() -> Router<Arc<ServerState>> {
 /// - `/rest`: API root description
 /// - `/rest/{resource}`: List (GET) and Create (POST)
 /// - `/rest/{resource}/search`: Advanced filter query (POST)
+/// - `/rest/{resource}/search/{method}`: Fuzzy, semantic, full-text ... search (POST)
+/// - `/rest/{resource}/aggregate`: Aggregates and grouped aggregates (GET, POST)
+/// - `/rest/rpc/{function}`: Functions (GET for read-only ones, POST)
+/// - `/rest/search`: Search across every searchable resource (GET, POST)
 /// - `/rest/{resource}/{key}`: Single item Read (GET), Update (PATCH), Upsert (PUT), Delete (DELETE)
 pub fn rest_routes() -> Router<Arc<ServerState>> {
     let resource = format!("{REST_PREFIX}/{{resource}}");
@@ -33,6 +39,22 @@ pub fn rest_routes() -> Router<Arc<ServerState>> {
         .route(REST_PREFIX, get(rest_handler))
         .route(&resource, get(rest_list_handler).post(rest_create_handler))
         .route(&format!("{resource}/search"), post(rest_search_handler))
+        .route(
+            &format!("{resource}/search/{{method}}"),
+            post(rest_search_method_handler),
+        )
+        .route(
+            &format!("{resource}/aggregate"),
+            get(rest_aggregate_get_handler).post(rest_aggregate_post_handler),
+        )
+        .route(
+            &format!("{REST_PREFIX}/{RPC_RESOURCE}/{{function}}"),
+            get(rest_rpc_handler).post(rest_rpc_handler),
+        )
+        .route(
+            &format!("{REST_PREFIX}/{GLOBAL_SEARCH_RESOURCE}"),
+            get(rest_global_search_handler).post(rest_global_search_handler),
+        )
         .route(
             &format!("{resource}/{{key}}"),
             get(rest_item_handler)
