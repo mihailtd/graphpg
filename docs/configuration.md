@@ -94,6 +94,12 @@ database:
 server:
   host: 0.0.0.0
   port: 4000
+  cors:                         # default: any origin in dev, none in prod (no CORS headers)
+    origins: [https://app.example.com]   # or ['*']
+    methods: [GET, POST]        # default: GET POST PUT PATCH DELETE OPTIONS HEAD
+    headers: [authorization, content-type]  # default: authorization content-type accept prefer
+    credentials: false          # needs explicit origins, not '*'
+    max_age: 600                # seconds a browser caches the preflight
 
 watch:
   enabled: false                # watch DDL; default: true in dev, false in prod
