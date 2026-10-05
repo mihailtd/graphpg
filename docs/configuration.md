@@ -42,7 +42,8 @@ OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOIN
 | Path | Method | |
 | :--- | :--- | :--- |
 | `/graphql` | `POST` | Queries, mutations, `@defer` / `@stream` (as `multipart/mixed`) and Federation `_entities` (404 when `graphql.enabled: false`) |
-| `/rest` | `GET` | REST API (404 when `openapi.enabled: false`) |
+| `/rest/{resource}` … | `GET` `POST` `PATCH` `PUT` `DELETE` | The [REST API](rest-api.md): list, search, read, create, update, upsert and delete (404 when `openapi.enabled: false`) |
+| `/rest` | `GET` | REST API root |
 | `/graphiql` | `GET` | GraphiQL IDE, when `graphql.ui` is on (404 otherwise) |
 | `/scalar` | `GET` | Scalar API reference, when `openapi.ui` is on (404 otherwise); it shows the OpenAPI document at `/openapi.json` |
 | `/export` | `POST` | A connection query streamed as NDJSON or CSV (404 when `graphql.enabled: false`) |

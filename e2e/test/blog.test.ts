@@ -72,7 +72,9 @@ describe("the blog schema, migrated by Drizzle and served by graphpg", () => {
     expect(orderRows.map((r) => r.username)).toEqual(["grace", "ada"]);
 
     // 3. Keyset Pagination & Link header: first=1&order=username:asc
-    const page1Res = await fetch(`${baseUrl}?first=1&order=username:asc`);
+    const page1Res = await fetch(`${baseUrl}?first=1&order=username:asc`, {
+      headers: { prefer: "count=exact" },
+    });
     expect(page1Res.status).toBe(200);
     expect(page1Res.headers.get("x-total-count")).toBe("2");
     const linkHeader = page1Res.headers.get("link");

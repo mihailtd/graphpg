@@ -4,10 +4,11 @@ use super::bulk::{export_handler, import_handler};
 use super::http::{graphql_handler, health_handler, openapi_spec_handler, rest_handler};
 use super::rest::{
     rest_create_handler, rest_delete_handler, rest_item_handler, rest_list_handler,
-    rest_search_handler, rest_update_handler, rest_upsert_handler,
+    rest_search_handler, rest_update_handler, rest_upsert_handler, MAX_BODY_BYTES, REST_PREFIX,
 };
 use super::ServerState;
 use crate::config::Config;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
 use std::sync::Arc;
@@ -27,20 +28,19 @@ pub fn graphql_routes() -> Router<Arc<ServerState>> {
 /// - `/rest/{resource}/search`: Advanced filter query (POST)
 /// - `/rest/{resource}/{key}`: Single item Read (GET), Update (PATCH), Upsert (PUT), Delete (DELETE)
 pub fn rest_routes() -> Router<Arc<ServerState>> {
+    let resource = format!("{REST_PREFIX}/{{resource}}");
     Router::new()
-        .route("/rest", get(rest_handler))
+        .route(REST_PREFIX, get(rest_handler))
+        .route(&resource, get(rest_list_handler).post(rest_create_handler))
+        .route(&format!("{resource}/search"), post(rest_search_handler))
         .route(
-            "/rest/{resource}",
-            get(rest_list_handler).post(rest_create_handler),
-        )
-        .route("/rest/{resource}/search", post(rest_search_handler))
-        .route(
-            "/rest/{resource}/{key}",
+            &format!("{resource}/{{key}}"),
             get(rest_item_handler)
                 .patch(rest_update_handler)
                 .put(rest_upsert_handler)
                 .delete(rest_delete_handler),
         )
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 
 /// Mounts the OpenAPI document route: `state.openapi_path`.
