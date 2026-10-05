@@ -261,7 +261,13 @@ impl ConfigSchemaGenerator {
                 "properties": {
                     "graphql": { "type": "string", "description": "Path to export GraphQL SDL schema (default schema.graphql)" },
                     "subgraph": { "type": "string", "description": "Path to export Apollo Federation Subgraph SDL (default subgraph.graphql)" },
-                    "config_schema": { "type": "string", "description": "Path to export YAML config JSON schema (default graphpg.schema.json)" }
+                    "config_schema": { "type": "string", "description": "Path to export YAML config JSON schema (default graphpg.schema.json)" },
+                    "openapi": { "type": "string", "description": "Path to export the OpenAPI 3.1 document (default openapi.json; YAML for .yaml / .yml)" },
+                    "pin": {
+                        "type": ["string", "boolean"],
+                        "enum": ["fail", "warn", "off", true, false],
+                        "description": "At startup, compare the exported schema files with the schema the database generates now: `fail` (default in prod mode) refuses to start on drift, `warn` (default in dev mode) logs it, `off` does not check. Files that do not exist pin nothing."
+                    }
                 },
                 "additionalProperties": false
             }),
@@ -304,6 +310,41 @@ impl ConfigSchemaGenerator {
                         "items": { "type": "string", "enum": std::iter::once("*").chain(catalog.extensions.iter().map(String::as_str)).collect::<Vec<_>>() },
                         "uniqueItems": true,
                         "description": "Extensions whose tables, views and functions are exposed (\"*\": all)"
+                    }
+                },
+                "additionalProperties": false
+            }),
+        );
+        let limit = |description: &str| {
+            json!({
+                "type": ["integer", "string"],
+                "minimum": 1,
+                "description": format!("{description} A number, or `off` for no limit.")
+            })
+        };
+        settings.insert(
+            "limits".to_string(),
+            json!({
+                "type": "object",
+                "description": "Safety limits shared by the GraphQL and REST APIs, enforced on the plan",
+                "properties": {
+                    "page_size": {
+                        "type": "object",
+                        "description": "Rows per page: `first` / `last`",
+                        "properties": {
+                            "default": { "type": ["integer", "string"], "minimum": 1, "description": "Rows of a connection asked for neither `first` nor `last` (default 100)" },
+                            "max": limit("Largest `first` / `last`, and the most rows of a list that has no page size (default 1000).")
+                        },
+                        "additionalProperties": false
+                    },
+                    "depth": limit("Deepest nesting of rows (default 10)."),
+                    "cost": limit("Largest estimated cost: the rows an operation reads (default 10000000)."),
+                    "bulk_rows": limit("Most rows one write inserts, nested writes included (default 1000)."),
+                    "groups": limit("Most groups an aggregate request may return (default 10000)."),
+                    "request_body_bytes": limit("Largest request body in bytes (default 1048576)."),
+                    "statement_timeout": {
+                        "type": "string",
+                        "description": "`statement_timeout` of every connection, with a unit: `500ms`, `30s`, `2m`, `1h`; `off` for none (default 30s)"
                     }
                 },
                 "additionalProperties": false

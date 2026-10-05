@@ -6,7 +6,7 @@ use super::rest::{
     rest_aggregate_get_handler, rest_aggregate_post_handler, rest_create_handler,
     rest_delete_handler, rest_global_search_handler, rest_item_handler, rest_list_handler,
     rest_rpc_handler, rest_search_handler, rest_search_method_handler, rest_update_handler,
-    rest_upsert_handler, GLOBAL_SEARCH_RESOURCE, MAX_BODY_BYTES, REST_PREFIX, RPC_RESOURCE,
+    rest_upsert_handler, GLOBAL_SEARCH_RESOURCE, REST_PREFIX, RPC_RESOURCE,
 };
 use super::ServerState;
 use crate::config::Config;
@@ -21,7 +21,11 @@ pub fn graphql_routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/graphql", post(graphql_handler))
         .route("/export", post(export_handler))
-        .route("/import/{type_name}", post(import_handler))
+        // An import streams NDJSON of any size: the body limit does not apply
+        .route(
+            "/import/{type_name}",
+            post(import_handler).layer(DefaultBodyLimit::disable()),
+        )
 }
 
 /// Mounts the REST API routes:
@@ -62,13 +66,12 @@ pub fn rest_routes() -> Router<Arc<ServerState>> {
                 .put(rest_upsert_handler)
                 .delete(rest_delete_handler),
         )
-        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 
 /// Mounts the OpenAPI document route: `state.openapi_path`.
 pub fn openapi_routes(state: &ServerState) -> Router<Arc<ServerState>> {
     let mut router = Router::new();
-    if state.openapi_enabled && state.openapi_spec {
+    if state.serves_openapi_document() {
         router = router.route(&state.openapi_path, get(openapi_spec_handler));
     }
     router
@@ -80,8 +83,9 @@ pub fn ui_routes(state: &ServerState) -> Router<Arc<ServerState>> {
     if state.graphiql {
         router = router.merge(graphpg_ui::graphiql_router());
     }
-    if state.scalar {
-        router = router.merge(graphpg_ui::scalar_router());
+    // The reference shows the OpenAPI document: with the API off there is nothing to show
+    if state.scalar && state.openapi_enabled {
+        router = router.merge(graphpg_ui::scalar_router_for(&state.openapi_path));
     }
     router
 }
@@ -99,13 +103,18 @@ pub fn apply_layers(router: Router, _config: &Config) -> Router {
 /// Assembles the complete Axum [`Router`] for the server.
 pub fn create_router(state: Arc<ServerState>) -> Router {
     let mut router = Router::new();
+    // `limits.request_body_bytes` for every request body
+    let body_limit = match state.limits.request_body_bytes {
+        Some(bytes) => DefaultBodyLimit::max(bytes),
+        None => DefaultBodyLimit::disable(),
+    };
 
     if state.graphql_enabled {
-        router = router.merge(graphql_routes());
+        router = router.merge(graphql_routes().layer(body_limit));
     }
 
     if state.openapi_enabled {
-        router = router.merge(rest_routes());
+        router = router.merge(rest_routes().layer(body_limit));
         router = router.merge(openapi_routes(&state));
     }
 

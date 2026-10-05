@@ -60,6 +60,15 @@ pub(crate) fn planner_errors(err: &PlannerError) -> Vec<GraphQLError> {
                 extensions: Some(serde_json::json!({ "code": e.code, "field": e.path })),
             })
             .collect(),
+        PlannerError::Limit(limit) => vec![GraphQLError {
+            message: limit.to_string(),
+            path: None,
+            extensions: Some(serde_json::json!({
+                "code": limit.code(),
+                "limit": limit.limit(),
+                "actual": limit.actual(),
+            })),
+        }],
         other => vec![GraphQLError {
             message: other.to_string(),
             path: None,
@@ -106,6 +115,15 @@ pub(crate) fn execution_error(
                 },
             )
         }
+        None if err.is_timeout() => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            GraphQLError {
+                message: "the request ran longer than the statement timeout and was cancelled"
+                    .to_string(),
+                path,
+                extensions: Some(serde_json::json!({ "code": "STATEMENT_TIMEOUT" })),
+            },
+        ),
         None => {
             let rejected = matches!(err, ExecutionError::Mutation { source, .. } if matches!(**source, ExecutionError::Rejected(_)));
             let (status, code) = if rejected {
@@ -188,6 +206,9 @@ pub struct ServerState {
     pub config: Option<crate::config::Config>,
     /// Runtime mode (dev or prod).
     pub mode: crate::config::Mode,
+    /// Safety limits (page size, depth, cost, bulk rows, body size, groups): enforced on every
+    /// plan, whichever API made it.
+    pub limits: crate::config::models::LimitsConfig,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -236,7 +257,14 @@ impl ServerState {
             openapi_document: std::sync::RwLock::new(Arc::new(openapi_doc)),
             config: None,
             mode: crate::config::Mode::Prod,
+            limits: crate::config::models::LimitsConfig::default(),
         }
+    }
+
+    /// Sets the safety limits (the defaults of [`LimitsConfig`](crate::config::models::LimitsConfig) otherwise).
+    pub fn with_limits(mut self, limits: crate::config::models::LimitsConfig) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// Sets the runtime mode.
@@ -336,6 +364,13 @@ impl ServerState {
         self
     }
 
+    /// Whether the OpenAPI document is served at [`openapi_path`](Self::with_openapi_path): when
+    /// the REST API is on and either `openapi.spec` or the Scalar reference (which shows the
+    /// document) is.
+    pub fn serves_openapi_document(&self) -> bool {
+        self.openapi_enabled && (self.openapi_spec || self.scalar)
+    }
+
     /// Serves the Scalar OpenAPI UI at `/scalar`, or not (the default).
     pub fn with_scalar(mut self, on: bool) -> Self {
         self.scalar = on;
@@ -393,6 +428,7 @@ impl ServerState {
         self.graphiql = config.graphql.ui;
         self.scalar = config.openapi.ui;
         self.sql_comments = config.database.sql_comments;
+        self.limits = config.limits.clone();
         let cat = self.current_catalog();
         let doc = OpenApiGenerator::generate_with_schema(
             &cat,
@@ -448,8 +484,21 @@ impl ServerState {
 
 /// Creates a PostgreSQL connection pool. Connections are opened lazily on first use.
 pub fn create_pool(database_url: &str, max_size: usize) -> Result<Pool, CreatePoolError> {
+    create_pool_with(database_url, max_size, None)
+}
+
+/// Like [`create_pool`], with a `statement_timeout` for every connection: a statement running
+/// longer is cancelled (see [`ExecutionError::is_timeout`]).
+pub fn create_pool_with(
+    database_url: &str,
+    max_size: usize,
+    statement_timeout: Option<std::time::Duration>,
+) -> Result<Pool, CreatePoolError> {
     let mut cfg = deadpool_postgres::Config::new();
     cfg.url = Some(database_url.to_string());
+    if let Some(timeout) = statement_timeout {
+        cfg.options = Some(format!("-c statement_timeout={}", timeout.as_millis()));
+    }
     cfg.manager = Some(ManagerConfig {
         recycling_method: RecyclingMethod::Fast,
     });
@@ -505,7 +554,7 @@ pub(crate) async fn openapi_spec_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if !state.openapi_enabled || !state.openapi_spec {
+    if !state.serves_openapi_document() {
         return (StatusCode::NOT_FOUND, "Not Found").into_response();
     }
     let doc = state.current_openapi_document();
@@ -696,7 +745,8 @@ pub(crate) async fn graphql_handler(
         &state.default_schema,
         Some(&**doc),
         req.variables.as_ref(),
-    );
+    )
+    .with_limits(state.limits.plan_limits());
     let target_type = match operation.operation_type {
         apollo_compiler::ast::OperationType::Query => "Query",
         apollo_compiler::ast::OperationType::Mutation => "Mutation",

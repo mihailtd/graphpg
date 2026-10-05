@@ -12,7 +12,6 @@ use axum::http::HeaderMap;
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 
-use super::{MAX_INCLUDES, MAX_PAGE_SIZE};
 use crate::catalog::{ColumnMetadata, DatabaseCatalog, PgType, TableMetadata};
 
 /// Parsed REST collection query options.
@@ -45,17 +44,28 @@ pub struct Preferences {
     /// `count=exact`: list responses carry `X-Total-Count`. Off by default because the count
     /// scans every matching row.
     pub count_exact: bool,
+    /// `previous`: an update or upsert answers with the row as it was before the write too
+    /// (`RETURNING OLD`, PostgreSQL 18).
+    pub previous: bool,
 }
 
 impl Preferences {
     /// The `Preference-Applied` header value for what was honoured.
-    pub fn applied(&self, honoured_return: bool, honoured_count: bool) -> Option<String> {
+    pub fn applied(
+        &self,
+        honoured_return: bool,
+        honoured_count: bool,
+        honoured_previous: bool,
+    ) -> Option<String> {
         let mut parts = Vec::new();
         if honoured_return && self.return_minimal {
             parts.push("return=minimal");
         }
         if honoured_count && self.count_exact {
             parts.push("count=exact");
+        }
+        if honoured_previous && self.previous {
+            parts.push("previous");
         }
         (!parts.is_empty()).then(|| parts.join(", "))
     }
@@ -68,6 +78,11 @@ pub fn parse_prefer_header(headers: &HeaderMap) -> Preferences {
         let Ok(value) = value.to_str() else { continue };
         for item in value.split(',') {
             let item = item.split(';').next().unwrap_or("").trim();
+            // A preference without a value: `previous`
+            if item.eq_ignore_ascii_case("previous") {
+                prefs.previous = true;
+                continue;
+            }
             let Some((key, val)) = item.split_once('=') else {
                 continue;
             };
@@ -80,6 +95,8 @@ pub fn parse_prefer_header(headers: &HeaderMap) -> Preferences {
                 }
             } else if key.eq_ignore_ascii_case("count") {
                 prefs.count_exact = val.eq_ignore_ascii_case("exact");
+            } else if key.eq_ignore_ascii_case("previous") {
+                prefs.previous = val.eq_ignore_ascii_case("true");
             }
         }
     }
@@ -395,12 +412,11 @@ pub(super) fn split_list(val: &str) -> Vec<String> {
         .collect()
 }
 
-/// Checks a `first` / `last` page size.
+/// Checks a `first` / `last` page size is at least 1. The largest is a limit of the
+/// deployment (`limits.page_size.max`), enforced on the plan.
 pub fn check_page_size(key: &str, n: usize) -> Result<usize, String> {
-    if n == 0 || n > MAX_PAGE_SIZE {
-        return Err(format!(
-            "`{key}` must be between 1 and {MAX_PAGE_SIZE}, got {n}"
-        ));
+    if n == 0 {
+        return Err(format!("`{key}` must be at least 1"));
     }
     Ok(n)
 }
@@ -410,16 +426,6 @@ fn page_size(key: &str, val: &str) -> Result<usize, String> {
         .parse::<usize>()
         .map_err(|_| format!("Invalid integer for `{key}`: {val}"))?;
     check_page_size(key, n)
-}
-
-/// Checks the `include` list's size; depth is checked when the relation tree is built.
-pub fn check_include_count(include: &[String]) -> Result<(), String> {
-    if include.len() > MAX_INCLUDES {
-        return Err(format!(
-            "`include` accepts at most {MAX_INCLUDES} relations"
-        ));
-    }
-    Ok(())
 }
 
 /// Parses raw query string parameters into [`RestQuery`].
@@ -455,9 +461,7 @@ pub fn parse_query_params(
         match key.as_str() {
             "fields" => query.fields = Some(split_list(&val)),
             "include" => {
-                let include = split_list(&val);
-                check_include_count(&include)?;
-                query.include = Some(include);
+                query.include = Some(split_list(&val));
             }
             "first" => {
                 collection_only("first")?;
@@ -584,9 +588,18 @@ mod tests {
         let p = parse_prefer_header(&h);
         assert!(p.return_minimal && p.count_exact);
         assert_eq!(
-            p.applied(true, true).as_deref(),
+            p.applied(true, true, true).as_deref(),
             Some("return=minimal, count=exact")
         );
+        h.insert("prefer", "previous".parse().unwrap());
+        assert!(parse_prefer_header(&h).previous);
+        h.insert(
+            "prefer",
+            "previous=true, return=representation".parse().unwrap(),
+        );
+        assert!(parse_prefer_header(&h).previous);
+        h.insert("prefer", "previous=false".parse().unwrap());
+        assert!(!parse_prefer_header(&h).previous);
         let mut h = HeaderMap::new();
         h.insert(
             "prefer",
@@ -596,10 +609,9 @@ mod tests {
     }
 
     #[test]
-    fn page_sizes_are_bounded() {
+    fn page_sizes_are_positive_numbers() {
         assert_eq!(page_size("first", "10"), Ok(10));
         assert!(page_size("first", "0").is_err());
-        assert!(page_size("first", &(MAX_PAGE_SIZE + 1).to_string()).is_err());
         assert!(page_size("first", "x").is_err());
     }
 }

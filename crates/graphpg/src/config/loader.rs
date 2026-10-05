@@ -47,7 +47,7 @@ impl Mode {
     fn defaults(self) -> &'static str {
         match self {
             Mode::Dev => {
-                "graphql:\n  ui: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\n"
+                "graphql:\n  ui: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\n"
             }
             Mode::Prod => "{}",
         }
@@ -216,6 +216,15 @@ impl Config {
                         "debug.explain is only allowed in the dev: block",
                     ));
                 }
+            }
+            let problems = config.limits.problems();
+            if !problems.is_empty() {
+                let problems = if m == mode {
+                    problems
+                } else {
+                    problems.into_iter().map(|p| format!("{m}: {p}")).collect()
+                };
+                return Err(ConfigError { problems });
             }
             if m == mode {
                 requested = Some(config);
@@ -699,5 +708,102 @@ graphql: { ui: 'true' }
         assert!(resolve_mode(Some("invalid"), None).is_err());
         assert!(resolve_mode(None, Some("invalid")).is_err());
         assert!(resolve_mode(Some("invalid"), Some("dev")).is_err());
+    }
+
+    #[test]
+    fn limits_have_safe_defaults_and_can_be_changed_or_switched_off() {
+        let defaults = parse("", Mode::Prod).unwrap().limits;
+        assert_eq!(defaults.page_size.default, 100);
+        assert_eq!(defaults.page_size.max, Some(1000));
+        assert_eq!(defaults.depth, Some(10));
+        assert_eq!(defaults.cost, Some(10_000_000));
+        assert_eq!(defaults.bulk_rows, Some(1000));
+        assert_eq!(defaults.request_body_bytes, Some(1024 * 1024));
+        assert_eq!(
+            defaults.statement_timeout.map(|t| t.0),
+            Some(std::time::Duration::from_secs(30))
+        );
+
+        let custom = parse(
+            "limits:\n  page_size: { default: 25, max: 200 }\n  depth: 5\n  cost: off\n  bulk_rows: unlimited\n  groups: '${GROUPS:-50}'\n  statement_timeout: 1500ms\n",
+            Mode::Prod,
+        )
+        .unwrap()
+        .limits;
+        assert_eq!(
+            (custom.page_size.default, custom.page_size.max),
+            (25, Some(200))
+        );
+        assert_eq!(custom.depth, Some(5));
+        assert_eq!(custom.cost, None);
+        assert_eq!(custom.bulk_rows, None);
+        assert_eq!(custom.groups, Some(50));
+        assert_eq!(
+            custom.statement_timeout.map(|t| t.0),
+            Some(std::time::Duration::from_millis(1500))
+        );
+        let plan = custom.plan_limits();
+        assert_eq!(
+            (plan.page_default, plan.page_max, plan.depth, plan.cost),
+            (Some(25), Some(200), Some(5), None)
+        );
+
+        // a timeout can be switched off, and a mode block overrides the shared value
+        let off = parse("limits: { statement_timeout: off }", Mode::Prod)
+            .unwrap()
+            .limits;
+        assert_eq!(off.statement_timeout, None);
+        let dev = parse(
+            "limits: { depth: 4 }\ndev:\n  limits: { depth: 20, statement_timeout: 2m }\n",
+            Mode::Dev,
+        )
+        .unwrap()
+        .limits;
+        assert_eq!(dev.depth, Some(20));
+        assert_eq!(
+            dev.statement_timeout.map(|t| t.0),
+            Some(std::time::Duration::from_secs(120))
+        );
+        assert_eq!(
+            parse(
+                "limits: { depth: 4 }\ndev:\n  limits: { depth: 20 }\n",
+                Mode::Prod
+            )
+            .unwrap()
+            .limits
+            .depth,
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn invalid_limits_are_reported_clearly() {
+        for (yaml, expected) in [
+            ("limits: { depth: 0 }", "limits.depth: must be at least 1"),
+            ("limits: { cost: 0 }", "limits.cost: must be at least 1"),
+            (
+                "limits: { page_size: { default: 0 } }",
+                "limits.page_size.default: must be at least 1",
+            ),
+            (
+                "limits: { page_size: { default: 500, max: 100 } }",
+                "limits.page_size.default (500) is larger than limits.page_size.max (100)",
+            ),
+            ("limits: { statement_timeout: 30 }", "a unit is needed"),
+            ("limits: { statement_timeout: 5 parsecs }", "unknown unit"),
+            ("limits: { depth: lots }", "a number, or `off` for no limit"),
+            ("limits: { nope: 1 }", "unknown field `nope`"),
+        ] {
+            let err = parse(yaml, Mode::Prod).unwrap_err().to_string();
+            assert!(
+                err.contains(expected),
+                "`{yaml}` should say `{expected}`, said:\n{err}"
+            );
+        }
+        // the other mode's problems are named as theirs
+        let err = parse("dev:\n  limits: { depth: 0 }\n", Mode::Prod)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("dev: limits.depth"), "{err}");
     }
 }

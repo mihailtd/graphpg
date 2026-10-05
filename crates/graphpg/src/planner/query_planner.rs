@@ -49,6 +49,10 @@ pub enum PlannerError {
     /// Input values rejected while planning, each with its path and error code.
     #[error("{}", .0.iter().map(|e| e.message.as_str()).collect::<Vec<_>>().join("; "))]
     Input(Vec<InputError>),
+
+    /// The plan exceeds a safety limit (page size, depth, cost, bulk rows).
+    #[error("{0}")]
+    Limit(#[from] crate::plan::LimitError),
 }
 
 pub struct QueryPlanner<'a> {
@@ -56,6 +60,8 @@ pub struct QueryPlanner<'a> {
     pub default_schema: String,
     pub document: Option<&'a ExecutableDocument>,
     pub variables: Option<&'a serde_json::Value>,
+    /// Safety limits every plan is checked against (none by default).
+    pub limits: crate::plan::Limits,
 }
 
 impl<'a> QueryPlanner<'a> {
@@ -65,7 +71,14 @@ impl<'a> QueryPlanner<'a> {
             default_schema: default_schema.into(),
             document: None,
             variables: None,
+            limits: crate::plan::Limits::default(),
         }
+    }
+
+    /// Checks every plan against `limits` (see [`crate::plan::limits`]).
+    pub fn with_limits(mut self, limits: crate::plan::Limits) -> Self {
+        self.limits = limits;
+        self
     }
 
     pub fn with_context(
@@ -79,6 +92,7 @@ impl<'a> QueryPlanner<'a> {
             default_schema: default_schema.into(),
             document,
             variables,
+            limits: crate::plan::Limits::default(),
         }
     }
 
@@ -797,6 +811,7 @@ impl<'a> PlanningContext<'a> {
         if !invalid.is_empty() {
             return Err(PlannerError::Input(invalid));
         }
+        crate::plan::limits::enforce(&mut plan, &self.planner.limits)?;
         Ok(plan)
     }
 

@@ -66,6 +66,17 @@ ordersConnection(filter: { status: { notEqualTo: CANCELLED } }) {
 - `having` (`<Type>HavingInput`) keeps the groups whose `count` (`IntFilter`) and `sum`/`avg`/`min`/`max` of numeric columns (`FloatFilter`) match, all conditions together.
 - Several `groupedAggregates` fields (with aliases), `totalCount` and `aggregates` are computed in one scan: `GROUP BY GROUPING SETS`, one set per grouping plus the empty set for the totals.
 
+### Limits
+
+Page sizes and the cost of an operation are bounded by the deployment's [`limits:`](configuration.md#safety-limits). A connection without `first` / `last` reads `limits.page_size.default` rows (100); `first` / `last` above `limits.page_size.max` (1000) is an error, and so are operations nested deeper than `limits.depth` or estimated to read more than `limits.cost` rows. A request over a limit fails before it runs, with `extensions: { code, limit, actual }`:
+
+```json
+{ "errors": [{ "message": "`first` is 5000, more than the maximum page size of 1000",
+               "extensions": { "code": "PAGE_SIZE_EXCEEDED", "limit": 1000, "actual": 5000 } }] }
+```
+
+Plain list fields (`forums: [Forum!]!`) and to-many relations (`messages: [Message!]!`) have no page size: they return at most `limits.page_size.max` rows. Page through the `…Connection` fields to read more. `createForums(inputs:)` accepts at most `limits.bulk_rows` rows, nested ones included. A statement running longer than `limits.statement_timeout` is cancelled (`STATEMENT_TIMEOUT`). `/export` streams a whole connection and is not limited.
+
 ## Global object identification (Relay)
 
 Every table with a single-column primary key implements `Node`:

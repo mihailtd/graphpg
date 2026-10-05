@@ -9,8 +9,8 @@ pub mod watcher;
 
 pub use auth::{AuthError, AuthSessionContext, Authenticator};
 pub use http::{
-    create_pool, DebugOptions, GraphQLRequest, GraphQLResponse, Replica, ServerState,
-    MIN_WAL_POSITION_HEADER, WAL_POSITION_HEADER,
+    create_pool, create_pool_with, DebugOptions, GraphQLRequest, GraphQLResponse, Replica,
+    ServerState, MIN_WAL_POSITION_HEADER, WAL_POSITION_HEADER,
 };
 pub use rest::{rest_list_handler, rest_search_handler, ProblemDetails, RestQuery};
 pub use router::{

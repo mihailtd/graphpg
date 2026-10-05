@@ -58,6 +58,9 @@ pub struct Config {
     /// Search root fields (`usersFuzzySearch`, ...).
     #[serde(default)]
     pub search: SearchConfig,
+    /// Safety limits shared by the GraphQL and REST APIs.
+    #[serde(default)]
+    pub limits: LimitsConfig,
 }
 
 /// A number given as text, which is what `${NAME}` produces: `port: '${PORT}'`.
@@ -101,6 +104,253 @@ fn switch<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::
                 "invalid value {text:?} (true or false)"
             ))),
         },
+    }
+}
+
+/// A limit given as a number, as text (which is what `${NAME}` produces), or switched off with
+/// `off`, `none`, `unlimited` or `null`.
+fn limit<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Native<T> {
+        Value(T),
+        Text(String),
+    }
+    match Option::<Native<T>>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(Native::Value(value)) => Ok(Some(value)),
+        Some(Native::Text(text)) => match text.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "unlimited" | "null" => Ok(None),
+            other => other.parse().map(Some).map_err(|e| {
+                serde::de::Error::custom(format!(
+                    "invalid value {text:?}: {e} (a number, or `off` for no limit)"
+                ))
+            }),
+        },
+    }
+}
+
+/// A duration with a unit: `500ms`, `30s`, `2m` or `1h`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timeout(pub std::time::Duration);
+
+impl Timeout {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let text = text.trim().to_ascii_lowercase();
+        let split = text
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(text.len());
+        let (digits, unit) = text.split_at(split);
+        let amount: u64 = digits.parse().map_err(|_| {
+            format!("invalid duration {text:?}: write a number and a unit, like `30s`")
+        })?;
+        let millis = match unit.trim() {
+            "ms" => amount,
+            "s" => amount.saturating_mul(1000),
+            "m" => amount.saturating_mul(60_000),
+            "h" => amount.saturating_mul(3_600_000),
+            "" => {
+                return Err(format!(
+                "invalid duration {text:?}: a unit is needed (`ms`, `s`, `m` or `h`), like `30s`"
+            ))
+            }
+            other => {
+                return Err(format!(
+                    "invalid duration {text:?}: unknown unit `{other}` (`ms`, `s`, `m` or `h`)"
+                ))
+            }
+        };
+        Ok(Self(std::time::Duration::from_millis(millis)))
+    }
+}
+
+impl std::fmt::Display for Timeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}ms", self.0.as_millis())
+    }
+}
+
+impl Serialize for Timeout {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Timeout {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::parse(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+fn timeout<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Timeout>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Native {
+        Number(u64),
+        Text(String),
+    }
+    match Option::<Native>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(Native::Number(0)) => Ok(None),
+        // A bare number has no unit: say so
+        Some(Native::Number(n)) => Timeout::parse(&n.to_string())
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        Some(Native::Text(text)) => match text.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "unlimited" | "null" | "0" => Ok(None),
+            _ => Timeout::parse(&text)
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+        },
+    }
+}
+
+/// How many rows a request may ask for, nest, read or write, and how long it may run. The same
+/// limits apply to GraphQL and REST: they are enforced on the plan both APIs produce.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LimitsConfig {
+    /// Rows per page: `first` / `last`.
+    #[serde(default)]
+    pub page_size: PageSizeConfig,
+    /// Deepest nesting of rows (a list is 1, the rows of a relation under it 2, ...).
+    #[serde(default = "default_depth", deserialize_with = "limit")]
+    pub depth: Option<usize>,
+    /// Largest estimated cost: the rows an operation reads, each step's page size times the
+    /// rows it hangs from, summed.
+    #[serde(default = "default_cost", deserialize_with = "limit")]
+    pub cost: Option<u64>,
+    /// Most rows one write inserts, nested writes included (GraphQL `create<Types>` and REST
+    /// bulk creates).
+    #[serde(default = "default_bulk_rows", deserialize_with = "limit")]
+    pub bulk_rows: Option<usize>,
+    /// Most groups an aggregate request may return.
+    #[serde(default = "default_groups", deserialize_with = "limit")]
+    pub groups: Option<usize>,
+    /// Largest request body, in bytes.
+    #[serde(default = "default_body", deserialize_with = "limit")]
+    pub request_body_bytes: Option<usize>,
+    /// `statement_timeout` of every connection: a statement running longer is cancelled and the
+    /// request fails with `STATEMENT_TIMEOUT`. A role's own `statement_timeout` still applies
+    /// first when it is lower.
+    #[serde(default = "default_timeout", deserialize_with = "timeout")]
+    pub statement_timeout: Option<Timeout>,
+}
+
+/// Page sizes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PageSizeConfig {
+    /// Rows of a connection asked for neither `first` nor `last`.
+    #[serde(default = "default_page_size", deserialize_with = "lenient")]
+    pub default: usize,
+    /// Largest `first` / `last`, and the most rows of a list that has no page size (plain list
+    /// fields, to-many relations).
+    #[serde(default = "default_page_max", deserialize_with = "limit")]
+    pub max: Option<usize>,
+}
+
+fn default_page_size() -> usize {
+    crate::plan::Limits::DEFAULT_PAGE_SIZE
+}
+fn default_page_max() -> Option<usize> {
+    Some(1000)
+}
+fn default_depth() -> Option<usize> {
+    Some(10)
+}
+fn default_cost() -> Option<u64> {
+    Some(10_000_000)
+}
+fn default_bulk_rows() -> Option<usize> {
+    Some(1000)
+}
+fn default_groups() -> Option<usize> {
+    Some(10_000)
+}
+fn default_body() -> Option<usize> {
+    Some(1024 * 1024)
+}
+fn default_timeout() -> Option<Timeout> {
+    Some(Timeout(std::time::Duration::from_secs(30)))
+}
+
+impl Default for PageSizeConfig {
+    fn default() -> Self {
+        Self {
+            default: default_page_size(),
+            max: default_page_max(),
+        }
+    }
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            page_size: PageSizeConfig::default(),
+            depth: default_depth(),
+            cost: default_cost(),
+            bulk_rows: default_bulk_rows(),
+            groups: default_groups(),
+            request_body_bytes: default_body(),
+            statement_timeout: default_timeout(),
+        }
+    }
+}
+
+impl LimitsConfig {
+    /// The limits the planner enforces on every plan.
+    pub fn plan_limits(&self) -> crate::plan::Limits {
+        crate::plan::Limits {
+            page_default: Some(self.page_size.default),
+            page_max: self.page_size.max,
+            depth: self.depth,
+            cost: self.cost,
+            bulk_rows: self.bulk_rows,
+        }
+    }
+
+    /// Problems with the values, all reported together.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        let positive = |name: &str, value: Option<u64>, problems: &mut Vec<String>| {
+            if value == Some(0) {
+                problems.push(format!(
+                    "limits.{name}: must be at least 1 (use `off` for no limit)"
+                ));
+            }
+        };
+        if self.page_size.default == 0 {
+            problems.push("limits.page_size.default: must be at least 1".to_string());
+        }
+        positive(
+            "page_size.max",
+            self.page_size.max.map(|n| n as u64),
+            &mut problems,
+        );
+        positive("depth", self.depth.map(|n| n as u64), &mut problems);
+        positive("cost", self.cost, &mut problems);
+        positive("bulk_rows", self.bulk_rows.map(|n| n as u64), &mut problems);
+        positive("groups", self.groups.map(|n| n as u64), &mut problems);
+        positive(
+            "request_body_bytes",
+            self.request_body_bytes.map(|n| n as u64),
+            &mut problems,
+        );
+        if let Some(max) = self.page_size.max {
+            if self.page_size.default > max {
+                problems.push(format!(
+                    "limits.page_size.default ({}) is larger than limits.page_size.max ({max})",
+                    self.page_size.default
+                ));
+            }
+        }
+        problems
     }
 }
 
@@ -486,6 +736,50 @@ pub struct ExportConfig {
     /// Path to export YAML config JSON schema.
     #[serde(default = "default_export_config_schema")]
     pub config_schema: String,
+    /// Path to export the OpenAPI 3.1 document: YAML for `.yaml` / `.yml`, else JSON.
+    #[serde(default = "default_export_openapi")]
+    pub openapi: String,
+    /// What to do at startup when an exported file differs from the schema the database
+    /// generates now (files that do not exist pin nothing): `fail` (prod default), `warn` (dev
+    /// default) or `off`.
+    #[serde(default)]
+    pub pin: PinMode,
+}
+
+/// What a differing pinned schema does at startup.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PinMode {
+    /// Refuse to start.
+    #[default]
+    Fail,
+    /// Log what changed and start.
+    Warn,
+    /// Do not check.
+    Off,
+}
+
+impl<'de> Deserialize<'de> for PinMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Native {
+            Switch(bool),
+            Text(String),
+        }
+        match Native::deserialize(deserializer)? {
+            Native::Switch(false) => Ok(Self::Off),
+            Native::Switch(true) => Ok(Self::Fail),
+            Native::Text(text) => match text.trim().to_ascii_lowercase().as_str() {
+                "fail" | "on" | "true" | "yes" => Ok(Self::Fail),
+                "warn" => Ok(Self::Warn),
+                "off" | "false" | "no" | "none" => Ok(Self::Off),
+                _ => Err(serde::de::Error::custom(format!(
+                    "invalid value {text:?} (`fail`, `warn` or `off`)"
+                ))),
+            },
+        }
+    }
 }
 
 fn default_export_graphql() -> String {
@@ -493,6 +787,9 @@ fn default_export_graphql() -> String {
 }
 fn default_export_subgraph() -> String {
     "subgraph.graphql".to_string()
+}
+fn default_export_openapi() -> String {
+    "openapi.json".to_string()
 }
 fn default_export_config_schema() -> String {
     "graphpg.schema.json".to_string()
@@ -504,6 +801,8 @@ impl Default for ExportConfig {
             graphql: default_export_graphql(),
             subgraph: default_export_subgraph(),
             config_schema: default_export_config_schema(),
+            openapi: default_export_openapi(),
+            pin: PinMode::default(),
         }
     }
 }

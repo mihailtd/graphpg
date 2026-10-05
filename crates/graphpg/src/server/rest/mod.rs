@@ -15,9 +15,7 @@ mod query;
 mod search;
 mod validate;
 
-pub use aggregates::{
-    rest_aggregate_get_handler, rest_aggregate_post_handler, MAX_GROUPS, MAX_GROUP_KEYS,
-};
+pub use aggregates::{rest_aggregate_get_handler, rest_aggregate_post_handler};
 pub use functions::{rest_rpc_handler, rpc_functions, RPC_RESOURCE};
 pub use problem::ProblemDetails;
 pub use query::{
@@ -52,16 +50,7 @@ use validate::{validate_argument, Root};
 
 /// Path prefix of the REST API.
 pub const REST_PREFIX: &str = "/rest";
-/// Largest `first` / `last` a client may ask for. Without `first` the compiler's default page
-/// size (100) applies. Until the shared safety limits (#62) are configurable these are fixed.
-pub const MAX_PAGE_SIZE: usize = 1000;
-/// Most relations one request may embed, and how deep an embedded path may go.
-pub const MAX_INCLUDES: usize = 10;
-pub const MAX_INCLUDE_DEPTH: usize = 3;
-/// Most rows one bulk create may carry.
-pub const MAX_BULK_ROWS: usize = 1000;
-/// Largest request body.
-pub const MAX_BODY_BYTES: usize = 1024 * 1024;
+pub use aggregates::MAX_GROUP_KEYS;
 
 /// RFC 3986 unreserved characters (alphanumeric, -, _, ., ~) stay unencoded.
 const URL_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
@@ -280,14 +269,6 @@ fn build_include_tree(include: &[String]) -> Result<IncludeTree, ProblemDetails>
                 "include",
             ));
         }
-        if parts.len() > MAX_INCLUDE_DEPTH {
-            return Err(ProblemDetails::invalid(
-                format!(
-                    "`include` paths may be at most {MAX_INCLUDE_DEPTH} relations deep: `{path}`"
-                ),
-                "include",
-            ));
-        }
         let mut node = &mut root;
         for part in parts {
             node = node.0.entry(part.to_string()).or_default();
@@ -457,8 +438,12 @@ impl Ctx {
         write: bool,
     ) -> Result<serde_json::Value, ProblemDetails> {
         let plan = QueryPlanner::new(&self.catalog, schema)
+            .with_limits(self.state.limits.plan_limits())
             .plan_request(&op)
-            .map_err(|err| ProblemDetails::bad_request(format!("Planning error: {err}")))?;
+            .map_err(|err| match err {
+                crate::planner::PlannerError::Limit(limit) => ProblemDetails::from_limit(&limit),
+                err => ProblemDetails::bad_request(format!("Planning error: {err}")),
+            })?;
 
         let mut compiled = SqlCompiler::compile_operation(&plan);
         if self.state.sql_comments {
@@ -618,14 +603,34 @@ fn set_header(headers: &mut HeaderMap, name: header::HeaderName, value: &str) {
     }
 }
 
-/// A write response: the row (or no body for `return=minimal`) with `ETag` and `Location`.
+/// What a single-row write returned.
+struct Written {
+    /// The row as it is now (`null` if no row matched).
+    row: serde_json::Value,
+    /// The row as it was before, when asked for with `Prefer: previous` and the database can
+    /// say (PostgreSQL 18): `null` for a row an upsert inserted.
+    previous: Option<serde_json::Value>,
+}
+
+impl From<serde_json::Value> for Written {
+    fn from(row: serde_json::Value) -> Self {
+        Self {
+            row,
+            previous: None,
+        }
+    }
+}
+
+/// A write response: the row (or no body for `return=minimal`) with `ETag` and `Location`;
+/// with `Prefer: previous`, `{"row": …, "previous": …}`.
 fn write_response(
     table: &TableMetadata,
-    mut row: serde_json::Value,
+    written: Written,
     status: StatusCode,
     prefs: Preferences,
     with_location: bool,
 ) -> Response {
+    let Written { mut row, previous } = written;
     let mut headers = HeaderMap::new();
     if with_location {
         if let Some(location) = location_of(table, &row) {
@@ -636,7 +641,7 @@ fn write_response(
         set_header(&mut headers, header::ETAG, &etag);
     }
     if prefs.return_minimal {
-        if let Some(applied) = prefs.applied(true, false) {
+        if let Some(applied) = prefs.applied(true, false, false) {
             set_header(
                 &mut headers,
                 header::HeaderName::from_static("preference-applied"),
@@ -644,6 +649,25 @@ fn write_response(
             );
         }
         (StatusCode::NO_CONTENT, headers).into_response()
+    } else if let Some(previous) = previous {
+        if let Some(applied) = prefs.applied(false, false, true) {
+            set_header(
+                &mut headers,
+                header::HeaderName::from_static("preference-applied"),
+                &applied,
+            );
+        }
+        let mut previous = previous;
+        // The version of a row as it was is not stored any more
+        if let Some(obj) = previous.as_object_mut() {
+            obj.remove("rowVersion");
+        }
+        (
+            status,
+            headers,
+            Json(serde_json::json!({ "row": row, "previous": previous })),
+        )
+            .into_response()
     } else {
         (status, headers, Json(row)).into_response()
     }
@@ -678,30 +702,61 @@ fn mutation_op(
     args: HashMap<String, serde_json::Value>,
     columns: Vec<RequestField>,
 ) -> RequestOperation {
-    let payload = m.action.payload_field_name(table);
-    RequestOperation::mutation(vec![RequestField::new(&m.name)
-        .with_arguments(args)
-        .with_children(vec![RequestField::new(payload).with_children(columns)])])
+    mutation_op_with(m, table, args, columns, None)
 }
 
-/// Runs a single-row write and returns the written row (`null` if no row matched).
+/// A mutation selecting the written rows and, when given, the payload field `previous` with the
+/// rows as they were.
+fn mutation_op_with(
+    m: &MutationField,
+    table: &TableMetadata,
+    args: HashMap<String, serde_json::Value>,
+    columns: Vec<RequestField>,
+    previous: Option<(&str, Vec<RequestField>)>,
+) -> RequestOperation {
+    let payload = m.action.payload_field_name(table);
+    let mut children = vec![RequestField::new(payload).with_children(columns)];
+    if let Some((name, columns)) = previous {
+        children.push(RequestField::new(name).with_children(columns));
+    }
+    RequestOperation::mutation(vec![RequestField::new(&m.name)
+        .with_arguments(args)
+        .with_children(children)])
+}
+
+/// Runs a single-row write. With `previous`, an update or upsert also reads the row as it was
+/// (`RETURNING OLD`) when the database can.
 async fn run_write(
     ctx: &Ctx,
     table: &TableMetadata,
     m: &MutationField,
     args: HashMap<String, serde_json::Value>,
     method: &str,
-) -> Result<serde_json::Value, ProblemDetails> {
-    let data = ctx
-        .execute(
-            &table.schema,
-            mutation_op(m, table, args, write_columns(table)),
-            method,
-            true,
-        )
-        .await?;
-    ResponseShaper::unwrap_mutation(&data, &m.name, Some(&m.action.payload_field_name(table)))
-        .map_err(|e| shaping_error(e, ctx.is_prod))
+    previous: bool,
+) -> Result<Written, ProblemDetails> {
+    let previous_field = previous
+        .then(|| {
+            ctx.catalog
+                .previous_field_name(table, m.action, table.has_upsert())
+        })
+        .flatten();
+    let op = mutation_op_with(
+        m,
+        table,
+        args,
+        write_columns(table),
+        previous_field
+            .as_deref()
+            .map(|name| (name, column_fields(table))),
+    );
+    let data = ctx.execute(&table.schema, op, method, true).await?;
+    let payload = m.action.payload_field_name(table);
+    let root =
+        ResponseShaper::unwrap_single(&data, &m.name).map_err(|e| shaping_error(e, ctx.is_prod))?;
+    Ok(Written {
+        row: root.get(&payload).cloned().unwrap_or_default(),
+        previous: previous_field.and_then(|name| root.get(&name).cloned()),
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -826,7 +881,7 @@ fn list_headers(listing: &Listing, prefs: Preferences) -> HeaderMap {
             header::HeaderName::from_static("x-total-count"),
             &total.to_string(),
         );
-        if let Some(applied) = prefs.applied(false, true) {
+        if let Some(applied) = prefs.applied(false, true, false) {
             set_header(
                 &mut headers,
                 header::HeaderName::from_static("preference-applied"),
@@ -999,9 +1054,6 @@ impl SearchBody {
                 query::check_page_size(name, n).map_err(ProblemDetails::bad_request)?;
             }
         }
-        if let Some(include) = &query.include {
-            query::check_include_count(include).map_err(ProblemDetails::bad_request)?;
-        }
         if let Some(filter) = self.filter {
             if !filter.is_object() {
                 return Err(ProblemDetails::invalid(
@@ -1146,11 +1198,15 @@ pub async fn rest_create_handler(
                         "Bulk create needs at least one row",
                     ));
                 }
-                if rows.len() > MAX_BULK_ROWS {
-                    return Err(ProblemDetails::payload_too_large(format!(
-                        "Bulk create accepts at most {MAX_BULK_ROWS} rows, got {}",
-                        rows.len()
-                    )));
+                if let Some(max) = ctx.state.limits.bulk_rows {
+                    if rows.len() > max {
+                        return Err(ProblemDetails::from_limit(
+                            &crate::plan::LimitError::BulkRows {
+                                rows: rows.len(),
+                                max,
+                            },
+                        ));
+                    }
                 }
                 if let Some(i) = rows.iter().position(|r| !r.is_object()) {
                     return Err(ProblemDetails::invalid(
@@ -1183,7 +1239,7 @@ pub async fn rest_create_handler(
                 .map_err(|e| shaping_error(e, ctx.is_prod))?;
                 if ctx.prefs.return_minimal {
                     let mut out = HeaderMap::new();
-                    if let Some(applied) = ctx.prefs.applied(true, false) {
+                    if let Some(applied) = ctx.prefs.applied(true, false, false) {
                         set_header(
                             &mut out,
                             header::HeaderName::from_static("preference-applied"),
@@ -1198,10 +1254,10 @@ pub async fn rest_create_handler(
                 let m = mutation_field(&ctx.catalog, table, MutationAction::Create, "Creation")?;
                 ctx.validate(Root::Mutation, &m.name, "input", &body, "body")?;
                 let args = HashMap::from([("input".to_string(), body)]);
-                let row = run_write(&ctx, table, &m, args, "POST").await?;
+                let written = run_write(&ctx, table, &m, args, "POST", false).await?;
                 Ok(write_response(
                     table,
-                    row,
+                    written,
                     StatusCode::CREATED,
                     ctx.prefs,
                     true,
@@ -1255,14 +1311,20 @@ async fn update_row(
         args.insert("expectedVersion".into(), serde_json::Value::String(version));
     }
 
-    let row = run_write(ctx, table, &m, args, method).await?;
-    if row.is_null() {
+    let written = run_write(ctx, table, &m, args, method, ctx.prefs.previous).await?;
+    if written.row.is_null() {
         return Err(ProblemDetails::not_found(format!(
             "No `{}` row found with key `{key}`",
             table.name
         )));
     }
-    Ok(write_response(table, row, StatusCode::OK, ctx.prefs, false))
+    Ok(write_response(
+        table,
+        written,
+        StatusCode::OK,
+        ctx.prefs,
+        false,
+    ))
 }
 
 /// Handler for `PATCH /rest/{resource}/{key}`.
@@ -1328,8 +1390,14 @@ pub async fn rest_upsert_handler(
             ("input".to_string(), input),
             ("onConflict".to_string(), on_conflict),
         ]);
-        let row = run_write(&ctx, table, &m, args, "PUT").await?;
-        Ok(write_response(table, row, StatusCode::OK, ctx.prefs, false))
+        let written = run_write(&ctx, table, &m, args, "PUT", ctx.prefs.previous).await?;
+        Ok(write_response(
+            table,
+            written,
+            StatusCode::OK,
+            ctx.prefs,
+            false,
+        ))
     })
     .await
 }
@@ -1386,7 +1454,7 @@ pub async fn rest_delete_handler(
         }
         if ctx.prefs.return_minimal {
             let mut out = HeaderMap::new();
-            if let Some(applied) = ctx.prefs.applied(true, false) {
+            if let Some(applied) = ctx.prefs.applied(true, false, false) {
                 set_header(
                     &mut out,
                     header::HeaderName::from_static("preference-applied"),

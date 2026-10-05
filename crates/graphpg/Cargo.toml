@@ -34,6 +34,7 @@ opentelemetry-otlp = { version = "0.33", optional = true, default-features = fal
 tracing-opentelemetry = { version = "0.34", optional = true }
 graphpg-ui = { path = "../graphpg-ui" }
 clap = { version = "4.5", features = ["derive"] }
+similar = "3.2.0"
 
 [features]
 # Export spans (graphql.parse / plan / compile / execute) over OTLP when

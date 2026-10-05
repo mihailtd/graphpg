@@ -36,8 +36,6 @@ const FUNCTIONS: [&str; 10] = [
 
 /// Most values one request groups by.
 pub const MAX_GROUP_KEYS: usize = 4;
-/// Most groups a response holds; more is a 422 (narrow the filter or group more coarsely).
-pub const MAX_GROUPS: usize = 10_000;
 
 /// The members of an aggregate request.
 #[derive(Debug, Default, Deserialize)]
@@ -457,11 +455,11 @@ async fn aggregate(
         .and_then(|g| g.as_array())
         .cloned()
         .unwrap_or_default();
-    if rows.len() > MAX_GROUPS {
+    if let Some(max) = ctx.state.limits.groups.filter(|max| rows.len() > *max) {
         return Err(ProblemDetails::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             format!(
-                "The request has more than {MAX_GROUPS} groups; narrow the filter or group by fewer or coarser values"
+                "The request has more than {max} groups; narrow the filter or group by fewer or coarser values"
             ),
         )
         .with_code("TOO_MANY_GROUPS"));

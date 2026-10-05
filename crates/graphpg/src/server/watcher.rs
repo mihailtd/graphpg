@@ -226,6 +226,13 @@ async fn reload_and_regenerate(
     // 4. Write export files to disk
     if config.watch.export {
         write_file(&config.export.graphql, &sdl)?;
+        write_file(
+            &config.export.openapi,
+            &crate::schema_pin::render_openapi(
+                &state.current_openapi_document(),
+                &config.export.openapi,
+            ),
+        )?;
         if config.graphql.federation.enabled {
             let fed_sdl = SchemaBuilder::generate_federation_subgraph_sdl(&new_catalog);
             write_file(&config.export.subgraph, &fed_sdl)?;
@@ -234,7 +241,7 @@ async fn reload_and_regenerate(
 
     let elapsed = start.elapsed();
     println!(
-        "⚡ [dev mode] Schema hot-reloaded and re-exported (GraphQL SDL + YAML JSON Schema) in {:?}",
+        "⚡ [dev mode] Schema hot-reloaded and re-exported (GraphQL SDL + OpenAPI + YAML JSON Schema) in {:?}",
         elapsed
     );
     tracing::info!(
