@@ -826,7 +826,7 @@ async fn test_rest_list_resource_endpoint() {
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(
         res.headers().get(header::CONTENT_TYPE).unwrap(),
-        "application/json; charset=utf-8"
+        "application/json"
     );
     let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).expect("Valid JSON");
@@ -1152,6 +1152,7 @@ async fn test_rest_reads_pagination_and_link_headers() {
     let req = Request::builder()
         .method("GET")
         .uri("/rest/forums?filter[name][in]=Cats,Dogs,Postgres&first=2&order=name:asc")
+        .header("prefer", "count=exact")
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -1189,6 +1190,7 @@ async fn test_rest_reads_pagination_and_link_headers() {
     let req = Request::builder()
         .method("GET")
         .uri(next_uri)
+        .header("prefer", "count=exact")
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -1209,10 +1211,10 @@ async fn test_rest_reads_pagination_and_link_headers() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["name"], "Postgres");
 
-    // 3. Offset pagination: ?filter[name][in]=Cats,Dogs,Postgres&limit=1&offset=1&order=name:asc
+    // 3. Offset pagination: ?filter[name][in]=Cats,Dogs,Postgres&first=1&offset=1&order=name:asc
     let req = Request::builder()
         .method("GET")
-        .uri("/rest/forums?filter[name][in]=Cats,Dogs,Postgres&limit=1&offset=1&order=name:asc")
+        .uri("/rest/forums?filter[name][in]=Cats,Dogs,Postgres&first=1&offset=1&order=name:asc")
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -1304,12 +1306,14 @@ async fn test_rest_reads_search_post() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["name"], "Cats");
 
-    // 2. POST /rest/forums/search with raw or filter body
+    // 2. POST /rest/forums/search with and/or filters inside `filter`
     let search_body = serde_json::json!({
-        "or": [
-            { "name": { "like": "%Cat%" } },
-            { "name": { "like": "%Dog%" } }
-        ]
+        "filter": {
+            "or": [
+                { "name": { "like": "%Cat%" } },
+                { "name": { "like": "%Dog%" } }
+            ]
+        }
     });
     let req = Request::builder()
         .method("POST")
@@ -1331,7 +1335,7 @@ async fn test_rest_reads_search_post() {
         "filter": {
             "name": { "like": "%o%" }
         },
-        "orderBy": ["NAME_DESC"],
+        "order": ["name:desc"],
         "first": 1
     });
     let req = Request::builder()
@@ -1440,7 +1444,7 @@ async fn test_rest_writes_single_create_and_item_crud() {
     assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
     assert_eq!(
         res.headers().get(header::CONTENT_TYPE).unwrap(),
-        "application/problem+json; charset=utf-8"
+        "application/problem+json"
     );
 
     // 5. PATCH /rest/forums/{id} with matching If-Match: successful update
@@ -1526,7 +1530,7 @@ async fn test_rest_writes_single_create_and_item_crud() {
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
     assert_eq!(
         res.headers().get(header::CONTENT_TYPE).unwrap(),
-        "application/problem+json; charset=utf-8"
+        "application/problem+json"
     );
     let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
     let problem: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1603,7 +1607,7 @@ async fn test_rest_writes_rfc9457_errors() {
     assert_eq!(res.status(), StatusCode::CONFLICT);
     assert_eq!(
         res.headers().get(header::CONTENT_TYPE).unwrap(),
-        "application/problem+json; charset=utf-8"
+        "application/problem+json"
     );
     let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
     let problem: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1621,7 +1625,7 @@ async fn test_rest_writes_rfc9457_errors() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
         res.headers().get(header::CONTENT_TYPE).unwrap(),
-        "application/problem+json; charset=utf-8"
+        "application/problem+json"
     );
 
     // 3. Unknown resource
@@ -1634,7 +1638,7 @@ async fn test_rest_writes_rfc9457_errors() {
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
     assert_eq!(
         res.headers().get(header::CONTENT_TYPE).unwrap(),
-        "application/problem+json; charset=utf-8"
+        "application/problem+json"
     );
 }
 
@@ -1692,7 +1696,10 @@ async fn test_rest_openapi_specification_deep_verification() {
     assert!(param_names.contains(&"after"));
     assert!(param_names.contains(&"before"));
     assert!(param_names.contains(&"offset"));
-    assert!(param_names.contains(&"limit"));
+    assert!(
+        !param_names.contains(&"limit"),
+        "`limit` is not part of the grammar"
+    );
     assert!(param_names.contains(&"fields"));
     assert!(param_names.contains(&"include"));
 

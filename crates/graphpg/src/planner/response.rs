@@ -106,7 +106,7 @@ impl ResponseShaper {
             return Ok(RestListResponse {
                 rows: arr.clone(),
                 page_info: None,
-                total_count: Some(arr.len() as i64),
+                total_count: None,
             });
         }
 
@@ -127,10 +127,8 @@ impl ResponseShaper {
                 .get("pageInfo")
                 .and_then(|pi| serde_json::from_value(pi.clone()).ok());
 
-            let total_count = obj
-                .get("totalCount")
-                .and_then(|tc| tc.as_i64())
-                .or(Some(rows.len() as i64));
+            // Only a count the database computed: the page size is not a total
+            let total_count = obj.get("totalCount").and_then(|tc| tc.as_i64());
 
             return Ok(RestListResponse {
                 rows,
@@ -254,7 +252,7 @@ mod tests {
         let resp = ResponseShaper::unwrap_list(&result, "users").unwrap();
         assert_eq!(resp.rows.len(), 1);
         assert_eq!(resp.rows[0]["name"], "Alice");
-        assert_eq!(resp.total_count, Some(1));
+        assert_eq!(resp.total_count, None);
         assert!(resp.page_info.is_none());
     }
 

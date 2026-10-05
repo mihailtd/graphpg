@@ -210,7 +210,11 @@ impl ServerState {
         default_schema: String,
         debug: DebugOptions,
     ) -> Self {
-        let openapi_doc = OpenApiGenerator::generate(&catalog, &crate::config::Config::default());
+        let openapi_doc = OpenApiGenerator::generate_for(
+            &catalog,
+            &crate::config::Config::default(),
+            &default_schema,
+        );
         Self {
             pool,
             schema: std::sync::RwLock::new(Arc::new(schema)),
@@ -389,7 +393,7 @@ impl ServerState {
         self.scalar = config.openapi.ui;
         self.sql_comments = config.database.sql_comments;
         let cat = self.current_catalog();
-        let doc = OpenApiGenerator::generate(&cat, &config);
+        let doc = OpenApiGenerator::generate_for(&cat, &config, &self.default_schema);
         *self.openapi_document.write().unwrap() = Arc::new(doc);
         self.config = Some(config);
         self
@@ -420,7 +424,7 @@ impl ServerState {
 
     pub fn reload(&self, schema: Valid<Schema>, catalog: DatabaseCatalog) {
         let cfg = self.config.as_ref().cloned().unwrap_or_default();
-        let doc = OpenApiGenerator::generate(&catalog, &cfg);
+        let doc = OpenApiGenerator::generate_for(&catalog, &cfg, &self.default_schema);
         *self.openapi_document.write().unwrap() = Arc::new(doc);
         *self.schema.write().unwrap() = Arc::new(schema);
         *self.catalog.write().unwrap() = Arc::new(catalog);
