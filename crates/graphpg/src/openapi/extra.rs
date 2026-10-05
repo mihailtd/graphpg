@@ -10,8 +10,8 @@ use crate::catalog::{
 use crate::config::models::Operation;
 use crate::config::Config;
 use crate::server::rest::{
-    check_table_permissions, method_segment, rpc_functions, GLOBAL_SEARCH_RESOURCE, MAX_GROUPS,
-    MAX_GROUP_KEYS, REST_PREFIX, RPC_RESOURCE,
+    check_table_permissions, method_segment, rpc_functions, GLOBAL_SEARCH_RESOURCE, MAX_GROUP_KEYS,
+    REST_PREFIX, RPC_RESOURCE,
 };
 use apollo_compiler::ast::Type;
 use apollo_compiler::schema::ExtendedType;
@@ -189,11 +189,15 @@ impl OpenApiGenerator {
         let result = json!({
             "oneOf": [
                 schema_ref(&format!("{name}Aggregates")),
-                { "type": "array", "maxItems": MAX_GROUPS, "items": schema_ref(&format!("{name}AggregateGroup")) }
+                { "type": "array", "maxItems": config.limits.groups, "items": schema_ref(&format!("{name}AggregateGroup")) }
             ]
         });
         let describe = format!(
-            "Summarises the rows of `{name}`: one object of totals, or with `group` one object per group (at most {MAX_GROUPS}, from at most {MAX_GROUP_KEYS} values), in one scan."
+            "Summarises the rows of `{name}`: one object of totals, or with `group` one object per group ({} from at most {MAX_GROUP_KEYS} values), in one scan.",
+            match config.limits.groups {
+                Some(max) => format!("at most {max}"),
+                None => "any number".to_string(),
+            }
         );
         let responses = |op: &str| {
             responses(
@@ -542,7 +546,7 @@ impl OpenApiGenerator {
             }
             paths.insert(
                 format!("{REST_PREFIX}/{RPC_RESOURCE}/{}", f.name),
-                Self::function_path(catalog, f, table),
+                Self::function_path(catalog, f, table, &config.limits),
             );
         }
     }
@@ -607,6 +611,7 @@ impl OpenApiGenerator {
         catalog: &DatabaseCatalog,
         f: &FunctionMetadata,
         table: Option<&TableMetadata>,
+        limits: &crate::config::models::LimitsConfig,
     ) -> Value {
         let connection = table.is_some() && f.returns_set && !f.volatile;
         let single_row = table.is_some() && !connection;
@@ -655,10 +660,12 @@ impl OpenApiGenerator {
         body_properties.insert("args".into(), args_schema);
         if let Some(table) = table {
             if connection {
-                if let Value::Array(list) = Self::generate_list_parameters(table, catalog) {
+                if let Value::Array(list) = Self::generate_list_parameters(table, catalog, limits) {
                     query_params.extend(list);
                 }
-                if let Value::Object(options) = Self::search_request_properties(table, catalog) {
+                if let Value::Object(options) =
+                    Self::search_request_properties(table, catalog, limits)
+                {
                     body_properties.extend(options);
                 }
             } else if single_row {

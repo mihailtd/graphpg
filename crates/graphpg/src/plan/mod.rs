@@ -1,6 +1,8 @@
+pub mod limits;
 pub mod operation_plan;
 pub mod step;
 
+pub use limits::{LimitError, Limits, PlanStats};
 pub use operation_plan::OperationPlan;
 pub use step::{
     AggregateField, AggregatePart, AggregatesSelections, ArgValue, BoundArg, BoundPart,

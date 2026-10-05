@@ -73,6 +73,8 @@ Secrets are strictly environment-only. They are never kept in `graphpg.yaml`, ne
 | :--- | :--- | :--- | :--- |
 | `export-graphql` | `--out <path>` | `config.export.graphql` (`schema.graphql`) | Export GraphQL SDL schema |
 | `export-subgraph` | `--out <path>` | `config.export.subgraph` (`subgraph.graphql`) | Export Apollo Federation Subgraph SDL |
+| `export-openapi` | `--out <path>` | `config.export.openapi` (`openapi.json`) | Export the OpenAPI 3.1 document (YAML for a `.yaml` / `.yml` path) |
+| `schema export` | `--check` | every `export:` path | Export every schema: GraphQL SDL, OpenAPI, and the subgraph SDL when federation is on. With `--check`, write nothing and exit 1 if a file is missing or differs from what the database generates now: the CI step that [pins the schema](#pinned-schemas) |
 | `export-config-schema` | `--out <path>` | `config.export.config_schema` (`graphpg.schema.json`) | Export JSON Schema for `graphpg.yaml` |
 | `advise` | | | Inspect schema and print advice warnings/info |
 
@@ -97,7 +99,18 @@ watch:
 export:
   graphql: schema.graphql
   subgraph: subgraph.graphql
+  openapi: openapi.json         # YAML for .yaml / .yml
   config_schema: graphpg.schema.json
+  pin: fail                     # compare these files with the database at startup: fail (prod default), warn (dev default) or off
+
+limits:                         # shared by GraphQL and REST, enforced on the plan (see "Safety limits")
+  page_size: { default: 100, max: 1000 }
+  depth: 10
+  cost: 10000000
+  bulk_rows: 1000
+  groups: 10000
+  request_body_bytes: 1048576
+  statement_timeout: 30s        # `off` for none
 
 auth: { ... }                   # OAuth 2.0 bearer tokens (see authentication.md)
 rbac: { enabled: false }        # prune the APIs to what a role may access
@@ -125,7 +138,9 @@ The effective config of a mode is built in four steps, each overriding the last:
 
 `graphql.ui` serves the GraphiQL IDE at `/graphiql` and `openapi.ui` (alias `rest.ui`) the Scalar API reference at `/scalar`. Both are on in dev mode and off in prod, and either can be set explicitly. They are part of the binary (and of the container image), load nothing from other hosts, and work offline, so a strict Content-Security-Policy can allow `'self'` only.
 
-`openapi.spec` (alias `schema`) serves the generated OpenAPI 3.1 document at `openapi.path` (default `/openapi.json`, alias `spec_path`). It is on by default in dev mode, and off in prod mode. When enabled, requests receive JSON by default and YAML when requested (`Accept: application/yaml`). When either `openapi.enabled` or `openapi.spec` is disabled, the endpoint returns 404.
+`openapi.spec` (alias `schema`) serves the generated OpenAPI 3.1 document at `openapi.path` (default `/openapi.json`, alias `spec_path`). It is on by default in dev mode, and off in prod mode. When enabled, requests receive JSON by default and YAML when requested (`Accept: application/yaml`).
+
+The Scalar reference shows that document: it loads it from `openapi.path`, and `openapi.ui: true` serves the document even when `openapi.spec` is off, so the page always has something to show. With `openapi.enabled: false` there is no REST API to describe, so neither the document nor the reference is served (404).
 
 The GraphiQL source is `packages/graphiql-ui`; `moon run graphiql-ui:build` builds it into `crates/graphpg-ui/assets`, which the server embeds. A build without those files still runs, and `/graphiql` says so.
 
@@ -215,10 +230,42 @@ watch:
   export: true    # auto-export schemas on DDL changes; default: true
 ```
 
+### Pinned schemas
+
+The server needs the database catalog at startup whatever else it has, so an exported schema cannot replace introspection. It can *pin* it. CI exports the schemas and commits them; the server compares what the database generates now with those files (`export.graphql`, `export.openapi`, and `export.subgraph` when federation is on):
+
+```sh
+graphpg schema export            # write the files; commit them
+graphpg schema export --check    # CI: exit 1 if a file is missing or out of date, with what changed
+```
+
+At startup, `export.pin` decides what a difference does: `fail` (the default in prod mode) refuses to start and prints what changed (`+` new, `-` gone, `~` changed, with JSON pointers for the OpenAPI document), `warn` (the default in dev mode) logs it, `off` does not check. A file that does not exist pins nothing, so a deployment without the files is unaffected. The OpenAPI document is compared as a document: formatting and key order are not drift.
+
+In dev mode the watcher rewrites the files on every schema change (`watch.export`), so they stay current as you work.
+
+### Safety limits
+
+`limits:` protects a deployment from expensive and abusive requests. The same limits apply to GraphQL and REST: they are enforced on the **plan** both produce, before any SQL is compiled, so the two cannot diverge. Every value is a number, or `off` for no limit; modes override them like any other setting (`dev: { limits: { cost: off } }`).
+
+| Limit | Default | |
+| :--- | :--- | :--- |
+| `page_size.default` | 100 | Rows of a connection asked for neither `first` nor `last` |
+| `page_size.max` | 1000 | Largest `first` / `last` (`PAGE_SIZE_EXCEEDED`). Lists that have no page size (plain list fields, to-many relations) are **cut at this many rows**: page through a connection to read more |
+| `depth` | 10 | How many levels of rows an operation nests: a root list is 1, the rows of a relation under it 2, … (`DEPTH_LIMIT_EXCEEDED`). A REST `include` path counts too |
+| `cost` | 10 000 000 | An estimate of the rows an operation reads: each step's rows (its page size, 1 for a single row) times the rows it hangs from, summed. 100 forums with their last 100 messages and each message's author cost `100 + 100 × 100 + 100 × 100` (`COST_LIMIT_EXCEEDED`) |
+| `bulk_rows` | 1000 | Rows one write inserts, nested writes included: GraphQL `create<Types>`, REST bulk creates (`BULK_LIMIT_EXCEEDED`, HTTP 413) |
+| `groups` | 10 000 | Groups an aggregate request may return (`TOO_MANY_GROUPS`) |
+| `request_body_bytes` | 1 MiB | Largest request body of `/graphql` and `/rest` (413). `/import` streams and is not limited |
+| `statement_timeout` | `30s` | `statement_timeout` of every connection: a statement running longer is cancelled and the request fails with `STATEMENT_TIMEOUT` (HTTP 503), without the database's message. A role's own lower `statement_timeout` applies first. Use a unit: `500ms`, `30s`, `2m`, `1h` |
+
+A request over a limit fails before it touches the database. GraphQL: an error with `extensions: { code, limit, actual }` (`{ "code": "PAGE_SIZE_EXCEEDED", "limit": 1000, "actual": 5000 }`). REST: a [problem](rest-api.md#errors) with the same `code`, `limit` and `actual` (400, 413 for bulk rows). The OpenAPI document states the page and bulk limits it was generated under. Mutations that match rows by a filter (`update<Types>(where:)`) count as `page_size.max` rows toward the cost, since the rows are not known beforehand. Functions returning sets of values are not capped: a function controls its own result.
+
+Limits are global, not per entity: one number to reason about, and the same for every client of a container. For different limits per audience, run another container.
+
 ### Development mode (`--mode dev`)
 
 - `watch.enabled` defaults to `true`: graphpg installs an event trigger on `ddl_command_end` and `sql_drop`, listens for asynchronous notifications (`LISTEN graphpg_watch`), and re-introspects live catalogs in ~1.5s without interrupting in-flight requests.
-- When `watch.export` is `true` (default), changes automatically write the files defined in `export:` (`export.graphql`, `export.subgraph`, `export.config_schema`).
+- When `watch.export` is `true` (default), changes automatically write the files defined in `export:` (`export.graphql`, `export.openapi`, `export.subgraph`, `export.config_schema`).
 - `graphql.ui` (GraphiQL) and `openapi.ui` (Scalar) default to `true`.
 - The watcher hot-reload always uses the selected mode overlay.
 - Debug outputs (`debug.sql` and `debug.explain`) may be enabled under `dev:`.

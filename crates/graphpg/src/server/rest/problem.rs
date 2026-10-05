@@ -30,6 +30,11 @@ pub struct ProblemDetails {
     pub fields: Option<Vec<String>>,
     #[serde(rename = "requestId", skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// The safety limit a request exceeded, and what it asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<u64>,
     /// Response headers (such as `WWW-Authenticate`); not part of the body.
     #[serde(skip)]
     pub headers: Vec<(header::HeaderName, header::HeaderValue)>,
@@ -62,6 +67,8 @@ impl ProblemDetails {
             code: None,
             fields: None,
             request_id: None,
+            limit: None,
+            actual: None,
             headers: Vec::new(),
         }
     }
@@ -109,6 +116,18 @@ impl ProblemDetails {
 
     pub fn payload_too_large(detail: impl Into<String>) -> Self {
         Self::new(StatusCode::PAYLOAD_TOO_LARGE, detail).with_code("PAYLOAD_TOO_LARGE")
+    }
+
+    /// A safety limit the request exceeds (see [`crate::plan::limits`]).
+    pub fn from_limit(error: &crate::plan::LimitError) -> Self {
+        let status = match error {
+            crate::plan::LimitError::BulkRows { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        let mut problem = Self::new(status, error.to_string()).with_code(error.code());
+        problem.limit = Some(error.limit());
+        problem.actual = Some(error.actual());
+        problem
     }
 
     pub fn precondition_failed(detail: impl Into<String>) -> Self {
@@ -181,6 +200,14 @@ impl ProblemDetails {
                 problem = problem.with_request_id(request_id);
             }
             return problem;
+        }
+
+        if err.is_timeout() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The request ran longer than the statement timeout and was cancelled",
+            )
+            .with_code("STATEMENT_TIMEOUT");
         }
 
         match root {

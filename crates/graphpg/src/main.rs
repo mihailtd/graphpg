@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use graphpg::config::{resolve_mode, Config, Mode, Secrets, DEFAULT_CONFIG_FILE};
-use graphpg::server::{create_pool, create_router, Authenticator, ServerState};
+use graphpg::server::{create_pool_with, create_router, Authenticator, ServerState};
 use graphpg::{CatalogInspector, SchemaBuilder};
 use std::error::Error;
 use std::net::SocketAddr;
@@ -39,6 +39,11 @@ pub enum Commands {
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
     },
+    /// Export the OpenAPI 3.1 document (YAML for a `.yaml` / `.yml` path, else JSON)
+    ExportOpenapi {
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
     /// Export the JSON Schema for graphpg.yaml
     ExportConfigSchema {
         #[arg(long, value_name = "PATH")]
@@ -55,9 +60,22 @@ pub enum Commands {
 
 #[derive(Subcommand, Debug)]
 pub enum SchemaCommands {
+    /// Export every schema (GraphQL SDL, OpenAPI, and the Federation subgraph SDL when
+    /// federation is on) to the paths of `export:`. With `--check`, write nothing and exit
+    /// with an error if an exported file differs from what the database generates now: the
+    /// CI step that pins the schema.
+    Export {
+        #[arg(long)]
+        check: bool,
+    },
     /// Export the GraphQL SDL schema
     #[command(alias = "export-schema")]
     ExportGraphql {
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
+    /// Export the OpenAPI 3.1 document (YAML for a `.yaml` / `.yml` path, else JSON)
+    ExportOpenapi {
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
     },
@@ -173,7 +191,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None => Config::defaults(mode),
     };
 
-    let pool = create_pool(&secrets.database_url, config.database.pool_size)?;
+    let statement_timeout = config.limits.statement_timeout.map(|t| t.0);
+    let pool = create_pool_with(
+        &secrets.database_url,
+        config.database.pool_size,
+        statement_timeout,
+    )?;
     let schemas: Vec<&str> = config.database.schemas.iter().map(String::as_str).collect();
     let default_schema = schemas[0].to_string();
 
@@ -197,6 +220,59 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             std::fs::write(&out_path, sdl)?;
             println!("✓ Exported GraphQL SDL schema to: {}", out_path.display());
+            return Ok(());
+        }
+        Some(Commands::ExportOpenapi { out })
+        | Some(Commands::Schema {
+            command: SchemaCommands::ExportOpenapi { out },
+        }) => {
+            let out_path = out.unwrap_or_else(|| PathBuf::from(&config.export.openapi));
+            let client = pool.get().await?;
+            let catalog = CatalogInspector::new(&client)
+                .inspect_schemas_with_config(&schemas, &config)
+                .await?;
+            let graphql = SchemaBuilder::build(&catalog)?;
+            let artifacts =
+                graphpg::schema_pin::Artifacts::build(&catalog, &config, &default_schema, &graphql);
+            let path = out_path.to_string_lossy().to_string();
+            graphpg::schema_pin::write_file(
+                &path,
+                &graphpg::schema_pin::render_openapi(&artifacts.openapi, &path),
+            )?;
+            println!("✓ Exported OpenAPI document to: {path}");
+            return Ok(());
+        }
+        Some(Commands::Schema {
+            command: SchemaCommands::Export { check },
+        }) => {
+            let client = pool.get().await?;
+            let catalog = CatalogInspector::new(&client)
+                .inspect_schemas_with_config(&schemas, &config)
+                .await?;
+            let graphql = SchemaBuilder::build(&catalog)?;
+            let artifacts =
+                graphpg::schema_pin::Artifacts::build(&catalog, &config, &default_schema, &graphql);
+            if check {
+                let results = graphpg::schema_pin::check(&artifacts, &config);
+                for result in &results {
+                    println!("{}", result.report());
+                }
+                // In CI a schema nobody pinned is as much a failure as one that moved
+                let failed = results
+                    .iter()
+                    .any(|r| !matches!(r.status, graphpg::schema_pin::PinStatus::Match));
+                if failed {
+                    eprintln!(
+                        "✗ the exported schemas are out of date: run `graphpg schema export`"
+                    );
+                    std::process::exit(1);
+                }
+                println!("✓ the exported schemas are up to date");
+            } else {
+                for path in artifacts.write(&config)? {
+                    println!("✓ Exported schema to: {path}");
+                }
+            }
             return Ok(());
         }
         Some(Commands::ExportSubgraph { out })
@@ -290,10 +366,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "introspected database"
     );
 
+    // Pinned schemas: what the database generates now against the exported files
+    {
+        use graphpg::config::models::PinMode;
+        use graphpg::schema_pin::{drifted, startup_check, Artifacts, PinStatus};
+        let artifacts = Artifacts::build(&catalog, &config, &default_schema, &schema);
+        let results = startup_check(&artifacts, &config);
+        for result in &results {
+            if result.status == PinStatus::Missing {
+                tracing::debug!("{} ({}): no pinned file", result.artifact, result.path);
+            }
+        }
+        let drift = drifted(&results);
+        if !drift.is_empty() {
+            let report = drift
+                .iter()
+                .map(|r| r.report())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if config.export.pin == PinMode::Fail {
+                eprintln!(
+                    "the exported schema does not match the database (export.pin: fail):\n{report}\n\
+                     Export the schema again (`graphpg schema export`) and commit it, or set `export.pin: warn`."
+                );
+                std::process::exit(1);
+            }
+            tracing::warn!("the exported schema does not match the database:\n{report}");
+        } else if !results.is_empty() {
+            tracing::debug!("the exported schemas match the database");
+        }
+    }
+
     let replicas = secrets
         .replica_urls
         .iter()
-        .map(|url| create_pool(url, config.database.pool_size))
+        .map(|url| create_pool_with(url, config.database.pool_size, statement_timeout))
         .collect::<Result<Vec<_>, _>>()?;
 
     let authenticator =
@@ -409,16 +516,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             config.server.port
         );
     }
-    if config.openapi.enabled && config.openapi.spec {
-        let path = if config.openapi.path.starts_with('/') {
-            config.openapi.path.clone()
-        } else {
-            format!("/{}", config.openapi.path)
-        };
+    if state.serves_openapi_document() {
         tracing::info!(
             "OpenAPI document available at http://localhost:{}{}",
             config.server.port,
-            path
+            state.openapi_path
         );
     }
     if config.debug.sql || config.debug.explain {

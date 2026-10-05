@@ -294,7 +294,7 @@ async fn bulk_create_is_bounded() {
         .map(|i| json!({ "name": format!("bulk {i}") }))
         .collect();
     let reply = call(&app, "POST", "/rest/forums", &[], Some(Value::Array(rows))).await;
-    reply.assert_problem(StatusCode::PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE");
+    reply.assert_problem(StatusCode::PAYLOAD_TOO_LARGE, "BULK_LIMIT_EXCEEDED");
 
     let oversized = "x".repeat(2 * 1024 * 1024);
     let reply = call(
@@ -850,10 +850,78 @@ async fn openapi_matches_the_behaviour() {
     }
     assert!(doc["components"]["schemas"]["forumsFilter"]["properties"]["and"].is_object());
 
-    // update input has no key; nullable columns accept null
-    let update = &doc["components"]["schemas"]["forumsUpdateInput"]["properties"];
-    assert!(update.get("id").is_none() && update.get("name").is_some());
-    assert_eq!(update["archivedAt"]["type"], json!(["string", "null"]));
+    // the bodies are the GraphQL input types, nested writes included
+    let resolve = |schema: &Value| -> Value {
+        match schema["$ref"].as_str() {
+            Some(r) => doc["components"]["schemas"]
+                [r.strip_prefix("#/components/schemas/").unwrap()]
+            .clone(),
+            None => schema.clone(),
+        }
+    };
+    let update = resolve(&doc["components"]["schemas"]["forumsUpdateInput"]);
+    assert_eq!(update["additionalProperties"], false);
+    assert!(update["properties"].get("name").is_some());
+    assert_eq!(
+        update["properties"]["archivedAt"]["type"],
+        json!(["string", "null"])
+    );
+    let create = resolve(&doc["components"]["schemas"]["forumsCreateInput"]);
+    assert_eq!(create["required"], json!(["name"]));
+    // a relation takes the nested write inputs
+    let create_children = resolve(&create["properties"]["messages"]);
+    let create_children = resolve(&create_children["anyOf"][0].clone());
+    for member in ["create", "connect", "connectOrCreate"] {
+        assert!(
+            create_children["properties"].get(member).is_some(),
+            "{member} in {create_children}"
+        );
+    }
+    assert!(
+        create_children["properties"].get("sync").is_none(),
+        "sync is for updates"
+    );
+    let update_children = resolve(&resolve(&update["properties"]["messages"])["anyOf"][0].clone());
+    for member in [
+        "create",
+        "connect",
+        "disconnect",
+        "set",
+        "connectOrCreate",
+        "update",
+        "delete",
+        "sync",
+    ] {
+        assert!(
+            update_children["properties"].get(member).is_some(),
+            "{member} in {update_children}"
+        );
+    }
+    // ... which nest again, by reference (`Input.CreateMessageInput` refers back to forums)
+    let child = resolve(&update_children["properties"]["create"]["items"].clone());
+    assert!(child["properties"].get("body").is_some(), "{child}");
+    assert_eq!(child["required"], json!(["body"]));
+    assert!(child["properties"].get("forum").is_some());
+
+    // an update can answer with the row as it was: documented as a preference and a schema
+    let patch = &doc["paths"]["/rest/forums/{key}"]["patch"];
+    let prefer = patch["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "Prefer")
+        .unwrap();
+    assert!(prefer["description"].as_str().unwrap().contains("previous"));
+    let ok = &patch["responses"]["200"]["content"]["application/json"]["schema"]["oneOf"];
+    assert_eq!(ok[1]["$ref"], "#/components/schemas/forumsWithPrevious");
+    let wrapper = &doc["components"]["schemas"]["forumsWithPrevious"];
+    assert_eq!(wrapper["required"], json!(["row", "previous"]));
+    let delete = &doc["paths"]["/rest/forums/{key}"]["delete"]["responses"]["200"]["content"]
+        ["application/json"]["schema"];
+    assert!(
+        delete.get("oneOf").is_none(),
+        "a delete has no previous row"
+    );
 
     // problem responses are on every operation, `type` is about:blank
     for (path, item) in doc["paths"].as_object().unwrap() {

@@ -6,6 +6,7 @@ pub mod openapi;
 pub mod plan;
 pub mod planner;
 pub mod schema;
+pub mod schema_pin;
 pub mod server;
 pub mod telemetry;
 

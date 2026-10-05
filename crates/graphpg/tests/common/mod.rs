@@ -69,3 +69,12 @@ async fn ensure_fixture(schema: &str, sql: &str) {
         .await
         .expect("advisory unlock");
 }
+
+/// Runs `future` to completion on a runtime of its own (for tests that are not async).
+pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(future)
+}

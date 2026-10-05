@@ -101,7 +101,7 @@ GET /rest/orders/aggregate?group=customer,createdAt:month&sum=total&having[count
 → [ { "keys": { "customer": "ada", "createdAt:month": "2026-01-01T00:00:00+00:00" }, "count": 2, "sum": { "total": 150.5 } }, … ]
 ```
 
-Which aggregates and columns exist is what the GraphQL schema offers for the table; anything else is a 400. A response holds at most 10 000 groups (422 `TOO_MANY_GROUPS`: narrow the filter or group more coarsely). Aggregates need the table's connection, so a resource whose list is not permitted has none.
+Which aggregates and columns exist is what the GraphQL schema offers for the table; anything else is a 400. A response holds at most `limits.groups` groups (10 000 by default; 422 `TOO_MANY_GROUPS`: narrow the filter or group more coarsely). Aggregates need the table's connection, so a resource whose list is not permitted has none.
 
 ## Functions
 
@@ -137,7 +137,19 @@ POST /rest/rpc/bump_counter   {"args": {"counterId": 1, "by": 5}}   → {"id": 1
 - **Optimistic concurrency:** `ETag` is the row's version. `If-Match: "<etag>"` on `PATCH`, `PUT` or `DELETE` fails with `412` and code `STALE_VERSION` if the row changed. `PUT` with `If-Match` is an update: the row must exist (404 otherwise). `If-Match: *` only requires the row to exist.
 - **`Prefer: return=minimal`** answers `204` without a body (`Preference-Applied: return=minimal`).
 - A request is **all-or-nothing** in one transaction: there is no partial data, unlike GraphQL.
-- Bodies are limited to 1 MiB.
+- Bodies are limited by `limits.request_body_bytes` (1 MiB by default).
+- **`Prefer: previous`** on `PATCH` and `PUT` answers `{"row": …, "previous": …}`: the row as it is now and as it was before the write, read in the writing statement itself (`RETURNING OLD`, PostgreSQL 18; ignored without it). `previous` is `null` for a row a `PUT` inserted, and has no `rowVersion`. `Preference-Applied: previous` says it was honoured; `return=minimal` wins over it.
+
+### Nested writes
+
+The body of a `POST`, `PATCH` or `PUT` has the shape of the GraphQL input, relations included, and writes the whole graph in the request's transaction. A relation member takes:
+
+| Relation | Create | Update (single row) also |
+| :--- | :--- | :--- |
+| To-one | `{"create": {…}}`, `{"connect": <key>}`, `{"connectOrCreate": {"where": <key>, "create": {…}}}` | `{"update": {…}}`, `{"disconnect": true}` |
+| To-many, many-to-many | `{"create": [{…}], "connect": [<key>], "connectOrCreate": [{…}]}` | `"disconnect": [<key>]`, `"set": [<key>]` (exactly these), `"update": [{"where": <key>, "data": {…}}]`, `"delete": [<key>]` (its own children), `"sync": [{…}]` |
+
+`<key>` is `{"id": …}` (or another unique key). `sync` makes the children exactly the rows listed, in one `MERGE`: a row whose key matches updates its child, a row with a new key is inserted, and the children no row matches are deleted. Everything is validated against the GraphQL input types (an unknown member at any depth is a 400 naming its path, like `body.messages.creat`), and the OpenAPI document describes every shape as `Input.<Type>` components. A failure anywhere rolls back the lot: a constraint of a nested row keeps its typed code (`USERNAME_TAKEN`) and names the input path (`input.messages.create[1].body`), and an `If-Match` that no longer matches (`412`) refuses the whole nested update.
 
 ## Errors
 
@@ -167,12 +179,17 @@ Errors are RFC 9457 `application/problem+json`:
 | 405 | A `GET` of a function that changes data |
 | 409 | A unique constraint (`*_TAKEN`, `*_CONFLICT`) or foreign key |
 | 412 | `If-Match` does not match the row's version |
-| 413 | A bulk create with more than 1000 rows, or a body over 1 MiB |
+| 413 | A bulk create over `limits.bulk_rows`, or a body over `limits.request_body_bytes` |
 | 422 | A validation failure (not null, check, `*_REQUIRED`, …), or more than 10 000 groups |
-| 503 | The database is unavailable |
+| 503 | The database is unavailable, or a statement ran past `limits.statement_timeout` (`STATEMENT_TIMEOUT`) |
 
 In **prod** mode raw PostgreSQL messages never reach the client: unexpected failures say so in general terms, with a `requestId` that is also written to the server log together with the real error. **Dev** mode adds the detail.
 
 ## Limits
 
-The page size, include, bulk and group limits above are fixed for now; configurable, shared limits for GraphQL and REST are tracked in the safety-limits stories.
+The limits are the deployment's [`limits:`](configuration.md#safety-limits), shared with GraphQL and enforced on the plan: page size (default 100, at most 1000 by default; `PAGE_SIZE_EXCEEDED`), depth and cost (`include` paths count as nested rows: `DEPTH_LIMIT_EXCEEDED`, `COST_LIMIT_EXCEEDED`), bulk rows, groups, body size and `statement_timeout`. A request over one fails before it touches the database with a problem carrying the `code`, the `limit` and what the request `actual`ly asked for:
+
+```json
+{ "type": "about:blank", "title": "Bad Request", "status": 400, "code": "PAGE_SIZE_EXCEEDED",
+  "detail": "`first` is 5000, more than the maximum page size of 1000", "limit": 1000, "actual": 5000 }
+```

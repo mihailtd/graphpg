@@ -180,25 +180,32 @@ mod scalar {
     use std::hash::{Hash, Hasher};
     use std::sync::OnceLock;
 
-    pub fn router<S>() -> Router<S>
+    pub fn router<S>(spec_url: &str) -> Router<S>
     where
         S: Clone + Send + Sync + 'static,
     {
+        // The page is the same for the lifetime of the router: render it once
+        let page = std::sync::Arc::new(render(spec_url));
+        let (index, trailing) = (page.clone(), page);
         Router::new()
-            .route("/scalar", get(index_handler))
-            .route("/scalar/", get(index_handler))
+            .route(
+                "/scalar",
+                get(move || async move { Html((*index).clone()) }),
+            )
+            .route(
+                "/scalar/",
+                get(move || async move { Html((*trailing).clone()) }),
+            )
             .route("/scalar/scalar.js", get(js_handler))
     }
 
-    async fn index_handler() -> Html<String> {
+    /// The reference page, showing the OpenAPI document served at `spec_url`.
+    pub fn render(spec_url: &str) -> String {
         let configuration = serde_json::json!({
-            "url": "/openapi.json",
+            "url": spec_url,
             "agent": { "disabled": true }
         });
-        Html(scalar_api_reference::scalar_html(
-            &configuration,
-            Some("/scalar/scalar.js"),
-        ))
+        scalar_api_reference::scalar_html(&configuration, Some("/scalar/scalar.js"))
     }
 
     /// A validator derived from the bytes, so it changes whenever the bundle does.
@@ -255,7 +262,17 @@ pub fn scalar_router<S>() -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    scalar::router()
+    scalar_router_for("/openapi.json")
+}
+
+/// Routes of the Scalar API reference: `/scalar`, showing the OpenAPI document served at
+/// `spec_url` (a path or a URL: the server's `openapi.path`).
+#[cfg(feature = "scalar")]
+pub fn scalar_router_for<S>(spec_url: &str) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    scalar::router(spec_url)
 }
 
 #[cfg(test)]
@@ -429,6 +446,17 @@ mod tests {
         #[tokio::test]
         async fn serves_the_reference_and_its_script() {
             let app = scalar_router();
+
+            // the document it shows is the one at the path it was given
+            let custom = scalar_router_for("/docs/spec.json");
+            let html = String::from_utf8(body(get(&custom, "/scalar", &[]).await).await).unwrap();
+            assert!(
+                html.contains("/docs/spec.json") && !html.contains("/openapi.json"),
+                "{html}"
+            );
+            let trailing =
+                String::from_utf8(body(get(&custom, "/scalar/", &[]).await).await).unwrap();
+            assert_eq!(html, trailing);
 
             let page = get(&app, "/scalar", &[]).await;
             assert_eq!(page.status(), StatusCode::OK);

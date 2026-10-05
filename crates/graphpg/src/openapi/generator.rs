@@ -5,12 +5,10 @@
 //! specification and the API cannot drift apart.
 
 use crate::catalog::{ColumnMetadata, DatabaseCatalog, FieldKind, PgType, TableMetadata};
+use crate::config::models::LimitsConfig;
 use crate::config::models::Operation;
 use crate::config::Config;
-use crate::server::rest::{
-    check_table_permissions, resolve_table, MAX_BULK_ROWS, MAX_INCLUDES, MAX_INCLUDE_DEPTH,
-    MAX_PAGE_SIZE, REST_PREFIX,
-};
+use crate::server::rest::{check_table_permissions, resolve_table, REST_PREFIX};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -69,6 +67,15 @@ pub(super) fn prefer_param(write: bool) -> Value {
             "schema": { "type": "string", "enum": ["count=exact"] }
         })
     }
+}
+
+/// `Prefer` of an update or upsert: also `previous` (the row as it was, `RETURNING OLD`).
+pub(super) fn prefer_previous_param() -> Value {
+    json!({
+        "name": "Prefer", "in": "header",
+        "description": "`return=minimal` answers 204 without a body. `previous` answers `{\"row\": …, \"previous\": …}`: the row as it is now and as it was before the write (`null` for a row an upsert inserted); it needs PostgreSQL 18 and is ignored without it.",
+        "schema": { "type": "string", "examples": ["return=minimal", "previous"] }
+    })
 }
 
 fn if_match_param(description: &str) -> Value {
@@ -172,30 +179,41 @@ impl OpenApiGenerator {
             .filter(|t| !config.entities.get(&t.name).is_some_and(|e| e.omit))
             .collect();
 
+        let mut inputs = graphql.map(super::input_types::InputTypes::new);
         for table in &tables {
             let name = &table.name;
             schemas.insert(name.clone(), Self::generate_table_schema(table, catalog));
             schemas.insert(
-                format!("{name}CreateInput"),
-                Self::generate_create_input_schema(table, catalog),
+                format!("{name}WithPrevious"),
+                json!({
+                    "type": "object",
+                    "description": "The row as it is now and as it was before the write (`Prefer: previous`)",
+                    "properties": {
+                        "row": schema_ref(name),
+                        "previous": { "anyOf": [schema_ref(name), { "type": "null" }] }
+                    },
+                    "required": ["row", "previous"]
+                }),
             );
-            schemas.insert(
-                format!("{name}UpdateInput"),
-                Self::generate_update_input_schema(table, catalog),
-            );
+            let (create, update) = Self::write_input_schemas(table, catalog, inputs.as_mut());
+            schemas.insert(format!("{name}CreateInput"), create);
+            schemas.insert(format!("{name}UpdateInput"), update);
             schemas.insert(
                 format!("{name}Filter"),
                 Self::generate_filter_schema(table, catalog, &tables),
             );
             schemas.insert(
                 format!("{name}SearchRequest"),
-                Self::generate_search_request_schema(table, catalog),
+                Self::generate_search_request_schema(table, catalog, &config.limits),
             );
             Self::generate_table_paths(table, catalog, config, &mut paths);
             Self::generate_aggregate_paths(table, config, &mut schemas, &mut paths);
             Self::generate_search_method_paths(table, catalog, config, graphql, &mut paths);
         }
         Self::generate_global_search_paths(catalog, config, &tables, &mut schemas, &mut paths);
+        if let Some(inputs) = inputs {
+            schemas.extend(inputs.into_components());
+        }
         Self::generate_rpc_paths(catalog, config, default_schema, &tables, &mut paths);
 
         json!({
@@ -250,7 +268,7 @@ impl OpenApiGenerator {
                 "summary": format!("List {name}"),
                 "description": table.description.clone().unwrap_or_else(|| format!("Retrieve rows from `{name}`")),
                 "operationId": format!("list_{name}"),
-                "parameters": Self::generate_list_parameters(table, catalog),
+                "parameters": Self::generate_list_parameters(table, catalog, &config.limits),
                 "responses": responses(json!({
                     "200": {
                         "description": format!("A list of {name} rows"),
@@ -279,7 +297,7 @@ impl OpenApiGenerator {
             let body = if create_many {
                 json!({ "oneOf": [
                     schema_ref(&format!("{name}CreateInput")),
-                    { "type": "array", "minItems": 1, "maxItems": MAX_BULK_ROWS,
+                    { "type": "array", "minItems": 1, "maxItems": config.limits.bulk_rows,
                       "items": schema_ref(&format!("{name}CreateInput")) }
                 ] })
             } else {
@@ -288,7 +306,11 @@ impl OpenApiGenerator {
             collection.insert("post".into(), json!({
                 "summary": format!("Create {name}"),
                 "description": format!(
-                    "Create one row (object body) or, with an array body, up to {MAX_BULK_ROWS} rows in one transaction. Nested objects are nested writes, in the shape of the GraphQL input."
+                    "Create one row (object body) or, with an array body, {} in one transaction. Nested objects are nested writes, in the shape of the GraphQL input.",
+                    match config.limits.bulk_rows {
+                        Some(max) => format!("up to {max} rows"),
+                        None => "many rows".to_string(),
+                    }
                 ),
                 "operationId": format!("create_{name}"),
                 "parameters": [prefer_param(true)],
@@ -369,7 +391,12 @@ impl OpenApiGenerator {
                 }), &[("404", "Not Found")]),
             }));
         }
-        let write_responses = |ok: &str| {
+        let write_responses = |ok: &str, previous: bool| {
+            let content = if previous {
+                json!({ "oneOf": [row.clone(), schema_ref(&format!("{name}WithPrevious"))] })
+            } else {
+                row.clone()
+            };
             responses(
                 json!({
                     "200": {
@@ -378,7 +405,7 @@ impl OpenApiGenerator {
                             "ETag": { "description": "Row version", "schema": { "type": "string" } },
                             "Preference-Applied": { "schema": { "type": "string" } }
                         },
-                        "content": json_content(row.clone())
+                        "content": json_content(content)
                     },
                     "204": { "description": "Done (`Prefer: return=minimal`)" }
                 }),
@@ -403,9 +430,9 @@ impl OpenApiGenerator {
                 "operationId": format!("update_{name}_by_key"),
                 "parameters": [key_param.clone(),
                     if_match_param("Row version (the `ETag`) the update must apply to; 412 if the row changed"),
-                    prefer_param(true)],
+                    prefer_previous_param()],
                 "requestBody": { "required": true, "content": json_content(schema_ref(&format!("{name}UpdateInput"))) },
-                "responses": write_responses("Updated"),
+                "responses": write_responses("Updated", true),
             }));
         }
         if upsert {
@@ -415,9 +442,9 @@ impl OpenApiGenerator {
                 "operationId": format!("upsert_{name}_by_key"),
                 "parameters": [key_param.clone(),
                     if_match_param("Optional: require the row to exist at this version (the `ETag`)"),
-                    prefer_param(true)],
+                    prefer_previous_param()],
                 "requestBody": { "required": true, "content": json_content(schema_ref(&format!("{name}CreateInput"))) },
-                "responses": write_responses("Row inserted or updated"),
+                "responses": write_responses("Row inserted or updated", true),
             }));
         }
         if delete {
@@ -428,7 +455,7 @@ impl OpenApiGenerator {
                 "parameters": [key_param,
                     if_match_param("Row version (the `ETag`) the delete must apply to; 412 if the row changed"),
                     prefer_param(true)],
-                "responses": write_responses("Deleted: the row"),
+                "responses": write_responses("Deleted: the row", false),
             }));
         }
         if !item.is_empty() {
@@ -486,6 +513,15 @@ impl OpenApiGenerator {
             .collect()
     }
 
+    /// A page size: at least 1, at most `limits.page_size.max`.
+    fn page_schema(limits: &LimitsConfig) -> Value {
+        let mut schema = json!({ "type": "integer", "minimum": 1 });
+        if let Some(max) = limits.page_size.max {
+            schema["maximum"] = json!(max);
+        }
+        schema
+    }
+
     /// `include`, or null when the table has no relation to embed.
     pub(super) fn include_param(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
         let relations = Self::relation_names(table, catalog);
@@ -495,12 +531,11 @@ impl OpenApiGenerator {
         json!({
             "name": "include", "in": "query", "style": "form", "explode": false,
             "description": format!(
-                "Relations to embed, with nested ones as dotted paths (`posts.author`): at most {MAX_INCLUDES} relations, {MAX_INCLUDE_DEPTH} levels deep. Relations: {}",
+                "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: {}",
                 relations.join(", ")
             ),
             "schema": {
                 "type": "array",
-                "maxItems": MAX_INCLUDES,
                 "items": { "type": "string", "pattern": format!("^{}(\\.[A-Za-z_][A-Za-z0-9_]*)*$", alternation(&relations)) }
             }
         })
@@ -510,7 +545,20 @@ impl OpenApiGenerator {
     pub(super) fn generate_list_parameters(
         table: &TableMetadata,
         catalog: &DatabaseCatalog,
+        limits: &LimitsConfig,
     ) -> Value {
+        let page = |what: &str| {
+            let mut schema = json!({ "type": "integer", "minimum": 1 });
+            let mut text = format!("{what} (default {}", limits.page_size.default);
+            if let Some(max) = limits.page_size.max {
+                schema["maximum"] = json!(max);
+                text.push_str(&format!(", at most {max}"));
+            }
+            text.push(')');
+            (text, schema)
+        };
+        let (first_text, first_schema) = page("Page size for forward keyset pagination");
+        let (last_text, last_schema) = page("Page size for backward keyset pagination");
         let columns = Self::visible_fields(table);
         let order_item = format!("^[+-]?{}(:(asc|desc))?$", alternation(&columns));
         let mut params = vec![
@@ -526,8 +574,8 @@ impl OpenApiGenerator {
             }),
             json!({
                 "name": "first", "in": "query",
-                "description": format!("Page size for forward keyset pagination (default 100, at most {MAX_PAGE_SIZE})"),
-                "schema": { "type": "integer", "minimum": 1, "maximum": MAX_PAGE_SIZE }
+                "description": first_text,
+                "schema": first_schema
             }),
             json!({
                 "name": "after", "in": "query",
@@ -536,8 +584,8 @@ impl OpenApiGenerator {
             }),
             json!({
                 "name": "last", "in": "query",
-                "description": format!("Page size for backward keyset pagination (at most {MAX_PAGE_SIZE})"),
-                "schema": { "type": "integer", "minimum": 1, "maximum": MAX_PAGE_SIZE }
+                "description": last_text,
+                "schema": last_schema
             }),
             json!({
                 "name": "before", "in": "query",
@@ -558,11 +606,15 @@ impl OpenApiGenerator {
     }
 
     /// The body of `POST …/search`.
-    fn generate_search_request_schema(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
+    fn generate_search_request_schema(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+        limits: &LimitsConfig,
+    ) -> Value {
         json!({
             "type": "object",
             "description": format!("Search request for `{}`; every member is optional, unknown members are a 400", table.name),
-            "properties": Self::search_request_properties(table, catalog),
+            "properties": Self::search_request_properties(table, catalog, limits),
             "additionalProperties": false
         })
     }
@@ -571,6 +623,7 @@ impl OpenApiGenerator {
     pub(super) fn search_request_properties(
         table: &TableMetadata,
         catalog: &DatabaseCatalog,
+        limits: &LimitsConfig,
     ) -> Value {
         let columns = Self::visible_fields(table);
         let relations = Self::relation_names(table, catalog);
@@ -583,8 +636,8 @@ impl OpenApiGenerator {
                     { "type": "array", "items": { "type": "string" } }
                 ]
             },
-            "first": { "type": "integer", "minimum": 1, "maximum": MAX_PAGE_SIZE },
-            "last": { "type": "integer", "minimum": 1, "maximum": MAX_PAGE_SIZE },
+            "first": Self::page_schema(limits),
+            "last": Self::page_schema(limits),
             "after": { "type": "string", "description": "Cursor (the `X-Next-Cursor` header of the previous page)" },
             "before": { "type": "string", "description": "Cursor (the `X-Previous-Cursor` header)" },
             "offset": { "type": "integer", "minimum": 0 },
@@ -592,7 +645,7 @@ impl OpenApiGenerator {
         });
         if !relations.is_empty() {
             properties["include"] = json!({
-                "type": "array", "maxItems": MAX_INCLUDES,
+                "type": "array",
                 "items": { "type": "string", "pattern": format!("^{}(\\.[A-Za-z_][A-Za-z0-9_]*)*$", alternation(&relations)) }
             });
         }
@@ -623,6 +676,35 @@ impl OpenApiGenerator {
         table
             .visible_columns()
             .filter(|c| !c.is_generated && !c.readonly)
+    }
+
+    /// The create and update body schemas of `table`: the GraphQL input types (with their
+    /// nested writes) when the served schema is known, else the table's own columns.
+    fn write_input_schemas(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+        inputs: Option<&mut super::input_types::InputTypes<'_>>,
+    ) -> (Value, Value) {
+        let flat = (
+            Self::generate_create_input_schema(table, catalog),
+            Self::generate_update_input_schema(table, catalog),
+        );
+        let Some(inputs) = inputs else {
+            return flat;
+        };
+        let fields = catalog.table_mutation_fields(table);
+        let input_of = |inputs: &super::input_types::InputTypes<'_>, action, by_key: bool| {
+            fields
+                .iter()
+                .find(|m| m.action == action && (!by_key || m.unique_key.is_empty()))
+                .and_then(|m| inputs.argument_type(&m.name, "input"))
+        };
+        let create = input_of(inputs, crate::catalog::MutationAction::Create, false);
+        let update = input_of(inputs, crate::catalog::MutationAction::Update, true);
+        (
+            create.map_or(flat.0, |name| inputs.reference(&name)),
+            update.map_or(flat.1, |name| inputs.reference(&name)),
+        )
     }
 
     /// Input schema for row creation.

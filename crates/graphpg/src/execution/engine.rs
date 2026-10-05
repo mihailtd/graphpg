@@ -42,6 +42,20 @@ pub enum ExecutionError {
 }
 
 impl ExecutionError {
+    /// The statement ran longer than the connection's `statement_timeout` and was cancelled.
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            ExecutionError::Mutation { source, .. } => source.is_timeout(),
+            ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => {
+                e.as_db_error().is_some_and(|db| {
+                    *db.code() == SqlState::QUERY_CANCELED
+                        && db.message().contains("statement timeout")
+                })
+            }
+            _ => false,
+        }
+    }
+
     /// A failure that running the operation again may not hit: a serialization failure
     /// (under `REPEATABLE READ` or `SERIALIZABLE`) or a deadlock.
     pub fn is_transient(&self) -> bool {

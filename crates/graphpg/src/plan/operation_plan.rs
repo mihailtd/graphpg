@@ -41,6 +41,11 @@ impl OperationPlan {
         self.steps.get_mut(&id)
     }
 
+    /// Every step, in no particular order.
+    pub fn steps_mut(&mut self) -> impl Iterator<Item = &mut Step> {
+        self.steps.values_mut()
+    }
+
     pub fn root_fields(&self) -> &[(String, StepId)] {
         &self.root_field_steps
     }

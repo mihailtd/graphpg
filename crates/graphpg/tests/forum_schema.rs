@@ -112,4 +112,16 @@ async fn test_introspect_and_generate_schema_from_forum_database() {
     // 5. Snapshot test the generated SDL
     let sdl = SchemaBuilder::generate_sdl(&catalog);
     insta::assert_snapshot!("forum_app_public_schema", sdl);
+
+    // ... and the OpenAPI document, which a change to the REST API must update on purpose
+    // (`cargo insta review`, or `INSTA_UPDATE=always cargo test`): a spec change fails CI
+    // until it is committed
+    let config = graphpg::config::Config::default();
+    let openapi = graphpg::OpenApiGenerator::generate_with_schema(
+        &catalog,
+        &config,
+        "app_public",
+        Some(&valid_schema),
+    );
+    insta::assert_json_snapshot!("forum_app_public_openapi", openapi);
 }

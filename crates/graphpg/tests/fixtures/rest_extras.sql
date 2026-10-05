@@ -33,6 +33,14 @@ CREATE VIEW customer_totals AS
 CREATE MATERIALIZED VIEW customer_summary AS
     SELECT customer, count(*)::int AS orders FROM orders GROUP BY customer;
 
+-- A parent and children with a nullable foreign key: nested writes can detach them
+CREATE TABLE crews (id int PRIMARY KEY, name text NOT NULL);
+CREATE TABLE sailors (
+    id int PRIMARY KEY,
+    crew_id int REFERENCES crews (id),
+    name text NOT NULL
+);
+
 CREATE TABLE counters (id int PRIMARY KEY, value int NOT NULL DEFAULT 0);
 INSERT INTO counters VALUES (1, 0);
 
@@ -80,3 +88,7 @@ CREATE FUNCTION bump_counter(counter_id int, by int DEFAULT 1) RETURNS counters 
     AS $$ UPDATE rest_extras.counters SET value = value + by WHERE id = counter_id RETURNING * $$;
 CREATE FUNCTION touch_counters() RETURNS void LANGUAGE sql AS $$ UPDATE rest_extras.counters SET value = value WHERE false $$;
 CREATE FUNCTION counter_total() RETURNS int LANGUAGE sql VOLATILE AS $$ SELECT sum(value)::int FROM rest_extras.counters $$;
+
+-- A function that takes its time, for statement timeouts
+CREATE FUNCTION nap(secs float8) RETURNS int LANGUAGE plpgsql STABLE
+    AS $$ BEGIN PERFORM pg_sleep(secs); RETURN 1; END $$;
