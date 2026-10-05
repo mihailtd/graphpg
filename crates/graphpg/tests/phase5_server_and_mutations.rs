@@ -998,12 +998,17 @@ async fn test_openapi_spec_serving_and_content_negotiation() {
     modified_catalog.tables.clear();
     state_enabled.reload(schema, modified_catalog);
     let updated_doc = state_enabled.current_openapi_document();
+    assert_eq!(
+        updated_doc["paths"].as_object().unwrap().len(),
+        1,
+        "Only /rest should remain after reloading with catalog without tables"
+    );
     assert!(
-        updated_doc["components"]["schemas"]
+        !updated_doc["components"]["schemas"]
             .as_object()
             .unwrap()
-            .is_empty(),
-        "Schemas should be empty after reloading with catalog without tables"
+            .contains_key("Forums"),
+        "Table schemas should be gone after reloading with catalog without tables"
     );
 }
 
@@ -1341,4 +1346,401 @@ async fn test_rest_reads_search_post() {
     let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["name"], "Postgres");
+}
+
+#[tokio::test]
+async fn test_rest_writes_single_create_and_item_crud() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app = create_router(state);
+
+    // 1. POST /rest/forums: single create
+    let create_payload = serde_json::json!({
+        "name": "Rustaceans Club"
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/rest/forums")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&create_payload).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert!(res.headers().contains_key(header::LOCATION));
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(location.starts_with("/rest/forums/"));
+    assert!(res.headers().contains_key(header::ETAG));
+    let etag = res
+        .headers()
+        .get(header::ETAG)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let created_row: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(created_row["name"], "Rustaceans Club");
+    let item_id = created_row["id"].as_str().unwrap().to_string();
+    assert_eq!(location, format!("/rest/forums/{}", item_id));
+
+    // 2. GET /rest/forums/{id}: single item read
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/rest/forums/{}", item_id))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let headers = res.headers().clone();
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers.get(header::ETAG).unwrap().to_str().unwrap(), etag);
+    let item_row: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(item_row["id"], item_id);
+    assert_eq!(item_row["name"], "Rustaceans Club");
+
+    // 3. GET /rest/forums/{id}?fields=name: projection
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/rest/forums/{}?fields=name", item_id))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let proj_row: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(proj_row["name"], "Rustaceans Club");
+    assert!(proj_row.get("id").is_none());
+
+    // 4. PATCH /rest/forums/{id} with mismatched If-Match: 412 Precondition Failed
+    let patch_payload = serde_json::json!({
+        "name": "Rustaceans Club Updated"
+    });
+    let req = Request::builder()
+        .method("PATCH")
+        .uri(format!("/rest/forums/{}", item_id))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::IF_MATCH, "\"mismatched-etag\"")
+        .body(Body::from(serde_json::to_vec(&patch_payload).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        res.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/problem+json; charset=utf-8"
+    );
+
+    // 5. PATCH /rest/forums/{id} with matching If-Match: successful update
+    let req = Request::builder()
+        .method("PATCH")
+        .uri(format!("/rest/forums/{}", item_id))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::IF_MATCH, &etag)
+        .body(Body::from(serde_json::to_vec(&patch_payload).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let updated_etag = res
+        .headers()
+        .get(header::ETAG)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(updated_etag, etag);
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let updated_row: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(updated_row["name"], "Rustaceans Club Updated");
+
+    // 6. PATCH /rest/forums/{id} with Prefer: return=minimal (204 No Content)
+    let patch_minimal = serde_json::json!({
+        "name": "Rustaceans Club Minimal"
+    });
+    let req = Request::builder()
+        .method("PATCH")
+        .uri(format!("/rest/forums/{}", item_id))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("Prefer", "return=minimal")
+        .body(Body::from(serde_json::to_vec(&patch_minimal).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    // Verify change took effect
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/rest/forums/{}", item_id))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let check_row: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(check_row["name"], "Rustaceans Club Minimal");
+
+    // 7. PUT /rest/forums/{id}: upsert
+    let put_payload = serde_json::json!({
+        "name": "Rustaceans Club Upserted"
+    });
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/rest/forums/{}", item_id))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&put_payload).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let upserted_row: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(upserted_row["name"], "Rustaceans Club Upserted");
+
+    // 8. DELETE /rest/forums/{id} with Prefer: return=minimal (204 No Content)
+    let req = Request::builder()
+        .method("DELETE")
+        .uri(format!("/rest/forums/{}", item_id))
+        .header("Prefer", "return=minimal")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    // 9. GET /rest/forums/{id} after deletion: 404 Not Found with ProblemDetails
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/rest/forums/{}", item_id))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        res.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/problem+json; charset=utf-8"
+    );
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let problem: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(problem["status"], 404);
+    assert_eq!(problem["code"], "NOT_FOUND");
+}
+
+#[tokio::test]
+async fn test_rest_writes_bulk_create() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app = create_router(state);
+
+    let bulk_payload = serde_json::json!([
+        { "name": "Bulk Alpha 1" },
+        { "name": "Bulk Alpha 2" }
+    ]);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/rest/forums")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&bulk_payload).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let created_items: Vec<serde_json::Value> = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(created_items.len(), 2);
+    assert_eq!(created_items[0]["name"], "Bulk Alpha 1");
+    assert_eq!(created_items[1]["name"], "Bulk Alpha 2");
+
+    // Clean up created items
+    for item in &created_items {
+        if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+            let req = Request::builder()
+                .method("DELETE")
+                .uri(format!("/rest/forums/{}", id))
+                .body(Body::empty())
+                .unwrap();
+            let _ = app.clone().oneshot(req).await.unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_rest_writes_rfc9457_errors() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let app = create_router(state);
+
+    // 1. Conflict on unique key: username "Alice" already exists
+    let duplicate_user = serde_json::json!({
+        "username": "Alice"
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/rest/users")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&duplicate_user).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        res.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/problem+json; charset=utf-8"
+    );
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let problem: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(problem["status"], 409);
+    assert_eq!(problem["code"], "USERNAME_TAKEN");
+
+    // 2. Malformed JSON payload
+    let req = Request::builder()
+        .method("POST")
+        .uri("/rest/forums")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{ bad json"))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        res.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/problem+json; charset=utf-8"
+    );
+
+    // 3. Unknown resource
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/unknown_entities/123")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        res.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/problem+json; charset=utf-8"
+    );
+}
+
+#[tokio::test]
+async fn test_rest_openapi_specification_deep_verification() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    ));
+    let doc = state.current_openapi_document();
+
+    // 1. Basic spec metadata
+    assert_eq!(doc["openapi"], "3.1.0");
+    assert!(doc["info"]["title"].is_string());
+    assert!(doc["info"]["version"].is_string());
+
+    // 2. Components schemas
+    let schemas = doc["components"]["schemas"].as_object().unwrap();
+    assert!(schemas.contains_key("ProblemDetails"));
+    assert!(schemas.contains_key("forums"));
+    assert!(schemas.contains_key("forumsCreateInput"));
+    assert!(schemas.contains_key("forumsUpdateInput"));
+    assert!(schemas.contains_key("forumsFilter"));
+
+    // Check ProblemDetails schema fields
+    let problem_schema = &schemas["ProblemDetails"];
+    let prob_props = problem_schema["properties"].as_object().unwrap();
+    assert!(prob_props.contains_key("type"));
+    assert!(prob_props.contains_key("title"));
+    assert!(prob_props.contains_key("status"));
+    assert!(prob_props.contains_key("detail"));
+    assert!(prob_props.contains_key("instance"));
+    assert!(prob_props.contains_key("code"));
+
+    // 3. Collection path: /rest/forums
+    let paths = doc["paths"].as_object().unwrap();
+    let forums_path = &paths["/rest/forums"];
+    assert!(forums_path["get"].is_object());
+    assert!(forums_path["post"].is_object());
+
+    // Check GET /rest/forums parameters
+    let get_params = forums_path["get"]["parameters"].as_array().unwrap();
+    let param_names: Vec<&str> = get_params
+        .iter()
+        .filter_map(|p| p["name"].as_str())
+        .collect();
+    assert!(param_names.contains(&"filter"));
+    assert!(param_names.contains(&"order"));
+    assert!(param_names.contains(&"first"));
+    assert!(param_names.contains(&"last"));
+    assert!(param_names.contains(&"after"));
+    assert!(param_names.contains(&"before"));
+    assert!(param_names.contains(&"offset"));
+    assert!(param_names.contains(&"limit"));
+    assert!(param_names.contains(&"fields"));
+    assert!(param_names.contains(&"include"));
+
+    // Verify filter parameter uses deepObject style
+    let filter_param = get_params
+        .iter()
+        .find(|p| p["name"] == "filter")
+        .expect("filter parameter present");
+    assert_eq!(filter_param["style"], "deepObject");
+
+    // Check POST /rest/forums responses
+    let post_responses = forums_path["post"]["responses"].as_object().unwrap();
+    assert!(post_responses.contains_key("201"));
+    assert!(post_responses.contains_key("204"));
+    assert!(post_responses.contains_key("400"));
+    assert!(post_responses.contains_key("409"));
+    assert!(post_responses.contains_key("422"));
+
+    // 4. Search path: /rest/forums/search
+    assert!(paths.contains_key("/rest/forums/search"));
+    let search_path = &paths["/rest/forums/search"];
+    assert!(search_path["post"].is_object());
+
+    // 5. Item path: /rest/forums/{key}
+    assert!(paths.contains_key("/rest/forums/{key}"));
+    let item_path = &paths["/rest/forums/{key}"];
+    assert!(item_path["get"].is_object());
+    assert!(item_path["patch"].is_object());
+    assert!(item_path["put"].is_object());
+    assert!(item_path["delete"].is_object());
+
+    // Check path parameter in get operation
+    let get_item_params = item_path["get"]["parameters"].as_array().unwrap();
+    let key_param = get_item_params
+        .iter()
+        .find(|p| p["name"] == "key")
+        .expect("key path parameter");
+    assert_eq!(key_param["in"], "path");
+    assert_eq!(key_param["required"], true);
+
+    // Check responses on item operations
+    let patch_responses = item_path["patch"]["responses"].as_object().unwrap();
+    assert!(patch_responses.contains_key("200"));
+    assert!(patch_responses.contains_key("204"));
+    assert!(patch_responses.contains_key("412"));
+
+    let delete_responses = item_path["delete"]["responses"].as_object().unwrap();
+    assert!(delete_responses.contains_key("200"));
+    assert!(delete_responses.contains_key("204"));
+    assert!(delete_responses.contains_key("412"));
 }

@@ -186,6 +186,8 @@ pub struct ServerState {
     pub openapi_document: std::sync::RwLock<Arc<serde_json::Value>>,
     /// The engine configuration, if passed to the state.
     pub config: Option<crate::config::Config>,
+    /// Runtime mode (dev or prod).
+    pub mode: crate::config::Mode,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -228,7 +230,19 @@ impl ServerState {
             openapi_path: "/openapi.json".to_string(),
             openapi_document: std::sync::RwLock::new(Arc::new(openapi_doc)),
             config: None,
+            mode: crate::config::Mode::Prod,
         }
+    }
+
+    /// Sets the runtime mode.
+    pub fn with_mode(mut self, mode: crate::config::Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Returns true if running in production mode.
+    pub fn is_production(&self) -> bool {
+        self.mode == crate::config::Mode::Prod
     }
 
     /// Authenticates requests with `auth` (see [`Authenticator::new`](super::Authenticator::new)).
