@@ -99,6 +99,7 @@ fn head_of(get: &Value, operation_id: String) -> Value {
         for response in responses.values_mut() {
             if let Some(response) = response.as_object_mut() {
                 response.remove("content");
+                response.remove("links");
             }
         }
     }
@@ -221,7 +222,13 @@ impl OpenApiGenerator {
         let mut inputs = graphql.map(super::input_types::InputTypes::new);
         for table in &tables {
             let name = &table.name;
-            schemas.insert(name.clone(), Self::generate_table_schema(table, catalog));
+            let row_schema = Self::generate_table_schema(table, catalog);
+            match Self::polymorphic_row_schemas(table, catalog, &row_schema) {
+                Some(variants) => schemas.extend(variants),
+                None => {
+                    schemas.insert(name.clone(), row_schema);
+                }
+            }
             schemas.insert(
                 format!("{name}WithPrevious"),
                 json!({
@@ -439,7 +446,8 @@ impl OpenApiGenerator {
                 Self::include_param(table, catalog),
             ];
             params.retain(|p| !p.is_null());
-            item.insert("get".into(), json!({
+            let links = Self::links_of(table, catalog, config);
+            let mut get = json!({
                 "summary": format!("Get {name} by key"),
                 "description": format!("Retrieve a single row from `{name}` by primary key"),
                 "operationId": format!("get_{name}_by_key"),
@@ -451,7 +459,11 @@ impl OpenApiGenerator {
                         "content": json_content(row.clone())
                     }
                 }), &[("404", "Not Found")]),
-            }));
+            });
+            if !links.is_empty() {
+                get["responses"]["200"]["links"] = Value::Object(links);
+            }
+            item.insert("get".into(), get);
         }
         let write_responses = |ok: &str, previous: bool| {
             let content = if previous {
@@ -589,6 +601,105 @@ impl OpenApiGenerator {
                 Value::Object(ops),
             );
         }
+    }
+
+    /// OpenAPI 3.1 `links` of a single-row response, inferred from the foreign keys: to the row a
+    /// key points at (`get_<table>_by_key`, the key read from the response) and to the rows that
+    /// point at this one (`search_<table>`, filtered by this row's key). Only keys of one
+    /// column, only to resources the API serves and the caller may read.
+    fn links_of(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+        config: &Config,
+    ) -> serde_json::Map<String, Value> {
+        let readable = |t: &TableMetadata| {
+            !t.primary_key.is_empty()
+                && check_table_permissions(t, Some(config), Operation::Read).is_ok()
+        };
+        let field_of = |t: &TableMetadata, column: &str| {
+            t.get_column(column)
+                .filter(|c| !c.omit)
+                .map(|c| c.field_name.clone())
+        };
+        let mut links = serde_json::Map::new();
+        let mut add = |name: &str, constraint: &str, link: Value| {
+            let key = if links.contains_key(name) {
+                format!("{name}_{constraint}")
+            } else {
+                name.to_string()
+            };
+            links.insert(key, link);
+        };
+
+        // This row's foreign keys: the row they point at
+        for fk in &table.foreign_keys {
+            if fk.omit || fk.columns.len() != 1 || fk.foreign_columns.len() != 1 {
+                continue;
+            }
+            let Some(target) = catalog
+                .tables
+                .iter()
+                .find(|t| t.schema == fk.foreign_schema && t.name == fk.foreign_table)
+            else {
+                continue;
+            };
+            let (Some(from), true) = (
+                field_of(table, &fk.columns[0]),
+                readable(target) && target.primary_key == fk.foreign_columns,
+            ) else {
+                continue;
+            };
+            add(
+                &target.name,
+                &fk.constraint_name,
+                json!({
+                    "operationId": format!("get_{}_by_key", target.name),
+                    "description": format!(
+                        "The `{}` this `{}` refers to (`{}`)",
+                        target.name, table.name, fk.columns[0]
+                    ),
+                    "parameters": { "key": format!("$response.body#/{from}") }
+                }),
+            );
+        }
+
+        // Rows whose foreign keys point at this row
+        for other in &catalog.tables {
+            if !readable(other) {
+                continue;
+            }
+            for fk in &other.foreign_keys {
+                if fk.omit_reverse
+                    || fk.columns.len() != 1
+                    || fk.foreign_columns.len() != 1
+                    || fk.foreign_schema != table.schema
+                    || fk.foreign_table != table.name
+                {
+                    continue;
+                }
+                let (Some(filter_field), Some(key_field)) = (
+                    field_of(other, &fk.columns[0]),
+                    field_of(table, &fk.foreign_columns[0]),
+                ) else {
+                    continue;
+                };
+                add(
+                    &other.name,
+                    &fk.constraint_name,
+                    json!({
+                        "operationId": format!("search_{}", other.name),
+                        "description": format!(
+                            "The `{}` rows that refer to this `{}` (`{}`)",
+                            other.name, table.name, fk.columns[0]
+                        ),
+                        "requestBody": {
+                            "filter": { filter_field: { "eq": format!("$response.body#/{key_field}") } }
+                        }
+                    }),
+                );
+            }
+        }
+        links
     }
 
     /// The schema of a `multipart/form-data` write: the create input, with the files of
@@ -861,7 +972,7 @@ impl OpenApiGenerator {
         for col in Self::writable(table) {
             properties.insert(
                 col.field_name.clone(),
-                Self::column_to_json_schema(col, catalog),
+                Self::constrained_schema(table, col, catalog),
             );
             if !col.is_nullable && col.default_value.is_none() {
                 required.push(col.field_name.clone());
@@ -886,7 +997,7 @@ impl OpenApiGenerator {
             .map(|c| {
                 (
                     c.field_name.clone(),
-                    Self::column_to_json_schema(c, catalog),
+                    Self::constrained_schema(table, c, catalog),
                 )
             })
             .collect();
@@ -1026,7 +1137,7 @@ impl OpenApiGenerator {
         for col in table.visible_columns() {
             properties.insert(
                 col.field_name.clone(),
-                Self::column_to_json_schema(col, catalog),
+                Self::constrained_schema(table, col, catalog),
             );
             if !col.is_nullable {
                 required.push(col.field_name.clone());
@@ -1050,6 +1161,108 @@ impl OpenApiGenerator {
     }
 
     /// Maps a column's PostgreSQL type to an OpenAPI 3.1 JSON Schema.
+    /// The row schemas of a Single Table Inheritance table: `<table>.Base` (the plain object),
+    /// one `<table>.<Variant>` per discriminator value (the base, and the discriminator fixed to
+    /// that value) and `<table>` itself as the `oneOf` of them with a `discriminator`. `None`
+    /// for any other table. (Table-per-type hierarchies have no discriminator in a row, and a
+    /// row carries only the parent's columns, so they stay one schema.)
+    fn polymorphic_row_schemas(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+        base: &Value,
+    ) -> Option<Vec<(String, Value)>> {
+        let sti = catalog.find_sti(&table.schema, &table.name)?;
+        let column = table
+            .visible_columns()
+            .find(|c| c.name == sti.discriminator_column)?;
+        let field = &column.field_name;
+        // Rows carry the value as the API names it (an enum value), not as the database does
+        let enum_meta = column
+            .enum_key
+            .as_ref()
+            .and_then(|key| catalog.enums.iter().find(|e| &e.key == key));
+        let wire = |value: &str| {
+            enum_meta
+                .and_then(|e| e.values.iter().find(|v| v.label == value))
+                .map_or_else(|| value.to_string(), |v| v.name.clone())
+        };
+        let name = &table.name;
+        let base_name = format!("{name}.Base");
+        let mut out = vec![(base_name.clone(), base.clone())];
+        let mut members = Vec::new();
+        let mut mapping = serde_json::Map::new();
+        for variant in &sti.variants {
+            let variant_name = format!("{name}.{}", variant.type_name);
+            out.push((
+                variant_name.clone(),
+                json!({
+                    "description": format!("A `{name}` row whose `{field}` is `{}`", wire(&variant.discriminator_value)),
+                    "allOf": [
+                        schema_ref(&base_name),
+                        {
+                            "properties": { field: { "const": wire(&variant.discriminator_value) } },
+                            "required": [field]
+                        }
+                    ]
+                }),
+            ));
+            mapping.insert(
+                wire(&variant.discriminator_value),
+                json!(format!("#/components/schemas/{variant_name}")),
+            );
+            members.push(schema_ref(&variant_name));
+        }
+        if let Some(fallback) = &sti.fallback_type_name {
+            let fallback_name = format!("{name}.{fallback}");
+            out.push((
+                fallback_name.clone(),
+                json!({
+                    "description": format!("A `{name}` row whose `{field}` is none of the above"),
+                    "allOf": [
+                        schema_ref(&base_name),
+                        { "properties": { field: { "type": "null" } } }
+                    ]
+                }),
+            ));
+            members.push(schema_ref(&fallback_name));
+        }
+        let mut row = json!({
+            "oneOf": members,
+            "discriminator": { "propertyName": field, "mapping": mapping }
+        });
+        if let Some(description) = &table.description {
+            row["description"] = json!(description);
+        }
+        out.push((name.clone(), row));
+        Some(out)
+    }
+
+    /// The schema of a column with the keywords its `CHECK` constraints state.
+    fn constrained_schema(
+        table: &TableMetadata,
+        col: &ColumnMetadata,
+        catalog: &DatabaseCatalog,
+    ) -> Value {
+        let mut schema = Self::column_to_json_schema(col, catalog);
+        for (keyword, value) in super::constraints::keywords(table, col) {
+            // A `varchar(20)` limit and a `CHECK` on the length: the stricter one holds
+            let tighter = match (schema.get(&keyword).and_then(Value::as_i64), value.as_i64()) {
+                (Some(old), Some(new)) if keyword == "maxLength" || keyword == "maxItems" => {
+                    new < old
+                }
+                (Some(old), Some(new)) if keyword == "minLength" || keyword == "minItems" => {
+                    new > old
+                }
+                (Some(_), _) => false,
+                _ => true,
+            };
+            if tighter {
+                schema[&keyword] = value;
+            }
+        }
+        schema
+    }
+
     pub(super) fn column_to_json_schema(
         col: &ColumnMetadata,
         catalog: &DatabaseCatalog,

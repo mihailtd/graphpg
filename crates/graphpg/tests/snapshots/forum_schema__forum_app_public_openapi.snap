@@ -859,6 +859,19 @@ expression: openapi
                   "$ref": "#/components/schemas/forums"
                 }
               }
+            },
+            "links": {
+              "messages": {
+                "operationId": "search_messages",
+                "description": "The `messages` rows that refer to this `forums` (`forum_id`)",
+                "requestBody": {
+                  "filter": {
+                    "forumId": {
+                      "eq": "$response.body#/id"
+                    }
+                  }
+                }
+              }
             }
           },
           "400": {
@@ -2758,6 +2771,22 @@ expression: openapi
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/messages"
+                }
+              }
+            },
+            "links": {
+              "users": {
+                "operationId": "get_users_by_key",
+                "description": "The `users` this `messages` refers to (`author_id`)",
+                "parameters": {
+                  "key": "$response.body#/authorId"
+                }
+              },
+              "forums": {
+                "operationId": "get_forums_by_key",
+                "description": "The `forums` this `messages` refers to (`forum_id`)",
+                "parameters": {
+                  "key": "$response.body#/forumId"
                 }
               }
             }
@@ -4682,6 +4711,19 @@ expression: openapi
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/users"
+                }
+              }
+            },
+            "links": {
+              "messages": {
+                "operationId": "search_messages",
+                "description": "The `messages` rows that refer to this `users` (`author_id`)",
+                "requestBody": {
+                  "filter": {
+                    "authorId": {
+                      "eq": "$response.body#/id"
+                    }
+                  }
                 }
               }
             }

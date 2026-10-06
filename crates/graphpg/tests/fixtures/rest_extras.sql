@@ -69,6 +69,25 @@ INSERT INTO typed VALUES
      '[2026-01-01,2026-02-01)', '{[1,3),[5,7)}', '2026-01-02 03:04:05', '10:11:12', '1 day 2 hours', 'paid', '{a,b}'),
     (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'empty', '(,)', NULL, '{}', NULL, NULL, NULL, NULL, NULL);
 
+-- Constraints the OpenAPI document states as JSON Schema keywords
+CREATE TABLE bounded (
+    id int PRIMARY KEY,
+    score int CHECK (score >= 0 AND score <= 100),
+    step int CHECK (step % 5 = 0),
+    rating float8 CHECK (rating > 0 AND rating < 5),
+    code text CHECK (code ~ '^[A-Z]{3}$'),
+    title text CHECK (char_length(title) >= 3 AND char_length(title) <= 20),
+    tags text[] CHECK (cardinality(tags) <= 5),
+    other int CHECK (other > 0 OR other IS NULL)
+);
+
+-- Single Table Inheritance: a discriminator closed by a CHECK
+CREATE TABLE pets (
+    id int PRIMARY KEY,
+    kind text NOT NULL CHECK (kind IN ('dog', 'cat')),
+    name text NOT NULL
+);
+
 CREATE TABLE counters (id int PRIMARY KEY, value int NOT NULL DEFAULT 0);
 INSERT INTO counters VALUES (1, 0);
 
