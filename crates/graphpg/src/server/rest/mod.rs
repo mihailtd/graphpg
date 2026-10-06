@@ -1086,7 +1086,51 @@ pub async fn rest_list_handler(
             &ctx.catalog,
         )
         .map_err(ProblemDetails::bad_request)?;
-        let listing = list(&ctx, table, &query, "GET").await?;
+        // `Range: items=A-B` is the offset and size of the page
+        let mut query = query;
+        let range = media::parse_range(&headers)?;
+        if let Some(range) = range {
+            if query.first.is_some()
+                || query.last.is_some()
+                || query.after.is_some()
+                || query.before.is_some()
+                || query.offset.is_some()
+            {
+                return Err(ProblemDetails::bad_request(
+                    "`Range` cannot be combined with `first`, `last`, `after`, `before` or `offset`",
+                ));
+            }
+            query.offset = Some(range.first);
+            if let Some(last) = range.last {
+                // A page larger than the server allows is cut short: the `Content-Range` of the
+                // answer says which rows came
+                let size = last - range.first + 1;
+                query.first = Some(match ctx.state.limits.page_size.max {
+                    Some(max) => size.min(max),
+                    None => size,
+                });
+            }
+        }
+        let mut listing = list(&ctx, table, &query, "GET").await?;
+        if let Some(range) = range {
+            if listing.rows.is_empty() && range.first > 0 {
+                // Past the end: the answer names the size of the whole
+                let mut counting = Ctx::new(&state, &headers, table.name.clone()).await?;
+                counting.prefs.count_exact = true;
+                let first_row = RestQuery {
+                    first: Some(1),
+                    offset: None,
+                    ..query.clone()
+                };
+                let total = list(&counting, table, &first_row, "GET").await?.total;
+                return Err(ProblemDetails::range_not_satisfiable(
+                    format!("Row {} is past the end of the list", range.first),
+                    total,
+                ));
+            }
+            // Only a requested count is known: `Content-Range` has `*` otherwise
+            listing.total = listing.total.filter(|_| ctx.prefs.count_exact);
+        }
 
         let link = build_link_header(
             &table.name,
@@ -1094,7 +1138,33 @@ pub async fn rest_list_handler(
             listing.page_info.as_ref(),
             &query,
         );
-        Ok(listing_response(listing, ctx.prefs, link, false, media))
+        let (first, count, total) = (
+            query.offset.unwrap_or(0),
+            listing.rows.len(),
+            listing.total,
+        );
+        let mut response = listing_response(listing, ctx.prefs, link, false, media);
+        let headers = response.headers_mut();
+        headers.insert(
+            header::ACCEPT_RANGES,
+            HeaderValue::from_static(media::RANGE_UNIT),
+        );
+        if range.is_some() && count > 0 {
+            let size = total.map_or_else(|| "*".to_string(), |n| n.to_string());
+            if let Ok(value) = HeaderValue::from_str(&format!(
+                "{} {first}-{}/{size}",
+                media::RANGE_UNIT,
+                first + count - 1
+            )) {
+                headers.insert(header::CONTENT_RANGE, value);
+            }
+            // Everything there is, is not partial
+            let whole = first == 0 && total.is_some_and(|n| n as usize == count);
+            if !whole {
+                *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+            }
+        }
+        Ok(response)
     })
     .await
 }

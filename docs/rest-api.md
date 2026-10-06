@@ -36,6 +36,10 @@ A single-row `GET` accepts only `fields` and `include`.
 
 Lists carry RFC 8288 `Link` headers (`rel="next"` / `rel="prev"`) that keep every other parameter. The total is **opt-in**, because it scans every matching row: send `Prefer: count=exact` to get `X-Total-Count` (answered with `Preference-Applied: count=exact`).
 
+### Ranges
+
+A list takes `Range: items=A-B` (`items=0-24`, or `items=25-` to the end): rows `A` to `B`, counting from 0. The answer is `206 Partial Content` with `Content-Range: items A-B/N`, where `N` is `*` unless `Prefer: count=exact` asked for the count (it costs a scan, so it is not done unasked), and a `200` when the range covers a list whose size is known to fit it. A range past the end is `416` with `Content-Range: items */N`, as is one that ends before it starts. A page larger than `limits.page_size.max` is cut at the maximum, and the `Content-Range` says which rows came. Another unit, a suffix (`items=-5`) or several ranges are ignored and the whole list is sent. A range does not combine with `first`, `last`, `after`, `before` or `offset` (`400`). Every list answers with `Accept-Ranges: items`, and `HEAD` carries the same headers. Keyset cursors and `Link` headers stay the way to page through a list that changes.
+
 ### Search
 
 `POST /rest/{resource}/search` takes the filter and every option in one JSON body, for what URLs express badly (`and` / `or` / `not`, relation filters):

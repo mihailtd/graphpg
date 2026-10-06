@@ -15,6 +15,7 @@ Releases are tagged `vX.Y.Z`; each one has generated notes on the
 - **Introspection switch** (`graphql.introspection`, off in prod) and the **SDL over HTTP** (`graphql.sdl`, `/schema.graphql`, and `/subgraph.graphql` with federation).
 - **REST media types**: CSV lists (`Accept: text/csv`, `406` otherwise), CSV bulk creates, `multipart/form-data` writes, the bytes of a `bytea` column at `/rest/<table>/<key>/<column>`, `OPTIONS` with `Allow` / `Accept-Post` / `Accept-Patch`; `HEAD` and `OPTIONS` are in the OpenAPI document.
 - **OpenAPI inference**: `CHECK` constraints as JSON Schema keywords (bounds, `multipleOf`, length, `pattern`, item counts), Single Table Inheritance as `oneOf` with a `discriminator`, and `links` from foreign keys on the single-row `GET`.
+- **REST ranges**: `Range: items=A-B` on lists answers `206` with `Content-Range` (the total with `Prefer: count=exact`) or `416`; every list sends `Accept-Ranges: items`.
 - Docs: a [comparison with PostgREST](docs/comparison.md#compared-with-postgrest), the REST API guide, safety limits and pinned schemas in the configuration guide.
 
 ## 1.0.1 - 2026-10-04

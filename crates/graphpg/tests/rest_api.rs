@@ -786,8 +786,8 @@ async fn openapi_matches_the_behaviour() {
     assert_eq!(
         documented,
         [
-            "Prefer", "after", "before", "fields", "filter", "first", "include", "last", "offset",
-            "order"
+            "Prefer", "Range", "after", "before", "fields", "filter", "first", "include", "last",
+            "offset", "order"
         ]
     );
     let first = params.iter().find(|p| p["name"] == "first").unwrap();
