@@ -84,12 +84,33 @@ input StringFilter {
   notLike: String
   ilike: String
   notIlike: String
+  """POSIX regular expression match (`~`)."""
+  regex: String
+  """Case-insensitive POSIX regular expression match (`~*`)."""
+  iregex: String
+  """`IS DISTINCT FROM`: like `notEqualTo`, but a null is a value."""
+  isDistinctFrom: String
+  """`LIKE` any or all of the patterns."""
+  likeAny: [String!]
+  likeAll: [String!]
+  ilikeAny: [String!]
+  ilikeAll: [String!]
+  """A comparison that holds against any or all of the values (`< ANY (...)`)."""
+  lessThanAny: [String!]
+  lessThanAll: [String!]
+  lessThanOrEqualToAny: [String!]
+  lessThanOrEqualToAll: [String!]
+  greaterThanAny: [String!]
+  greaterThanAll: [String!]
+  greaterThanOrEqualToAny: [String!]
+  greaterThanOrEqualToAll: [String!]
 }
 
 input UUIDFilter {
   isNull: Boolean
   equalTo: UUID
   notEqualTo: UUID
+  isDistinctFrom: UUID
   in: [UUID!]
   notIn: [UUID!]
 }
@@ -98,162 +119,280 @@ input IntFilter {
   isNull: Boolean
   equalTo: Int
   notEqualTo: Int
+  isDistinctFrom: Int
   in: [Int!]
   notIn: [Int!]
   lessThan: Int
   lessThanOrEqualTo: Int
   greaterThan: Int
   greaterThanOrEqualTo: Int
+  lessThanAny: [Int!]
+  lessThanAll: [Int!]
+  lessThanOrEqualToAny: [Int!]
+  lessThanOrEqualToAll: [Int!]
+  greaterThanAny: [Int!]
+  greaterThanAll: [Int!]
+  greaterThanOrEqualToAny: [Int!]
+  greaterThanOrEqualToAll: [Int!]
 }
 
 input BigIntFilter {
   isNull: Boolean
   equalTo: BigInt
   notEqualTo: BigInt
+  isDistinctFrom: BigInt
   in: [BigInt!]
   notIn: [BigInt!]
   lessThan: BigInt
   lessThanOrEqualTo: BigInt
   greaterThan: BigInt
   greaterThanOrEqualTo: BigInt
+  lessThanAny: [BigInt!]
+  lessThanAll: [BigInt!]
+  lessThanOrEqualToAny: [BigInt!]
+  lessThanOrEqualToAll: [BigInt!]
+  greaterThanAny: [BigInt!]
+  greaterThanAll: [BigInt!]
+  greaterThanOrEqualToAny: [BigInt!]
+  greaterThanOrEqualToAll: [BigInt!]
 }
 
 input FloatFilter {
   isNull: Boolean
   equalTo: Float
   notEqualTo: Float
+  isDistinctFrom: Float
   in: [Float!]
   notIn: [Float!]
   lessThan: Float
   lessThanOrEqualTo: Float
   greaterThan: Float
   greaterThanOrEqualTo: Float
+  lessThanAny: [Float!]
+  lessThanAll: [Float!]
+  lessThanOrEqualToAny: [Float!]
+  lessThanOrEqualToAll: [Float!]
+  greaterThanAny: [Float!]
+  greaterThanAll: [Float!]
+  greaterThanOrEqualToAny: [Float!]
+  greaterThanOrEqualToAll: [Float!]
 }
 
 input DecimalFilter {
   isNull: Boolean
   equalTo: Decimal
   notEqualTo: Decimal
+  isDistinctFrom: Decimal
   in: [Decimal!]
   notIn: [Decimal!]
   lessThan: Decimal
   lessThanOrEqualTo: Decimal
   greaterThan: Decimal
   greaterThanOrEqualTo: Decimal
+  lessThanAny: [Decimal!]
+  lessThanAll: [Decimal!]
+  lessThanOrEqualToAny: [Decimal!]
+  lessThanOrEqualToAll: [Decimal!]
+  greaterThanAny: [Decimal!]
+  greaterThanAll: [Decimal!]
+  greaterThanOrEqualToAny: [Decimal!]
+  greaterThanOrEqualToAll: [Decimal!]
 }
 
 input BooleanFilter {
   isNull: Boolean
   equalTo: Boolean
   notEqualTo: Boolean
+  isDistinctFrom: Boolean
 }
 
 input DatetimeFilter {
   isNull: Boolean
   equalTo: Datetime
   notEqualTo: Datetime
+  isDistinctFrom: Datetime
   in: [Datetime!]
   notIn: [Datetime!]
   lessThan: Datetime
   lessThanOrEqualTo: Datetime
   greaterThan: Datetime
   greaterThanOrEqualTo: Datetime
+  lessThanAny: [Datetime!]
+  lessThanAll: [Datetime!]
+  lessThanOrEqualToAny: [Datetime!]
+  lessThanOrEqualToAll: [Datetime!]
+  greaterThanAny: [Datetime!]
+  greaterThanAll: [Datetime!]
+  greaterThanOrEqualToAny: [Datetime!]
+  greaterThanOrEqualToAll: [Datetime!]
 }
 
 input DateFilter {
   isNull: Boolean
   equalTo: Date
   notEqualTo: Date
+  isDistinctFrom: Date
   in: [Date!]
   notIn: [Date!]
   lessThan: Date
   lessThanOrEqualTo: Date
   greaterThan: Date
   greaterThanOrEqualTo: Date
+  lessThanAny: [Date!]
+  lessThanAll: [Date!]
+  lessThanOrEqualToAny: [Date!]
+  lessThanOrEqualToAll: [Date!]
+  greaterThanAny: [Date!]
+  greaterThanAll: [Date!]
+  greaterThanOrEqualToAny: [Date!]
+  greaterThanOrEqualToAll: [Date!]
 }
 
 input TimeFilter {
   isNull: Boolean
   equalTo: Time
   notEqualTo: Time
+  isDistinctFrom: Time
   in: [Time!]
   notIn: [Time!]
   lessThan: Time
   lessThanOrEqualTo: Time
   greaterThan: Time
   greaterThanOrEqualTo: Time
+  lessThanAny: [Time!]
+  lessThanAll: [Time!]
+  lessThanOrEqualToAny: [Time!]
+  lessThanOrEqualToAll: [Time!]
+  greaterThanAny: [Time!]
+  greaterThanAll: [Time!]
+  greaterThanOrEqualToAny: [Time!]
+  greaterThanOrEqualToAll: [Time!]
 }
 
 input LocalDatetimeFilter {
   isNull: Boolean
   equalTo: LocalDatetime
   notEqualTo: LocalDatetime
+  isDistinctFrom: LocalDatetime
   in: [LocalDatetime!]
   notIn: [LocalDatetime!]
   lessThan: LocalDatetime
   lessThanOrEqualTo: LocalDatetime
   greaterThan: LocalDatetime
   greaterThanOrEqualTo: LocalDatetime
+  lessThanAny: [LocalDatetime!]
+  lessThanAll: [LocalDatetime!]
+  lessThanOrEqualToAny: [LocalDatetime!]
+  lessThanOrEqualToAll: [LocalDatetime!]
+  greaterThanAny: [LocalDatetime!]
+  greaterThanAll: [LocalDatetime!]
+  greaterThanOrEqualToAny: [LocalDatetime!]
+  greaterThanOrEqualToAll: [LocalDatetime!]
 }
 
 input TimeTzFilter {
   isNull: Boolean
   equalTo: TimeTz
   notEqualTo: TimeTz
+  isDistinctFrom: TimeTz
   in: [TimeTz!]
   notIn: [TimeTz!]
   lessThan: TimeTz
   lessThanOrEqualTo: TimeTz
   greaterThan: TimeTz
   greaterThanOrEqualTo: TimeTz
+  lessThanAny: [TimeTz!]
+  lessThanAll: [TimeTz!]
+  lessThanOrEqualToAny: [TimeTz!]
+  lessThanOrEqualToAll: [TimeTz!]
+  greaterThanAny: [TimeTz!]
+  greaterThanAll: [TimeTz!]
+  greaterThanOrEqualToAny: [TimeTz!]
+  greaterThanOrEqualToAll: [TimeTz!]
 }
 
 input IntervalFilter {
   isNull: Boolean
   equalTo: Interval
   notEqualTo: Interval
+  isDistinctFrom: Interval
   in: [Interval!]
   notIn: [Interval!]
   lessThan: Interval
   lessThanOrEqualTo: Interval
   greaterThan: Interval
   greaterThanOrEqualTo: Interval
+  lessThanAny: [Interval!]
+  lessThanAll: [Interval!]
+  lessThanOrEqualToAny: [Interval!]
+  lessThanOrEqualToAll: [Interval!]
+  greaterThanAny: [Interval!]
+  greaterThanAll: [Interval!]
+  greaterThanOrEqualToAny: [Interval!]
+  greaterThanOrEqualToAll: [Interval!]
 }
 
 input InternetAddressFilter {
   isNull: Boolean
   equalTo: InternetAddress
   notEqualTo: InternetAddress
+  isDistinctFrom: InternetAddress
   in: [InternetAddress!]
   notIn: [InternetAddress!]
   lessThan: InternetAddress
   lessThanOrEqualTo: InternetAddress
   greaterThan: InternetAddress
   greaterThanOrEqualTo: InternetAddress
+  lessThanAny: [InternetAddress!]
+  lessThanAll: [InternetAddress!]
+  lessThanOrEqualToAny: [InternetAddress!]
+  lessThanOrEqualToAll: [InternetAddress!]
+  greaterThanAny: [InternetAddress!]
+  greaterThanAll: [InternetAddress!]
+  greaterThanOrEqualToAny: [InternetAddress!]
+  greaterThanOrEqualToAll: [InternetAddress!]
 }
 
 input CidrAddressFilter {
   isNull: Boolean
   equalTo: CidrAddress
   notEqualTo: CidrAddress
+  isDistinctFrom: CidrAddress
   in: [CidrAddress!]
   notIn: [CidrAddress!]
   lessThan: CidrAddress
   lessThanOrEqualTo: CidrAddress
   greaterThan: CidrAddress
   greaterThanOrEqualTo: CidrAddress
+  lessThanAny: [CidrAddress!]
+  lessThanAll: [CidrAddress!]
+  lessThanOrEqualToAny: [CidrAddress!]
+  lessThanOrEqualToAll: [CidrAddress!]
+  greaterThanAny: [CidrAddress!]
+  greaterThanAll: [CidrAddress!]
+  greaterThanOrEqualToAny: [CidrAddress!]
+  greaterThanOrEqualToAll: [CidrAddress!]
 }
 
 input MacAddressFilter {
   isNull: Boolean
   equalTo: MacAddress
   notEqualTo: MacAddress
+  isDistinctFrom: MacAddress
   in: [MacAddress!]
   notIn: [MacAddress!]
   lessThan: MacAddress
   lessThanOrEqualTo: MacAddress
   greaterThan: MacAddress
   greaterThanOrEqualTo: MacAddress
+  lessThanAny: [MacAddress!]
+  lessThanAll: [MacAddress!]
+  lessThanOrEqualToAny: [MacAddress!]
+  lessThanOrEqualToAll: [MacAddress!]
+  greaterThanAny: [MacAddress!]
+  greaterThanAll: [MacAddress!]
+  greaterThanOrEqualToAny: [MacAddress!]
+  greaterThanOrEqualToAll: [MacAddress!]
 }
 
 input JSONFilter {

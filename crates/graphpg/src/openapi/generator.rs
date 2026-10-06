@@ -842,7 +842,7 @@ impl OpenApiGenerator {
         let mut params = vec![
             json!({
                 "name": "filter", "in": "query", "style": "deepObject", "explode": true,
-                "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+                "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Lists take comma-separated values (`filter[id][in]=1,2`). Groups: `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65`, and `filter[not][status][eq]=draft`. Unknown columns and operators are a 400. A body filter (`and` / `or` / `not`, any depth) is `POST …/search`.",
                 "schema": schema_ref(&format!("{}Filter", table.name))
             }),
             json!({
@@ -1055,6 +1055,7 @@ impl OpenApiGenerator {
                         | PgType::Timestamp
                         | PgType::TimestampTz
                 );
+            ops.insert("isDistinctFrom".to_string(), ty.clone());
             if ordered {
                 for op in [
                     "greaterThan",
@@ -1069,12 +1070,56 @@ impl OpenApiGenerator {
                     ops.insert(op.to_string(), ty.clone());
                 }
             }
+            let text_like = matches!(
+                col.pg_type,
+                PgType::Text | PgType::Varchar | PgType::Char | PgType::Citext
+            );
+            if ordered || text_like {
+                for op in [
+                    "lessThan",
+                    "lessThanOrEqualTo",
+                    "greaterThan",
+                    "greaterThanOrEqualTo",
+                ] {
+                    for quantifier in ["Any", "All"] {
+                        ops.insert(
+                            format!("{op}{quantifier}"),
+                            json!({ "type": "array", "items": ty.clone() }),
+                        );
+                    }
+                }
+            }
+            if let PgType::Array(_) = &col.pg_type {
+                for op in ["contains", "containedBy", "overlaps"] {
+                    ops.insert(op.to_string(), ty.clone());
+                }
+            }
+            if matches!(col.pg_type, PgType::Json | PgType::Jsonb) {
+                for op in ["contains", "containedBy"] {
+                    ops.insert(op.to_string(), json!({}));
+                }
+                for op in ["hasKey", "matchesPath", "existsPath"] {
+                    ops.insert(op.to_string(), json!({ "type": "string" }));
+                }
+                for op in ["hasAnyKeys", "hasAllKeys"] {
+                    ops.insert(
+                        op.to_string(),
+                        json!({ "type": "array", "items": { "type": "string" } }),
+                    );
+                }
+            }
             if matches!(
                 col.pg_type,
                 PgType::Text | PgType::Varchar | PgType::Char | PgType::Citext
             ) {
-                for op in ["like", "ilike", "startsWith", "endsWith"] {
+                for op in ["like", "ilike", "startsWith", "endsWith", "regex", "iregex"] {
                     ops.insert(op.to_string(), json!({ "type": "string" }));
+                }
+                for op in ["likeAny", "likeAll", "ilikeAny", "ilikeAll"] {
+                    ops.insert(
+                        op.to_string(),
+                        json!({ "type": "array", "items": { "type": "string" } }),
+                    );
                 }
             }
             ops.insert("in".to_string(), json!({ "type": "array", "items": ty }));

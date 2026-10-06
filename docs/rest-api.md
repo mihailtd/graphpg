@@ -24,7 +24,7 @@ The key is the primary key (composite keys: the values separated by commas). The
 
 | Parameter | |
 | :--- | :--- |
-| `filter[column][operator]=value` | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `like`, `ilike`, `startsWith`, `endsWith`, `isNull`, and the other operators of the GraphQL filter. Several filters are combined with `AND`. Through a relation: `filter[author][username][eq]=ada`; to-many relations: `filter[posts][some][title][like]=%25sql%25`. `filter={json}` takes a whole filter object. |
+| `filter[column][operator]=value` | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `like`, `ilike`, `startsWith`, `endsWith`, `isNull`, and the other operators of the GraphQL filter. Several filters are combined with `AND`. Through a relation: `filter[author][username][eq]=ada`; to-many relations: `filter[posts][some][title][like]=%25sql%25`. `filter={json}` takes a whole filter object. More operators are below. |
 | `order=name,-created_at` | `column`, `-column` or `column:desc`; unknown columns are a 400 |
 | `first=n&after=<cursor>` | Keyset pagination forwards. Default page size 100, **at most 1000** |
 | `last=n&before=<cursor>` | Keyset pagination backwards |
@@ -33,6 +33,21 @@ The key is the primary key (composite keys: the values separated by commas). The
 | `include=posts,posts.author` | Embed relations, at most **10** relations and **3 levels** deep |
 
 A single-row `GET` accepts only `fields` and `include`.
+
+#### More filter operators and groups
+
+| | |
+| :--- | :--- |
+| `filter[name][regex]=^A` / `[iregex]` | POSIX regular expressions (`~`, `~*`) on text columns (`match` and `imatch` are accepted too) |
+| `filter[x][isDistinctFrom]=v` | `IS DISTINCT FROM`: like `neq`, but a null is a value (`=null` finds the rows that are not null) |
+| `filter[id][gtAny]=1,2`, `[gtAll]`, `[ltAny]`, `[lteAll]`, ... | A comparison against any or all of a list (`> ANY (...)`, `<= ALL (...)`); `gt`, `gte`, `lt`, `lte`, with `Any` or `All` |
+| `filter[name][likeAny]=a%25,b%25` | `like`, `ilike` against any (`likeAny`) or all (`likeAll`) of a list of patterns |
+| `filter[tags][contains]=a,b`, `[containedBy]`, `[overlaps]` | Array operators; the cells are typed by the element type |
+| `filter[doc][contains]={"a":1}`, `[hasKey]`, `[hasAnyKeys]`, `[hasAllKeys]`, `[matchesPath]`, `[existsPath]` | `json` / `jsonb` operators (`contains` takes JSON, `matchesPath` and `existsPath` a JSON path) |
+| `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65` | A group: `or` (or `and`) with its members numbered. Groups nest (`filter[or][1][and][0]…`) and sit next to plain conditions, which must all hold as well |
+| `filter[not][status][eq]=draft` | The condition does not hold |
+
+Operators that need a typed value (`gtAny` on an `int` column) report a cell that does not fit as a `400` naming the parameter. Operators of a column's type only: `regex` on a number is a `400`.
 
 Lists carry RFC 8288 `Link` headers (`rel="next"` / `rel="prev"`) that keep every other parameter. The total is **opt-in**, because it scans every matching row: send `Prefer: count=exact` to get `X-Total-Count` (answered with `Preference-Applied: count=exact`).
 

@@ -51,7 +51,7 @@ expression: openapi
             "in": "query",
             "style": "deepObject",
             "explode": true,
-            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Lists take comma-separated values (`filter[id][in]=1,2`). Groups: `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65`, and `filter[not][status][eq]=draft`. Unknown columns and operators are a 400. A body filter (`and` / `or` / `not`, any depth) is `POST …/search`.",
             "schema": {
               "$ref": "#/components/schemas/forumsFilter"
             }
@@ -518,7 +518,7 @@ expression: openapi
             "in": "query",
             "style": "deepObject",
             "explode": true,
-            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Lists take comma-separated values (`filter[id][in]=1,2`). Groups: `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65`, and `filter[not][status][eq]=draft`. Unknown columns and operators are a 400. A body filter (`and` / `or` / `not`, any depth) is `POST …/search`.",
             "schema": {
               "$ref": "#/components/schemas/forumsFilter"
             }
@@ -2036,7 +2036,7 @@ expression: openapi
             "in": "query",
             "style": "deepObject",
             "explode": true,
-            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Lists take comma-separated values (`filter[id][in]=1,2`). Groups: `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65`, and `filter[not][status][eq]=draft`. Unknown columns and operators are a 400. A body filter (`and` / `or` / `not`, any depth) is `POST …/search`.",
             "schema": {
               "$ref": "#/components/schemas/messagesFilter"
             }
@@ -2526,7 +2526,7 @@ expression: openapi
             "in": "query",
             "style": "deepObject",
             "explode": true,
-            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Lists take comma-separated values (`filter[id][in]=1,2`). Groups: `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65`, and `filter[not][status][eq]=draft`. Unknown columns and operators are a 400. A body filter (`and` / `or` / `not`, any depth) is `POST …/search`.",
             "schema": {
               "$ref": "#/components/schemas/messagesFilter"
             }
@@ -4102,7 +4102,7 @@ expression: openapi
             "in": "query",
             "style": "deepObject",
             "explode": true,
-            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Lists take comma-separated values (`filter[id][in]=1,2`). Groups: `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65`, and `filter[not][status][eq]=draft`. Unknown columns and operators are a 400. A body filter (`and` / `or` / `not`, any depth) is `POST …/search`.",
             "schema": {
               "$ref": "#/components/schemas/usersFilter"
             }
@@ -4574,7 +4574,7 @@ expression: openapi
             "in": "query",
             "style": "deepObject",
             "explode": true,
-            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Lists take comma-separated values (`filter[id][in]=1,2`). Groups: `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65`, and `filter[not][status][eq]=draft`. Unknown columns and operators are a 400. A body filter (`and` / `or` / `not`, any depth) is `POST …/search`.",
             "schema": {
               "$ref": "#/components/schemas/usersFilter"
             }
@@ -6103,7 +6103,7 @@ expression: openapi
             "in": "query",
             "style": "deepObject",
             "explode": true,
-            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Lists take comma-separated values (`filter[id][in]=1,2`). Groups: `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65`, and `filter[not][status][eq]=draft`. Unknown columns and operators are a 400. A body filter (`and` / `or` / `not`, any depth) is `POST …/search`.",
             "schema": {
               "$ref": "#/components/schemas/messagesFilter"
             }
@@ -7203,7 +7203,7 @@ expression: openapi
             "in": "query",
             "style": "deepObject",
             "explode": true,
-            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Lists take comma-separated values (`filter[id][in]=1,2`). Groups: `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65`, and `filter[not][status][eq]=draft`. Unknown columns and operators are a 400. A body filter (`and` / `or` / `not`, any depth) is `POST …/search`.",
             "schema": {
               "$ref": "#/components/schemas/usersFilter"
             }
@@ -7893,9 +7893,37 @@ expression: openapi
                 "type": "string",
                 "format": "date-time"
               },
+              "greaterThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "greaterThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
               "greaterThanOrEqualTo": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "greaterThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "greaterThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
               "gt": {
                 "type": "string",
@@ -7912,6 +7940,10 @@ expression: openapi
                   "format": "date-time"
                 }
               },
+              "isDistinctFrom": {
+                "type": "string",
+                "format": "date-time"
+              },
               "isNull": {
                 "type": "boolean"
               },
@@ -7919,9 +7951,37 @@ expression: openapi
                 "type": "string",
                 "format": "date-time"
               },
+              "lessThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "lessThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
               "lessThanOrEqualTo": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "lessThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "lessThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
               "lt": {
                 "type": "string",
@@ -7959,6 +8019,10 @@ expression: openapi
                   "type": "string",
                   "format": "uuid"
                 }
+              },
+              "isDistinctFrom": {
+                "type": "string",
+                "format": "uuid"
               },
               "isNull": {
                 "type": "boolean"
@@ -8015,8 +8079,44 @@ expression: openapi
               "equalTo": {
                 "type": "string"
               },
+              "greaterThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "ilike": {
                 "type": "string"
+              },
+              "ilikeAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "ilikeAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "in": {
                 "type": "array",
@@ -8024,16 +8124,61 @@ expression: openapi
                   "type": "string"
                 }
               },
+              "iregex": {
+                "type": "string"
+              },
+              "isDistinctFrom": {
+                "type": "string"
+              },
               "isNull": {
                 "type": "boolean"
               },
+              "lessThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "like": {
                 "type": "string"
+              },
+              "likeAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "likeAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "neq": {
                 "type": "string"
               },
               "notEqualTo": {
+                "type": "string"
+              },
+              "regex": {
                 "type": "string"
               },
               "startsWith": {
@@ -8408,9 +8553,37 @@ expression: openapi
                 "type": "string",
                 "format": "date-time"
               },
+              "greaterThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "greaterThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
               "greaterThanOrEqualTo": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "greaterThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "greaterThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
               "gt": {
                 "type": "string",
@@ -8427,6 +8600,10 @@ expression: openapi
                   "format": "date-time"
                 }
               },
+              "isDistinctFrom": {
+                "type": "string",
+                "format": "date-time"
+              },
               "isNull": {
                 "type": "boolean"
               },
@@ -8434,9 +8611,37 @@ expression: openapi
                 "type": "string",
                 "format": "date-time"
               },
+              "lessThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "lessThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
               "lessThanOrEqualTo": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "lessThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "lessThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
               "lt": {
                 "type": "string",
@@ -8478,6 +8683,10 @@ expression: openapi
                   "format": "uuid"
                 }
               },
+              "isDistinctFrom": {
+                "type": "string",
+                "format": "uuid"
+              },
               "isNull": {
                 "type": "boolean"
               },
@@ -8504,8 +8713,44 @@ expression: openapi
               "equalTo": {
                 "type": "string"
               },
+              "greaterThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "ilike": {
                 "type": "string"
+              },
+              "ilikeAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "ilikeAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "in": {
                 "type": "array",
@@ -8513,16 +8758,61 @@ expression: openapi
                   "type": "string"
                 }
               },
+              "iregex": {
+                "type": "string"
+              },
+              "isDistinctFrom": {
+                "type": "string"
+              },
               "isNull": {
                 "type": "boolean"
               },
+              "lessThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "like": {
                 "type": "string"
+              },
+              "likeAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "likeAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "neq": {
                 "type": "string"
               },
               "notEqualTo": {
+                "type": "string"
+              },
+              "regex": {
                 "type": "string"
               },
               "startsWith": {
@@ -8546,9 +8836,37 @@ expression: openapi
                 "type": "string",
                 "format": "date-time"
               },
+              "greaterThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "greaterThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
               "greaterThanOrEqualTo": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "greaterThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "greaterThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
               "gt": {
                 "type": "string",
@@ -8565,6 +8883,10 @@ expression: openapi
                   "format": "date-time"
                 }
               },
+              "isDistinctFrom": {
+                "type": "string",
+                "format": "date-time"
+              },
               "isNull": {
                 "type": "boolean"
               },
@@ -8572,9 +8894,37 @@ expression: openapi
                 "type": "string",
                 "format": "date-time"
               },
+              "lessThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "lessThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
               "lessThanOrEqualTo": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "lessThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "lessThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
               "lt": {
                 "type": "string",
@@ -8610,6 +8960,9 @@ expression: openapi
                   "type": "boolean"
                 }
               },
+              "isDistinctFrom": {
+                "type": "boolean"
+              },
               "isNull": {
                 "type": "boolean"
               },
@@ -8643,6 +8996,10 @@ expression: openapi
                   "format": "uuid"
                 }
               },
+              "isDistinctFrom": {
+                "type": "string",
+                "format": "uuid"
+              },
               "isNull": {
                 "type": "boolean"
               },
@@ -8674,6 +9031,10 @@ expression: openapi
                   "type": "string",
                   "format": "uuid"
                 }
+              },
+              "isDistinctFrom": {
+                "type": "string",
+                "format": "uuid"
               },
               "isNull": {
                 "type": "boolean"
@@ -9070,9 +9431,37 @@ expression: openapi
                 "type": "string",
                 "format": "date-time"
               },
+              "greaterThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "greaterThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
               "greaterThanOrEqualTo": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "greaterThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "greaterThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
               "gt": {
                 "type": "string",
@@ -9089,6 +9478,10 @@ expression: openapi
                   "format": "date-time"
                 }
               },
+              "isDistinctFrom": {
+                "type": "string",
+                "format": "date-time"
+              },
               "isNull": {
                 "type": "boolean"
               },
@@ -9096,9 +9489,37 @@ expression: openapi
                 "type": "string",
                 "format": "date-time"
               },
+              "lessThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "lessThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
               "lessThanOrEqualTo": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "lessThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "lessThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
               "lt": {
                 "type": "string",
@@ -9131,8 +9552,44 @@ expression: openapi
               "equalTo": {
                 "type": "string"
               },
+              "greaterThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "ilike": {
                 "type": "string"
+              },
+              "ilikeAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "ilikeAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "in": {
                 "type": "array",
@@ -9140,16 +9597,61 @@ expression: openapi
                   "type": "string"
                 }
               },
+              "iregex": {
+                "type": "string"
+              },
+              "isDistinctFrom": {
+                "type": "string"
+              },
               "isNull": {
                 "type": "boolean"
               },
+              "lessThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "like": {
                 "type": "string"
+              },
+              "likeAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "likeAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "neq": {
                 "type": "string"
               },
               "notEqualTo": {
+                "type": "string"
+              },
+              "regex": {
                 "type": "string"
               },
               "startsWith": {
@@ -9175,6 +9677,10 @@ expression: openapi
                   "type": "string",
                   "format": "uuid"
                 }
+              },
+              "isDistinctFrom": {
+                "type": "string",
+                "format": "uuid"
               },
               "isNull": {
                 "type": "boolean"
@@ -9240,8 +9746,44 @@ expression: openapi
               "equalTo": {
                 "type": "string"
               },
+              "greaterThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "greaterThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "ilike": {
                 "type": "string"
+              },
+              "ilikeAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "ilikeAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "in": {
                 "type": "array",
@@ -9249,16 +9791,61 @@ expression: openapi
                   "type": "string"
                 }
               },
+              "iregex": {
+                "type": "string"
+              },
+              "isDistinctFrom": {
+                "type": "string"
+              },
               "isNull": {
                 "type": "boolean"
               },
+              "lessThanAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanOrEqualToAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lessThanOrEqualToAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "like": {
                 "type": "string"
+              },
+              "likeAll": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "likeAny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "neq": {
                 "type": "string"
               },
               "notEqualTo": {
+                "type": "string"
+              },
+              "regex": {
                 "type": "string"
               },
               "startsWith": {

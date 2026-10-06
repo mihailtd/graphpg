@@ -73,9 +73,9 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 
 | Feature | graphpg REST | PostgREST |
 | :--- | :--- | :--- |
-| Filter operators | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `like`, `ilike`, `startsWith`, `endsWith`, `isNull`, `contains`, and the rest of the GraphQL filter inputs (range, `ltree`, PostGIS, JSON key operators) through a JSON filter | `eq`, `gt`, `gte`, `lt`, `lte`, `neq`, `like`, `ilike`, `match`, `imatch`, `in`, `is`, `isdistinct`, `cs`, `cd`, `ov`, `sl`, `sr`, `nxr`, `nxl`, `adj`, `fts`, `plfts`, `phfts`, `wfts`; `any` / `all` modifiers |
-| POSIX regular expressions | No | Yes (`match`, `imatch`) |
-| `and` / `or` / `not` | In the JSON filter (`?filter={…}`, `POST …/search`); `GET` brackets combine with AND | In the query string (`or=(a.eq.1,b.gt.2)`, `not.`) |
+| Filter operators | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `like`, `ilike`, `startsWith`, `endsWith`, `regex`, `iregex`, `isNull`, `isDistinctFrom`, `…Any` / `…All` of a list, array (`contains`, `containedBy`, `overlaps`) and JSON key and path operators, and the rest of the GraphQL filter inputs (range, `ltree`, PostGIS) through a JSON filter | `eq`, `gt`, `gte`, `lt`, `lte`, `neq`, `like`, `ilike`, `match`, `imatch`, `in`, `is`, `isdistinct`, `cs`, `cd`, `ov`, `sl`, `sr`, `nxr`, `nxl`, `adj`, `fts`, `plfts`, `phfts`, `wfts`; `any` / `all` modifiers |
+| POSIX regular expressions | Yes (`regex`, `iregex`; `match` and `imatch` too) | Yes (`match`, `imatch`) |
+| `and` / `or` / `not` | In the query string (`filter[or][0][a][eq]=1&filter[or][1][b][gt]=2`, `filter[not]…`, nested), and in the JSON filter (`?filter={…}`, `POST …/search`) | In the query string (`or=(a.eq.1,b.gt.2)`, `not.`) |
 | Filtering through relations | `filter[author][name][eq]=…`, `some` / `every` / `none` / `count` on to-many | Embedded filters with `!inner`; `is.null` anti-joins |
 | Complex filters in a body | `POST /rest/<table>/search` with the same JSON filter GraphQL takes | No (the query string only; or an RPC function) |
 | Ordering | `order=name,-created_at`; also by related columns | `order=name.desc.nullslast`; also by embedded to-one columns |
@@ -219,7 +219,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 - You need **update or delete many rows by a filter**.
 - You need **GeoJSON, XML, plain-text or custom media types** (domains, aggregates) from the REST API itself.
 - You rely on **embedded filters, ordering and limits**, spread, or `!inner` joins in one URL.
-- You need **POSIX regular expressions**, JSON arrow operators in the URL, or `NULLS FIRST` / `LAST`.
+- You need JSON arrow operators in the URL (`->`, `->>`), or `NULLS FIRST` / `LAST`.
 - You want the token to **choose the PostgreSQL role**, or `Accept-Profile` to switch **schemas per request**.
 - You need **config and schema reload without a restart**, Prometheus metrics, or a custom status from SQL.
 - You value a **decade of production use**, a large ecosystem and client libraries (`postgrest-js`, ...).
@@ -236,7 +236,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### Known gaps
 
-What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, GeoJSON, XML and custom media types, `planned` / `estimated` counts, schema reload in production without a restart, a Prometheus metrics endpoint, security headers, regular-expression filters, and `Accept-Profile`-style schema selection.
+What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, GeoJSON, XML and custom media types, `planned` / `estimated` counts, schema reload in production without a restart, a Prometheus metrics endpoint, and `Accept-Profile`-style schema selection.
 
 ## Where graphpg is a fit
 
