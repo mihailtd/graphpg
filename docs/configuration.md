@@ -49,6 +49,7 @@ OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOIN
 | `/rest` | `GET` | REST API root |
 | `/graphiql` | `GET` | GraphiQL IDE, when `graphql.ui` is on (404 otherwise) |
 | `/scalar` | `GET` | Scalar API reference, when `openapi.ui` is on (404 otherwise); it shows the OpenAPI document at `/openapi.json` |
+| `/schema.graphql` | `GET` | The GraphQL SDL, when `graphql.sdl` is on (404 otherwise); `/subgraph.graphql` is the Federation subgraph SDL, with `graphql.federation.enabled`. Paths: `graphql.sdl_path`, `graphql.subgraph_path` |
 | `/export` | `POST` | A connection query streamed as NDJSON or CSV (404 when `graphql.enabled: false`) |
 | `/import/{Type}` | `POST` | NDJSON rows of `Create<Type>Input`, inserted all-or-nothing with `COPY` (404 when `graphql.enabled: false`) |
 | `/health` | `GET` | Liveness |
@@ -101,6 +102,9 @@ server:
     credentials: false          # needs explicit origins, not '*'
     max_age: 600                # seconds a browser caches the preflight
 
+errors:
+  detail: masked                # masked (default in prod) | full (default in dev)
+
 headers:
   preset: strict                # strict (default in prod) | relaxed (default in dev) | off
   set:                          # overrides on top of the preset; an empty value removes a header
@@ -132,6 +136,10 @@ rbac: { enabled: false }        # prune the APIs to what a role may access
 graphql:
   enabled: true                 # serve /graphql, /export, /import/...
   ui: false                     # the GraphiQL IDE: on by default in dev mode only
+  introspection: false          # answer __schema / __type: on by default in dev mode only
+  sdl: false                    # serve the SDL at sdl_path: on by default in dev mode only
+  sdl_path: /schema.graphql
+  subgraph_path: /subgraph.graphql   # the Federation subgraph SDL, with federation on
   federation: { enabled: false }
 openapi:
   enabled: true                 # the REST API at /rest and its OpenAPI description (alias: rest)
@@ -211,6 +219,14 @@ extensions:
 
 ---
 
+### Error detail
+
+Typed constraint errors (`EMAIL_TAKEN`), invalid input, limit errors and `PERMISSION_DENIED` (a missing privilege or a Row-Level Security policy refusing a row) reach the client in every mode: it can act on them. Anything else, a database error nobody can fix from the request, follows `errors.detail`. `masked` (the default in `prod`) answers `An unexpected database error occurred` with the code `INTERNAL_SERVER_ERROR` and a request ID (`extensions.requestId` in GraphQL, `requestId` in the REST problem document) and logs the real error under that ID. `full` (the default in `dev`) adds the database's message. GraphQL and REST share the setting.
+
+### Introspection and the SDL
+
+With `graphql.introspection: false` (the default in `prod`) a query that reads `__schema` or `__type` at the root is refused with `INTROSPECTION_DISABLED`; `__typename` still works. GraphiQL needs introspection: with `graphql.ui` on in prod, turn it on too. `graphql.sdl` serves the schema as text at `graphql.sdl_path` without authentication, so keep it off where the schema is not public.
+
 ### Security headers
 
 `headers.preset` picks what every response carries. `relaxed` sends `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. `strict` adds `Strict-Transport-Security`, `X-Frame-Options: DENY`, a `Content-Security-Policy` that allows nothing (`default-src 'none'; frame-ancestors 'none'`) and `Cross-Origin-Opener-Policy: same-origin`. The CSP and `X-Frame-Options` are left off the GraphiQL and Scalar pages, which need scripts and styles. `headers.set` overrides single headers after the preset.
@@ -284,13 +300,13 @@ Limits are global, not per entity: one number to reason about, and the same for 
 
 - `watch.enabled` defaults to `true`: graphpg installs an event trigger on `ddl_command_end` and `sql_drop`, listens for asynchronous notifications (`LISTEN graphpg_watch`), and re-introspects live catalogs in ~1.5s without interrupting in-flight requests.
 - When `watch.export` is `true` (default), changes automatically write the files defined in `export:` (`export.graphql`, `export.openapi`, `export.subgraph`, `export.config_schema`).
-- `graphql.ui` (GraphiQL) and `openapi.ui` (Scalar) default to `true`.
+- `graphql.ui` (GraphiQL), `openapi.ui` (Scalar), `graphql.introspection`, `graphql.sdl` and `errors.detail: full` default to on, and `headers.preset` to `relaxed`.
 - The watcher hot-reload always uses the selected mode overlay.
 - Debug outputs (`debug.sql` and `debug.explain`) may be enabled under `dev:`.
 
 ### Production mode (`--mode prod`)
 
-- `watch.enabled`, `graphql.ui`, and `openapi.ui` default to `false`. If any of these dev features are explicitly enabled, a startup warning is logged.
+- `watch.enabled`, `graphql.ui`, `openapi.ui`, `graphql.introspection` and `graphql.sdl` default to `false`, `errors.detail` to `masked` and `headers.preset` to `strict`. If any of these dev features are explicitly enabled, a startup warning is logged.
 - `debug.sql` and `debug.explain` are **dev-only**: validation rejects them if enabled in the shared section or `prod:` block (`debug.sql is only allowed in the dev: block`).
 
 ---

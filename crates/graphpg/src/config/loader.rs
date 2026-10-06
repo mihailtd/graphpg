@@ -47,7 +47,7 @@ impl Mode {
     fn defaults(self) -> &'static str {
         match self {
             Mode::Dev => {
-                "server:\n  cors:\n    origins: ['*']\nheaders:\n  preset: relaxed\ngraphql:\n  ui: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\n"
+                "server:\n  cors:\n    origins: ['*']\nheaders:\n  preset: relaxed\nerrors:\n  detail: full\ngraphql:\n  ui: true\n  introspection: true\n  sdl: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\n"
             }
             Mode::Prod => "{}",
         }
@@ -466,6 +466,31 @@ prod:
         assert_eq!((dev.database.pool_size, prod.database.pool_size), (2, 20));
         // Deep merge: a block's setting does not drop its siblings
         assert!(dev.graphql.federation.enabled && prod.graphql.federation.enabled);
+    }
+
+    #[test]
+    fn graphql_introspection_and_sdl_are_dev_defaults() {
+        let dev = parse("", Mode::Dev).unwrap();
+        let prod = parse("", Mode::Prod).unwrap();
+        assert!(dev.graphql.introspection && dev.graphql.sdl);
+        assert!(!prod.graphql.introspection && !prod.graphql.sdl);
+        assert_eq!(prod.graphql.sdl_path, "/schema.graphql");
+        assert_eq!(prod.graphql.subgraph_path, "/subgraph.graphql");
+    }
+
+    #[test]
+    fn error_detail_follows_the_mode() {
+        use super::super::models::ErrorDetail;
+        assert_eq!(
+            parse("", Mode::Prod).unwrap().errors.detail,
+            ErrorDetail::Masked
+        );
+        assert_eq!(
+            parse("", Mode::Dev).unwrap().errors.detail,
+            ErrorDetail::Full
+        );
+        let cfg = parse("errors: { detail: full }", Mode::Prod).unwrap();
+        assert_eq!(cfg.errors.detail, ErrorDetail::Full);
     }
 
     #[test]

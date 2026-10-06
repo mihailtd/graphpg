@@ -52,13 +52,16 @@ fn server_state_with_debug(
     pool_size: usize,
     debug: DebugOptions,
 ) -> Arc<ServerState> {
-    Arc::new(ServerState::new(
-        create_pool(common::db_url(), pool_size).expect("Failed to create pool"),
-        schema,
-        catalog,
-        "app_public".to_string(),
-        debug,
-    ))
+    Arc::new(
+        ServerState::new(
+            create_pool(common::db_url(), pool_size).expect("Failed to create pool"),
+            schema,
+            catalog,
+            "app_public".to_string(),
+            debug,
+        )
+        .with_introspection(true),
+    )
 }
 
 /// POSTs a GraphQL request body to the router and returns (status, json).
@@ -366,6 +369,39 @@ where
         out.push(h.await.expect("request task panicked"));
     }
     out
+}
+
+#[tokio::test]
+async fn test_introspection_can_be_switched_off() {
+    let (_client, schema, catalog) = setup_test().await;
+    let state = ServerState::new(
+        create_pool(common::db_url(), 2).expect("Failed to create pool"),
+        schema,
+        catalog,
+        "app_public".to_string(),
+        DebugOptions::default(),
+    );
+    assert!(!state.introspection, "introspection is off unless enabled");
+    let app = create_router(Arc::new(state));
+
+    for query in [
+        "{ __schema { queryType { name } } }",
+        "{ forumType: __type(name: \"Forum\") { name } }",
+        "{ ...Meta } fragment Meta on Query { __schema { queryType { name } } }",
+    ] {
+        let (status, json) = post_graphql(&app, serde_json::json!({ "query": query })).await;
+        assert_eq!(status, StatusCode::OK, "{json}");
+        assert_eq!(
+            json["errors"][0]["extensions"]["code"], "INTROSPECTION_DISABLED",
+            "{query}: {json}"
+        );
+        assert!(json.get("data").is_none(), "{json}");
+    }
+
+    // `__typename` is not introspection: clients add it to every query
+    let (status, json) = post_graphql(&app, serde_json::json!({ "query": "{ __typename }" })).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["data"]["__typename"], "Query");
 }
 
 #[tokio::test]

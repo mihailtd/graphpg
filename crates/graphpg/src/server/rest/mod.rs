@@ -437,7 +437,7 @@ impl Ctx {
             catalog: state.current_catalog(),
             auth,
             prefs: parse_prefer_header(headers),
-            is_prod: state.is_production(),
+            is_prod: state.mask_errors,
             state: state.clone(),
             resource,
         })

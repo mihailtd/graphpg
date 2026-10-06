@@ -459,10 +459,9 @@ async fn test_rls_mutation_with_check_enforcement() {
     let message = res["errors"][0]["message"]
         .as_str()
         .unwrap_or_else(|| panic!("expected an error: {res}"));
-    assert!(
-        message.contains("row-level security") || message.contains("violates"),
-        "{message}"
-    );
+    // The default (masked) detail names no policy: it says the row was refused
+    assert_eq!(res["errors"][0]["extensions"]["code"], "PERMISSION_DENIED");
+    assert!(!message.contains("row-level security"), "{message}");
 }
 
 #[tokio::test]

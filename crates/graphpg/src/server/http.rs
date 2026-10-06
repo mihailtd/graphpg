@@ -82,6 +82,7 @@ pub(crate) fn planner_errors(err: &PlannerError) -> Vec<GraphQLError> {
 pub(crate) fn execution_error(
     err: &ExecutionError,
     catalog: &DatabaseCatalog,
+    mask_errors: bool,
 ) -> (StatusCode, GraphQLError) {
     let path = match err {
         ExecutionError::Mutation { field, .. } => {
@@ -115,6 +116,14 @@ pub(crate) fn execution_error(
                 },
             )
         }
+        None if mask_errors && err.is_permission_denied() => (
+            StatusCode::OK,
+            GraphQLError {
+                message: "Permission denied".to_string(),
+                path,
+                extensions: Some(serde_json::json!({ "code": "PERMISSION_DENIED" })),
+            },
+        ),
         None if err.is_timeout() => (
             StatusCode::SERVICE_UNAVAILABLE,
             GraphQLError {
@@ -131,6 +140,22 @@ pub(crate) fn execution_error(
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR")
             };
+            if mask_errors && !rejected {
+                // The client cannot act on a database error: it gets an ID to quote, the
+                // operator gets the error under that ID
+                let request_id = uuid::Uuid::new_v4().to_string();
+                tracing::error!(%request_id, code, error = %err, "GraphQL request failed");
+                return (
+                    status,
+                    GraphQLError {
+                        message: "An unexpected database error occurred".to_string(),
+                        path,
+                        extensions: Some(
+                            serde_json::json!({ "code": code, "requestId": request_id }),
+                        ),
+                    },
+                );
+            }
             (
                 status,
                 GraphQLError {
@@ -206,6 +231,10 @@ pub struct ServerState {
     pub config: Option<crate::config::Config>,
     /// Runtime mode (dev or prod).
     pub mode: crate::config::Mode,
+    /// Answer `__schema` and `__type` (`graphql.introspection`).
+    pub introspection: bool,
+    /// Hide the database's own message of unexpected failures (`errors.detail: masked`).
+    pub mask_errors: bool,
     /// Safety limits (page size, depth, cost, bulk rows, body size, groups): enforced on every
     /// plan, whichever API made it.
     pub limits: crate::config::models::LimitsConfig,
@@ -257,6 +286,8 @@ impl ServerState {
             openapi_document: std::sync::RwLock::new(Arc::new(openapi_doc)),
             config: None,
             mode: crate::config::Mode::Prod,
+            introspection: false,
+            mask_errors: true,
             limits: crate::config::models::LimitsConfig::default(),
         }
     }
@@ -270,6 +301,19 @@ impl ServerState {
     /// Sets the runtime mode.
     pub fn with_mode(mut self, mode: crate::config::Mode) -> Self {
         self.mode = mode;
+        self.mask_errors = mode == crate::config::Mode::Prod;
+        self
+    }
+
+    /// Allows or refuses introspection queries (off by default, like `graphql.introspection`).
+    pub fn with_introspection(mut self, on: bool) -> Self {
+        self.introspection = on;
+        self
+    }
+
+    /// Sets how much of an unexpected failure clients see, overriding the mode's default.
+    pub fn with_error_detail(mut self, detail: crate::config::models::ErrorDetail) -> Self {
+        self.mask_errors = detail == crate::config::models::ErrorDetail::Masked;
         self
     }
 
@@ -550,6 +594,29 @@ pub(crate) async fn rest_handler() -> impl IntoResponse {
     (StatusCode::OK, "hello world")
 }
 
+fn sdl_response(sdl: String) -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        sdl,
+    )
+        .into_response()
+}
+
+/// `graphql.sdl_path`: the GraphQL SDL of the catalog the server is running on.
+pub(crate) async fn graphql_sdl_handler(State(state): State<Arc<ServerState>>) -> Response {
+    sdl_response(crate::schema::SchemaBuilder::generate_sdl(
+        &state.current_catalog(),
+    ))
+}
+
+/// `graphql.subgraph_path`: the Apollo Federation subgraph SDL.
+pub(crate) async fn graphql_subgraph_handler(State(state): State<Arc<ServerState>>) -> Response {
+    sdl_response(
+        crate::schema::SchemaBuilder::generate_federation_subgraph_sdl(&state.current_catalog()),
+    )
+}
+
 pub(crate) async fn openapi_spec_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -636,6 +703,26 @@ pub(crate) fn response_key(field: &apollo_compiler::executable::Field) -> &str {
 }
 
 /// Resolves `__schema` / `__type` / root `__typename` from the GraphQL schema.
+/// Whether the selection reads `__schema` or `__type` at the root, in a fragment or not.
+/// (`__typename` is not introspection: clients add it to every query.)
+fn asks_introspection(
+    doc: &apollo_compiler::ExecutableDocument,
+    selections: &apollo_compiler::executable::SelectionSet,
+) -> bool {
+    use apollo_compiler::executable::Selection;
+    selections
+        .selections
+        .iter()
+        .any(|selection| match selection {
+            Selection::Field(f) => matches!(f.name.as_str(), "__schema" | "__type"),
+            Selection::InlineFragment(f) => asks_introspection(doc, &f.selection_set),
+            Selection::FragmentSpread(f) => doc
+                .fragments
+                .get(&f.fragment_name)
+                .is_some_and(|fragment| asks_introspection(doc, &fragment.selection_set)),
+        })
+}
+
 pub(crate) fn execute_introspection(
     schema: &Valid<Schema>,
     doc: &Valid<ExecutableDocument>,
@@ -718,6 +805,18 @@ pub(crate) async fn graphql_handler(
         .as_ref()
         .map(|n| n.to_string())
         .unwrap_or_else(|| "anonymous".to_string());
+
+    if !state.introspection && asks_introspection(&doc, &operation.selection_set) {
+        return errors_response(
+            StatusCode::OK,
+            vec![GraphQLError {
+                message: "GraphQL introspection is disabled".to_string(),
+                path: None,
+                extensions: Some(serde_json::json!({ "code": "INTROSPECTION_DISABLED" })),
+            }],
+            None,
+        );
+    }
 
     // Incremental Delivery (@defer and @stream) over HTTP multipart streaming
     if super::incremental::has_active_defer_or_stream(&doc, operation, req.variables.as_ref()) {
@@ -902,7 +1001,7 @@ pub(crate) async fn graphql_handler(
             Ok(serde_json::Value::Object(map)) => sql_data = map,
             Ok(_) => {}
             Err(err) => {
-                let (status, error) = execution_error(&err, &catalog);
+                let (status, error) = execution_error(&err, &catalog, state.mask_errors);
                 return errors_response(status, vec![error], extensions_value(&extensions));
             }
         }
