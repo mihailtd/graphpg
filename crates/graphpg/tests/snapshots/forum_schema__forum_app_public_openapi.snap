@@ -189,6 +189,11 @@ expression: openapi
                     "$ref": "#/components/schemas/forums"
                   }
                 }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -214,6 +219,16 @@ expression: openapi
           },
           "403": {
             "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -269,6 +284,38 @@ expression: openapi
                       "$ref": "#/components/schemas/forumsCreateInput"
                     }
                   }
+                ]
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "description": "Input object for creating a `forums` row",
+                "properties": {
+                  "archivedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "default": "uuid_generate_v1mc()"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "name"
                 ]
               }
             }
@@ -367,8 +414,239 @@ expression: openapi
               }
             }
           },
+          "415": {
+            "description": "Unsupported Media Type: send JSON, CSV rows or `multipart/form-data`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "List forums (headers only)",
+        "description": "Retrieve rows from `forums`",
+        "operationId": "head_forums",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "schema": {
+              "$ref": "#/components/schemas/forumsFilter"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|name|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first",
+            "in": "query",
+            "description": "Page size for forward keyset pagination (default 100, at most 1000)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Cursor to continue after (from the `next` link)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "description": "Page size for backward keyset pagination (default 100, at most 1000)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Cursor to continue before (from the `prev` link)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Rows to skip (offset pagination)",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns to return (default: all)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "count=exact"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of forums rows",
+            "headers": {
+              "Link": {
+                "description": "RFC 8288 `next` / `prev` links carrying the cursors",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Total-Count": {
+                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource"
+          },
+          "406": {
+            "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "options": {
+        "summary": "Methods and media types",
+        "operationId": "options_forums",
+        "responses": {
+          "204": {
+            "description": "The methods allowed",
+            "headers": {
+              "Allow": {
+                "description": "The methods this path answers to",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Post": {
+                "description": "The request media types of a create",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -454,6 +732,11 @@ expression: openapi
                     "$ref": "#/components/schemas/forums"
                   }
                 }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -479,6 +762,16 @@ expression: openapi
           },
           "403": {
             "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -662,6 +955,33 @@ expression: openapi
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/forumsUpdateInput"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "description": "Input object for creating a `forums` row",
+                "properties": {
+                  "archivedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "default": "uuid_generate_v1mc()"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ]
               }
             }
           }
@@ -1069,6 +1389,146 @@ expression: openapi
           },
           "422": {
             "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "Get forums by key (headers only)",
+        "description": "Retrieve a single row from `forums` by primary key",
+        "operationId": "head_forums_by_key",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Primary key of `forums` (the Relay global ID of the row is accepted too)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns to return (default: all)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requested forums row",
+            "headers": {
+              "ETag": {
+                "description": "Row version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "options": {
+        "summary": "Methods and media types",
+        "operationId": "options_forums_by_key",
+        "responses": {
+          "204": {
+            "description": "The methods allowed",
+            "headers": {
+              "Allow": {
+                "description": "The methods this path answers to",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Patch": {
+                "description": "The request media types of an update",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1603,6 +2063,11 @@ expression: openapi
                     "$ref": "#/components/schemas/messages"
                   }
                 }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -1628,6 +2093,16 @@ expression: openapi
           },
           "403": {
             "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1683,6 +2158,57 @@ expression: openapi
                       "$ref": "#/components/schemas/messagesCreateInput"
                     }
                   }
+                ]
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "description": "Input object for creating a `messages` row",
+                "properties": {
+                  "archivedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "authorId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "default": "now()"
+                  },
+                  "featured": {
+                    "type": "boolean",
+                    "default": "false"
+                  },
+                  "forumId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "default": "uuid_generate_v1mc()"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "forumId",
+                  "authorId",
+                  "body"
                 ]
               }
             }
@@ -1781,8 +2307,243 @@ expression: openapi
               }
             }
           },
+          "415": {
+            "description": "Unsupported Media Type: send JSON, CSV rows or `multipart/form-data`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "List messages (headers only)",
+        "description": "Retrieve rows from `messages`",
+        "operationId": "head_messages",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first",
+            "in": "query",
+            "description": "Page size for forward keyset pagination (default 100, at most 1000)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Cursor to continue after (from the `next` link)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "description": "Page size for backward keyset pagination (default 100, at most 1000)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Cursor to continue before (from the `prev` link)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Rows to skip (offset pagination)",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns to return (default: all)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "count=exact"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of messages rows",
+            "headers": {
+              "Link": {
+                "description": "RFC 8288 `next` / `prev` links carrying the cursors",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Total-Count": {
+                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource"
+          },
+          "406": {
+            "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "options": {
+        "summary": "Methods and media types",
+        "operationId": "options_messages",
+        "responses": {
+          "204": {
+            "description": "The methods allowed",
+            "headers": {
+              "Allow": {
+                "description": "The methods this path answers to",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Post": {
+                "description": "The request media types of a create",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1868,6 +2629,11 @@ expression: openapi
                     "$ref": "#/components/schemas/messages"
                   }
                 }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -1893,6 +2659,16 @@ expression: openapi
           },
           "403": {
             "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2080,6 +2856,52 @@ expression: openapi
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/messagesUpdateInput"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "description": "Input object for creating a `messages` row",
+                "properties": {
+                  "archivedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "authorId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "default": "now()"
+                  },
+                  "featured": {
+                    "type": "boolean",
+                    "default": "false"
+                  },
+                  "forumId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "default": "uuid_generate_v1mc()"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "forumId",
+                  "authorId",
+                  "body"
+                ]
               }
             }
           }
@@ -2487,6 +3309,150 @@ expression: openapi
           },
           "422": {
             "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "Get messages by key (headers only)",
+        "description": "Retrieve a single row from `messages` by primary key",
+        "operationId": "head_messages_by_key",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Primary key of `messages` (the Relay global ID of the row is accepted too)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns to return (default: all)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requested messages row",
+            "headers": {
+              "ETag": {
+                "description": "Row version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "options": {
+        "summary": "Methods and media types",
+        "operationId": "options_messages_by_key",
+        "responses": {
+          "204": {
+            "description": "The methods allowed",
+            "headers": {
+              "Allow": {
+                "description": "The methods this path answers to",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Patch": {
+                "description": "The request media types of an update",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3042,6 +4008,11 @@ expression: openapi
                     "$ref": "#/components/schemas/users"
                   }
                 }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -3067,6 +4038,16 @@ expression: openapi
           },
           "403": {
             "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3122,6 +4103,42 @@ expression: openapi
                       "$ref": "#/components/schemas/usersCreateInput"
                     }
                   }
+                ]
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "description": "Input object for creating a `users` row",
+                "properties": {
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "default": "now()"
+                  },
+                  "gravatarUrl": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "default": "uuid_generate_v1mc()"
+                  },
+                  "username": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "username"
                 ]
               }
             }
@@ -3220,8 +4237,240 @@ expression: openapi
               }
             }
           },
+          "415": {
+            "description": "Unsupported Media Type: send JSON, CSV rows or `multipart/form-data`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "List users (headers only)",
+        "description": "Retrieve rows from `users`",
+        "operationId": "head_users",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Filter criteria: `filter[column][operator]=value`, through relations with `filter[relation][column]=value`. Unknown columns and operators are a 400. For `and` / `or` / `not` use `POST …/search`.",
+            "schema": {
+              "$ref": "#/components/schemas/usersFilter"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first",
+            "in": "query",
+            "description": "Page size for forward keyset pagination (default 100, at most 1000)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Cursor to continue after (from the `next` link)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "description": "Page size for backward keyset pagination (default 100, at most 1000)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Cursor to continue before (from the `prev` link)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Rows to skip (offset pagination)",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns to return (default: all)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "count=exact"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of users rows",
+            "headers": {
+              "Link": {
+                "description": "RFC 8288 `next` / `prev` links carrying the cursors",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Total-Count": {
+                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource"
+          },
+          "406": {
+            "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "options": {
+        "summary": "Methods and media types",
+        "operationId": "options_users",
+        "responses": {
+          "204": {
+            "description": "The methods allowed",
+            "headers": {
+              "Allow": {
+                "description": "The methods this path answers to",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Post": {
+                "description": "The request media types of a create",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3307,6 +4556,11 @@ expression: openapi
                     "$ref": "#/components/schemas/users"
                   }
                 }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -3332,6 +4586,16 @@ expression: openapi
           },
           "403": {
             "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3516,6 +4780,37 @@ expression: openapi
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/usersUpdateInput"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "description": "Input object for creating a `users` row",
+                "properties": {
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "default": "now()"
+                  },
+                  "gravatarUrl": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "default": "uuid_generate_v1mc()"
+                  },
+                  "username": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "username"
+                ]
               }
             }
           }
@@ -3923,6 +5218,147 @@ expression: openapi
           },
           "422": {
             "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "Get users by key (headers only)",
+        "description": "Retrieve a single row from `users` by primary key",
+        "operationId": "head_users_by_key",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Primary key of `users` (the Relay global ID of the row is accepted too)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns to return (default: all)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requested users row",
+            "headers": {
+              "ETag": {
+                "description": "Row version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "options": {
+        "summary": "Methods and media types",
+        "operationId": "options_users_by_key",
+        "responses": {
+          "204": {
+            "description": "The methods allowed",
+            "headers": {
+              "Allow": {
+                "description": "The methods this path answers to",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Patch": {
+                "description": "The request media types of an update",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
             "content": {
               "application/problem+json": {
                 "schema": {

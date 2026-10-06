@@ -6,17 +6,18 @@ use super::http::{
     openapi_spec_handler, rest_handler,
 };
 use super::rest::{
-    rest_aggregate_get_handler, rest_aggregate_post_handler, rest_create_handler,
-    rest_delete_handler, rest_global_search_handler, rest_item_handler, rest_list_handler,
-    rest_rpc_handler, rest_search_handler, rest_search_method_handler, rest_update_handler,
-    rest_upsert_handler, GLOBAL_SEARCH_RESOURCE, REST_PREFIX, RPC_RESOURCE,
+    rest_aggregate_get_handler, rest_aggregate_post_handler, rest_column_get_handler,
+    rest_column_put_handler, rest_create_handler, rest_delete_handler, rest_global_search_handler,
+    rest_item_handler, rest_list_handler, rest_rpc_handler, rest_search_handler,
+    rest_search_method_handler, rest_update_handler, rest_upsert_handler, GLOBAL_SEARCH_RESOURCE,
+    REST_PREFIX, RPC_RESOURCE,
 };
 use super::ServerState;
 use crate::config::models::{CorsConfig, HeaderPreset, HeadersConfig};
 use crate::config::Config;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, HeaderValue, Method};
-use axum::routing::{get, post};
+use axum::routing::{get, options, post, MethodRouter};
 use axum::Router;
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,35 +57,93 @@ pub fn sdl_routes(state: &ServerState) -> Router<Arc<ServerState>> {
 /// - `/rest/rpc/{function}`: Functions (GET for read-only ones, POST)
 /// - `/rest/search`: Search across every searchable resource (GET, POST)
 /// - `/rest/{resource}/{key}`: Single item Read (GET), Update (PATCH), Upsert (PUT), Delete (DELETE)
+/// - `/rest/{resource}/{key}/{column}`: The bytes of a `bytea` column (GET, PUT)
+///
+/// Every route answers `OPTIONS` with its methods; `HEAD` answers like `GET` without a body.
 pub fn rest_routes() -> Router<Arc<ServerState>> {
     let resource = format!("{REST_PREFIX}/{{resource}}");
     Router::new()
-        .route(REST_PREFIX, get(rest_handler))
-        .route(&resource, get(rest_list_handler).post(rest_create_handler))
-        .route(&format!("{resource}/search"), post(rest_search_handler))
+        .route(
+            REST_PREFIX,
+            get(rest_handler).options(allowed("GET, HEAD, OPTIONS", &[])),
+        )
+        .route(
+            &resource,
+            get(rest_list_handler)
+                .post(rest_create_handler)
+                .options(allowed(
+                    "GET, HEAD, POST, OPTIONS",
+                    &[("accept-post", WRITE_MEDIA_WITH_CSV)],
+                )),
+        )
+        .route(
+            &format!("{resource}/search"),
+            post(rest_search_handler).options(allowed("POST, OPTIONS", &[])),
+        )
         .route(
             &format!("{resource}/search/{{method}}"),
-            post(rest_search_method_handler),
+            post(rest_search_method_handler).options(allowed("POST, OPTIONS", &[])),
         )
         .route(
             &format!("{resource}/aggregate"),
-            get(rest_aggregate_get_handler).post(rest_aggregate_post_handler),
+            get(rest_aggregate_get_handler)
+                .post(rest_aggregate_post_handler)
+                .options(allowed("GET, HEAD, POST, OPTIONS", &[])),
         )
         .route(
             &format!("{REST_PREFIX}/{RPC_RESOURCE}/{{function}}"),
-            get(rest_rpc_handler).post(rest_rpc_handler),
+            get(rest_rpc_handler)
+                .post(rest_rpc_handler)
+                .options(allowed("GET, HEAD, POST, OPTIONS", &[])),
         )
         .route(
             &format!("{REST_PREFIX}/{GLOBAL_SEARCH_RESOURCE}"),
-            get(rest_global_search_handler).post(rest_global_search_handler),
+            get(rest_global_search_handler)
+                .post(rest_global_search_handler)
+                .options(allowed("GET, HEAD, POST, OPTIONS", &[])),
         )
         .route(
             &format!("{resource}/{{key}}"),
             get(rest_item_handler)
                 .patch(rest_update_handler)
                 .put(rest_upsert_handler)
-                .delete(rest_delete_handler),
+                .delete(rest_delete_handler)
+                .options(allowed(
+                    "GET, HEAD, PATCH, PUT, DELETE, OPTIONS",
+                    &[("accept-patch", WRITE_MEDIA)],
+                )),
         )
+        .route(
+            &format!("{resource}/{{key}}/{{column}}"),
+            get(rest_column_get_handler)
+                .put(rest_column_put_handler)
+                .options(allowed("GET, HEAD, PUT, OPTIONS", &[])),
+        )
+}
+
+/// Request media types of a write: JSON, and `multipart/form-data` for files.
+const WRITE_MEDIA: &str = "application/json, multipart/form-data";
+/// Request media types of a create: those of a write, and CSV rows.
+const WRITE_MEDIA_WITH_CSV: &str = "application/json, text/csv, multipart/form-data";
+
+/// The answer to `OPTIONS`: `204` with the methods in `Allow`, and the media types a write
+/// takes in `Accept-Post` / `Accept-Patch` (RFC 7694). CORS preflights are answered earlier,
+/// by the CORS layer.
+fn allowed(
+    allow: &'static str,
+    media: &'static [(&'static str, &'static str)],
+) -> MethodRouter<Arc<ServerState>> {
+    options(move || async move {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(axum::http::header::ALLOW, HeaderValue::from_static(allow));
+        for (name, value) in media {
+            headers.insert(
+                HeaderName::from_static(name),
+                HeaderValue::from_static(value),
+            );
+        }
+        (axum::http::StatusCode::NO_CONTENT, headers)
+    })
 }
 
 /// Mounts the OpenAPI document route: `state.openapi_path`.

@@ -114,6 +114,14 @@ impl ProblemDetails {
         Self::new(StatusCode::FORBIDDEN, detail).with_code("FORBIDDEN")
     }
 
+    pub fn not_acceptable(detail: impl Into<String>) -> Self {
+        Self::new(StatusCode::NOT_ACCEPTABLE, detail).with_code("NOT_ACCEPTABLE")
+    }
+
+    pub fn unsupported_media_type(detail: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, detail).with_code("UNSUPPORTED_MEDIA_TYPE")
+    }
+
     pub fn payload_too_large(detail: impl Into<String>) -> Self {
         Self::new(StatusCode::PAYLOAD_TOO_LARGE, detail).with_code("PAYLOAD_TOO_LARGE")
     }

@@ -183,7 +183,7 @@ pub async fn export_handler(
 }
 
 /// A CSV record (RFC 4180): fields quoted when they hold separators, quotes or line breaks.
-fn csv_line(fields: impl Iterator<Item = Option<String>>) -> String {
+pub(crate) fn csv_line(fields: impl Iterator<Item = Option<String>>) -> String {
     let cells: Vec<String> = fields
         .map(|f| match f {
             None => String::new(),
@@ -197,7 +197,7 @@ fn csv_line(fields: impl Iterator<Item = Option<String>>) -> String {
 }
 
 /// A node field as a CSV cell: text as it is, null as empty, objects and lists as JSON.
-fn csv_cell(value: Option<&serde_json::Value>) -> Option<String> {
+pub(crate) fn csv_cell(value: Option<&serde_json::Value>) -> Option<String> {
     match value? {
         serde_json::Value::Null => None,
         serde_json::Value::String(s) => Some(s.clone()),

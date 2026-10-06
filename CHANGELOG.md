@@ -13,6 +13,7 @@ Releases are tagged `vX.Y.Z`; each one has generated notes on the
 - **CORS** is configurable (`server.cors`: origins, methods, headers, credentials, `max_age`). It was permissive everywhere; it is now open in dev and off in prod until origins are listed.
 - **Error detail** (`errors.detail`: `masked` in prod, `full` in dev) for GraphQL and REST; GraphQL database errors were shown as they came. A privilege or Row-Level Security refusal is now `PERMISSION_DENIED` (REST: 403) in prod.
 - **Introspection switch** (`graphql.introspection`, off in prod) and the **SDL over HTTP** (`graphql.sdl`, `/schema.graphql`, and `/subgraph.graphql` with federation).
+- **REST media types**: CSV lists (`Accept: text/csv`, `406` otherwise), CSV bulk creates, `multipart/form-data` writes, the bytes of a `bytea` column at `/rest/<table>/<key>/<column>`, `OPTIONS` with `Allow` / `Accept-Post` / `Accept-Patch`; `HEAD` and `OPTIONS` are in the OpenAPI document.
 - Docs: a [comparison with PostgREST](docs/comparison.md#compared-with-postgrest), the REST API guide, safety limits and pinned schemas in the configuration guide.
 
 ## 1.0.1 - 2026-10-04
