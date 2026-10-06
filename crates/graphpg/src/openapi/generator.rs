@@ -87,6 +87,45 @@ fn if_match_param(description: &str) -> Value {
 }
 
 /// Makes a schema accept `null` (OpenAPI 3.1 / JSON Schema 2020-12).
+/// `HEAD` of a `GET` operation: the same parameters and headers, no body.
+fn head_of(get: &Value, operation_id: String) -> Value {
+    let mut head = get.clone();
+    head["summary"] = json!(format!(
+        "{} (headers only)",
+        get["summary"].as_str().unwrap_or("Read")
+    ));
+    head["operationId"] = json!(operation_id);
+    if let Some(responses) = head["responses"].as_object_mut() {
+        for response in responses.values_mut() {
+            if let Some(response) = response.as_object_mut() {
+                response.remove("content");
+            }
+        }
+    }
+    head
+}
+
+/// `OPTIONS`: the methods the path answers to, and the request media types of its writes.
+fn options_of(operation_id: String, media: &[(&str, &str)]) -> Value {
+    let mut headers = json!({
+        "Allow": { "description": "The methods this path answers to", "schema": { "type": "string" } }
+    });
+    for (name, description) in media {
+        headers[*name] = json!({ "description": description, "schema": { "type": "string" } });
+    }
+    json!({
+        "summary": "Methods and media types",
+        "operationId": operation_id,
+        "responses": responses(json!({
+            "204": { "description": "The methods allowed", "headers": headers }
+        }), &[])
+    })
+}
+
+fn key_param_for_column(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
+    OpenApiGenerator::key_parameter(table, catalog)
+}
+
 pub(super) fn nullable(mut schema: Value) -> Value {
     match schema.get("type").cloned() {
         Some(Value::String(t)) => {
@@ -283,9 +322,12 @@ impl OpenApiGenerator {
                             },
                             "Preference-Applied": { "schema": { "type": "string" } }
                         },
-                        "content": json_content(rows.clone())
+                        "content": {
+                            "application/json": { "schema": rows.clone() },
+                            "text/csv": { "schema": { "type": "string" } }
+                        }
                     }
-                }), &[]),
+                }), &[("406", "Not Acceptable: the list is `application/json` or `text/csv`")]),
             });
             if deprecated {
                 op["deprecated"] = json!(true);
@@ -314,7 +356,11 @@ impl OpenApiGenerator {
                 ),
                 "operationId": format!("create_{name}"),
                 "parameters": [prefer_param(true)],
-                "requestBody": { "required": true, "content": json_content(body) },
+                "requestBody": { "required": true, "content": {
+                    "application/json": { "schema": body },
+                    "text/csv": { "schema": { "type": "string" } },
+                    "multipart/form-data": { "schema": Self::multipart_schema(table, catalog) }
+                } },
                 "responses": responses(json!({
                     "201": {
                         "description": "Created: the row, or an array of rows for a bulk create",
@@ -329,11 +375,24 @@ impl OpenApiGenerator {
                 }), &[
                     ("409", "Conflict: a unique constraint, with its typed `code`"),
                     ("413", "Content Too Large: more rows than a bulk create accepts"),
+                    ("415", "Unsupported Media Type: send JSON, CSV rows or `multipart/form-data`"),
                     ("422", "Unprocessable Content: a validation failure, with its typed `code`"),
                 ]),
             }));
         }
+        if let Some(get) = collection.get("get").cloned() {
+            collection.insert("head".into(), head_of(&get, format!("head_{name}")));
+        }
         if !collection.is_empty() {
+            let media: &[(&str, &str)] = if create {
+                &[("Accept-Post", "The request media types of a create")]
+            } else {
+                &[]
+            };
+            collection.insert(
+                "options".into(),
+                options_of(format!("options_{name}"), media),
+            );
             paths.insert(collection_path, Value::Object(collection));
         }
 
@@ -357,9 +416,12 @@ impl OpenApiGenerator {
                                 "X-Previous-Cursor": { "description": "Cursor of the previous page, if there is one", "schema": { "type": "string" } },
                                 "Preference-Applied": { "schema": { "type": "string" } }
                             },
-                            "content": json_content(rows.clone())
+                            "content": {
+                                "application/json": { "schema": rows.clone() },
+                                "text/csv": { "schema": { "type": "string" } }
+                            }
                         }
-                    }), &[]),
+                    }), &[("406", "Not Acceptable: the list is `application/json` or `text/csv`")]),
                 }
             }));
         }
@@ -431,7 +493,10 @@ impl OpenApiGenerator {
                 "parameters": [key_param.clone(),
                     if_match_param("Row version (the `ETag`) the update must apply to; 412 if the row changed"),
                     prefer_previous_param()],
-                "requestBody": { "required": true, "content": json_content(schema_ref(&format!("{name}UpdateInput"))) },
+                "requestBody": { "required": true, "content": {
+                    "application/json": { "schema": schema_ref(&format!("{name}UpdateInput")) },
+                    "multipart/form-data": { "schema": Self::multipart_schema(table, catalog) }
+                } },
                 "responses": write_responses("Updated", true),
             }));
         }
@@ -458,9 +523,91 @@ impl OpenApiGenerator {
                 "responses": write_responses("Deleted: the row", false),
             }));
         }
+        if let Some(get) = item.get("get").cloned() {
+            item.insert("head".into(), head_of(&get, format!("head_{name}_by_key")));
+        }
         if !item.is_empty() {
+            let media: &[(&str, &str)] = if update {
+                &[("Accept-Patch", "The request media types of an update")]
+            } else {
+                &[]
+            };
+            item.insert(
+                "options".into(),
+                options_of(format!("options_{name}_by_key"), media),
+            );
             paths.insert(format!("{REST_PREFIX}/{name}/{{key}}"), Value::Object(item));
         }
+
+        // The bytes of a `bytea` column
+        let binary: Vec<String> = table
+            .columns
+            .iter()
+            .filter(|c| !c.omit && c.pg_type == crate::catalog::PgType::Bytea)
+            .map(|c| c.field_name.clone())
+            .collect();
+        if !binary.is_empty() && (read || update) {
+            let column_param = json!({
+                "name": "column", "in": "path", "required": true,
+                "description": "A binary (`bytea`) column",
+                "schema": { "type": "string", "enum": binary }
+            });
+            let bytes = json!({ "type": "string", "contentMediaType": "application/octet-stream" });
+            let mut ops = serde_json::Map::new();
+            if read {
+                let get = json!({
+                    "summary": format!("Get a binary column of {name}"),
+                    "description": "The bytes of the column. The media type is recognized from the first bytes (`image/png`, `application/pdf`, ...), else `application/octet-stream`.",
+                    "operationId": format!("get_{name}_column"),
+                    "parameters": [key_param_for_column(table, catalog), column_param.clone()],
+                    "responses": responses(json!({
+                        "200": { "description": "The value", "content": { "*/*": { "schema": bytes.clone() } } }
+                    }), &[("404", "Not Found: no such row, or the value is null"),
+                          ("406", "Not Acceptable")]),
+                });
+                ops.insert("head".into(), head_of(&get, format!("head_{name}_column")));
+                ops.insert("get".into(), get);
+            }
+            if update {
+                ops.insert("put".into(), json!({
+                    "summary": format!("Replace a binary column of {name}"),
+                    "description": "The request body, of any media type, is the new value.",
+                    "operationId": format!("put_{name}_column"),
+                    "parameters": [key_param_for_column(table, catalog), column_param,
+                        if_match_param("Optional: require the row to be at this version (the `ETag`)")],
+                    "requestBody": { "required": true, "content": { "*/*": { "schema": bytes } } },
+                    "responses": responses(json!({ "204": { "description": "Replaced" } }),
+                        &[("404", "Not Found"), ("412", "Precondition Failed: the row changed since the `If-Match` version")]),
+                }));
+            }
+            ops.insert(
+                "options".into(),
+                options_of(format!("options_{name}_column"), &[]),
+            );
+            paths.insert(
+                format!("{REST_PREFIX}/{name}/{{key}}/{{column}}"),
+                Value::Object(ops),
+            );
+        }
+    }
+
+    /// The schema of a `multipart/form-data` write: the create input, with the files of
+    /// `bytea` columns as binary parts instead of Base64 text.
+    fn multipart_schema(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
+        let mut schema = Self::generate_create_input_schema(table, catalog);
+        if let Some(properties) = schema["properties"].as_object_mut() {
+            for column in table
+                .columns
+                .iter()
+                .filter(|c| c.pg_type == crate::catalog::PgType::Bytea)
+            {
+                if let Some(property) = properties.get_mut(&column.field_name) {
+                    *property =
+                        json!({ "type": "string", "contentMediaType": "application/octet-stream" });
+                }
+            }
+        }
+        schema
     }
 
     fn key_parameter(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {

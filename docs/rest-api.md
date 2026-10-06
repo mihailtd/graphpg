@@ -105,6 +105,22 @@ GET /rest/orders/aggregate?group=customer,createdAt:month&sum=total&having[count
 
 Which aggregates and columns exist is what the GraphQL schema offers for the table; anything else is a 400. A response holds at most `limits.groups` groups (10 000 by default; 422 `TOO_MANY_GROUPS`: narrow the filter or group more coarsely). Aggregates need the table's connection, so a resource whose list is not permitted has none.
 
+## Media types
+
+Lists (`GET /rest/<table>` and `POST …/search`) are `application/json` unless `Accept` prefers `text/csv` (RFC 4180, a header of the selected fields; `null` is empty, objects and lists are JSON text, 64-bit integers are text as in JSON). An `Accept` that allows neither is `406`. CSV is the page of rows the request asks for, bounded by `limits.page_size`: for a table of any size, use `/export`, which streams.
+
+Writes take three request media types, the wrong one is `415`:
+
+| `Content-Type` | Where | Body |
+| :--- | :--- | :--- |
+| `application/json` | every write | the JSON shapes above |
+| `text/csv` | `POST /rest/<table>` | a header naming the fields, then one record per row: a bulk create bounded by `limits.bulk_rows`. Cells are typed by their columns (integers, floats, booleans, JSON for `json`, `jsonb` and array columns); an empty cell is `null`, so leave a column out to get its default. A cell that does not fit names its row and column (`body[3].price`) |
+| `multipart/form-data` | `POST`, `PATCH` and `PUT` of a row | one part per field (text typed by the column); a file part of a `bytea` column is its bytes, no Base64 |
+
+The bytes of a `bytea` column have their own URL, `/rest/<table>/<key>/<column>`: `GET` answers with them, as the media type their first bytes name (`image/png`, `application/pdf`, ... else `application/octet-stream`) and `nosniff`; `PUT` replaces them from a body of any media type (`If-Match` applies). Neither the file name nor its media type is stored: keep them in columns if you need them.
+
+`HEAD` answers like `GET` without a body, on every readable path. `OPTIONS` answers `204` with `Allow` and, for writes, `Accept-Post` / `Accept-Patch` (RFC 7694); with CORS configured, browsers' preflights are answered by the CORS layer first. All of it is in the OpenAPI document.
+
 ## Functions
 
 Every SQL function the GraphQL schema exposes as a root field is callable at `/rest/rpc/{function}` by its SQL name (`/rest/rpc/search_orders`). Computed columns (functions of a row) are fields of that row, not endpoints. `STABLE` and `IMMUTABLE` functions answer `GET` and `POST`; `VOLATILE` ones, which change data, answer `POST` only (`GET` is a 405 with `Allow: POST`) and run in a write transaction.

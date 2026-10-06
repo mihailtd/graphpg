@@ -10,6 +10,7 @@
 
 mod aggregates;
 mod functions;
+mod media;
 mod problem;
 mod query;
 mod search;
@@ -47,6 +48,7 @@ use crate::compiler::SqlCompiler;
 use crate::config::models::Operation;
 use crate::execution::ExecutionEngine;
 use crate::planner::{QueryPlanner, RequestField, RequestOperation, ResponseShaper, RestPageInfo};
+use media::Media;
 use validate::{validate_argument, Root};
 
 /// Path prefix of the REST API.
@@ -567,6 +569,35 @@ fn shaping_error(err: impl std::fmt::Display, is_prod: bool) -> ProblemDetails {
     )
 }
 
+/// The body of a write as JSON bytes, whatever it was sent as: JSON as it is, CSV as an array
+/// of rows (create only), `multipart/form-data` as one object. Any other type is a `415`.
+fn json_body(
+    table: &TableMetadata,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+    csv: bool,
+) -> Result<axum::body::Bytes, ProblemDetails> {
+    let value = match media::content_type(headers).as_deref() {
+        None | Some(media::JSON) => return Ok(body),
+        Some(t) if t.ends_with("+json") => return Ok(body),
+        Some(media::CSV) if csv => media::csv_to_rows(&body, table)?,
+        Some(media::MULTIPART) => media::multipart_to_object(headers, &body, table)?,
+        Some(other) => {
+            return Err(ProblemDetails::unsupported_media_type(format!(
+                "`{other}` is not accepted here: send {}",
+                if csv {
+                    "`application/json`, `text/csv` or `multipart/form-data`"
+                } else {
+                    "`application/json` or `multipart/form-data`"
+                }
+            )))
+        }
+    };
+    Ok(serde_json::to_vec(&value)
+        .map_err(|e| ProblemDetails::bad_request(e.to_string()))?
+        .into())
+}
+
 fn parse_json_body(body: &[u8]) -> Result<serde_json::Value, ProblemDetails> {
     if body.is_empty() {
         return Err(ProblemDetails::bad_request("Request body cannot be empty"));
@@ -951,6 +982,7 @@ fn listing_response(
     prefs: Preferences,
     link: Option<String>,
     cursor_headers: bool,
+    media: Media,
 ) -> Response {
     let mut out = list_headers(&listing, prefs);
     if let Some(link) = link {
@@ -973,6 +1005,10 @@ fn listing_response(
                 );
             }
         }
+    }
+    if media == Media::Csv {
+        set_header(&mut out, header::CONTENT_TYPE, "text/csv; charset=utf-8");
+        return (StatusCode::OK, out, media::rows_to_csv(&listing.rows, None)).into_response();
     }
     (StatusCode::OK, out, Json(listing.rows)).into_response()
 }
@@ -1041,6 +1077,7 @@ pub async fn rest_list_handler(
 ) -> Response {
     respond(format!("{REST_PREFIX}/{resource}"), async {
         let ctx = Ctx::new(&state, &headers, resource).await?;
+        let media = media::negotiate(&headers)?;
         let table = ctx.table()?;
         let query = parse_query_params(
             raw_query.as_deref().unwrap_or(""),
@@ -1057,7 +1094,7 @@ pub async fn rest_list_handler(
             listing.page_info.as_ref(),
             &query,
         );
-        Ok(listing_response(listing, ctx.prefs, link, false))
+        Ok(listing_response(listing, ctx.prefs, link, false, media))
     })
     .await
 }
@@ -1145,6 +1182,7 @@ pub async fn rest_search_handler(
 ) -> Response {
     respond(format!("{REST_PREFIX}/{resource}/search"), async {
         let ctx = Ctx::new(&state, &headers, resource).await?;
+        let media = media::negotiate(&headers)?;
         let table = ctx.table()?;
         if raw_query.as_deref().is_some_and(|q| !q.is_empty()) {
             return Err(ProblemDetails::bad_request(
@@ -1160,7 +1198,7 @@ pub async fn rest_search_handler(
         let query = body.into_query(table, &ctx.catalog)?;
         let listing = list(&ctx, table, &query, "POST").await?;
 
-        Ok(listing_response(listing, ctx.prefs, None, true))
+        Ok(listing_response(listing, ctx.prefs, None, true, media))
     })
     .await
 }
@@ -1223,6 +1261,116 @@ pub async fn rest_item_handler(
     .await
 }
 
+/// The `bytea` column a binary URL names, by field or column name.
+fn binary_column<'a>(
+    table: &'a TableMetadata,
+    name: &str,
+) -> Result<&'a ColumnMetadata, ProblemDetails> {
+    table
+        .columns
+        .iter()
+        .find(|c| !c.omit && (c.field_name == name || c.name == name))
+        .ok_or_else(|| {
+            ProblemDetails::not_found(format!("`{}` has no column `{name}`", table.name))
+        })
+        .and_then(|c| match c.pg_type {
+            PgType::Bytea => Ok(c),
+            _ => Err(ProblemDetails::not_found(format!(
+                "`{name}` is not a binary (`bytea`) column: read it from `/rest/{}/{{key}}`",
+                table.name
+            ))),
+        })
+}
+
+/// Handler for `GET /rest/{resource}/{key}/{column}`: the bytes of a `bytea` column, with a
+/// media type recognized from their first bytes.
+pub async fn rest_column_get_handler(
+    State(state): State<Arc<ServerState>>,
+    Path((resource, key, column)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    use base64::Engine;
+    respond(format!("{REST_PREFIX}/{resource}/{key}/{column}"), async {
+        let ctx = Ctx::new(&state, &headers, resource).await?;
+        let table = ctx.table()?;
+        ctx.allow(table, Operation::Read)?;
+        let column = binary_column(table, &column)?;
+        let parsed_key = parse_primary_key(&key, table).map_err(ProblemDetails::bad_request)?;
+        let request = RequestField::new(&table.single_field)
+            .with_arguments(key_args(table, &parsed_key))
+            .with_children(vec![RequestField::new(&column.field_name)]);
+        let data = ctx
+            .execute(
+                &table.schema,
+                RequestOperation::query(vec![request]),
+                "GET",
+                false,
+            )
+            .await?;
+        let row = ResponseShaper::unwrap_single(&data, &table.single_field)
+            .map_err(|e| shaping_error(e, ctx.is_prod))?;
+        let encoded = row
+            .get(&column.field_name)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                ProblemDetails::not_found(format!(
+                    "`{}` of `{}` `{key}` has no value",
+                    column.field_name, table.name
+                ))
+            })?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|e| shaping_error(e, ctx.is_prod))?;
+        let content_type = media::sniff(&bytes);
+        if !media::accepts(&headers, content_type) && !media::accepts(&headers, media::OCTET_STREAM)
+        {
+            return Err(ProblemDetails::not_acceptable(format!(
+                "This value is `{content_type}`"
+            )));
+        }
+        let mut out = HeaderMap::new();
+        set_header(&mut out, header::CONTENT_TYPE, content_type);
+        set_header(
+            &mut out,
+            header::HeaderName::from_static("x-content-type-options"),
+            "nosniff",
+        );
+        Ok((StatusCode::OK, out, bytes).into_response())
+    })
+    .await
+}
+
+/// Handler for `PUT /rest/{resource}/{key}/{column}`: the body, whatever its media type, is
+/// the new value of a `bytea` column.
+pub async fn rest_column_put_handler(
+    State(state): State<Arc<ServerState>>,
+    Path((resource, key, column)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    use base64::Engine;
+    respond(format!("{REST_PREFIX}/{resource}/{key}/{column}"), async {
+        let ctx = Ctx::new(&state, &headers, resource).await?;
+        let table = ctx.table()?;
+        let column = binary_column(table, &column)?;
+        let input = serde_json::json!({
+            column.field_name.clone(): base64::engine::general_purpose::STANDARD.encode(&body)
+        });
+        let if_match = parse_if_match(&headers)?;
+        update_row(
+            &ctx,
+            table,
+            &key,
+            input.to_string().as_bytes(),
+            if_match,
+            "PUT",
+        )
+        .await?;
+        Ok(StatusCode::NO_CONTENT.into_response())
+    })
+    .await
+}
+
 // ---------------------------------------------------------------------------------------------
 // Writes
 // ---------------------------------------------------------------------------------------------
@@ -1239,7 +1387,7 @@ pub async fn rest_create_handler(
         let ctx = Ctx::new(&state, &headers, resource).await?;
         let table = ctx.table()?;
         ctx.allow(table, Operation::Create)?;
-        let body = parse_json_body(&body)?;
+        let body = parse_json_body(&json_body(table, &headers, body, true)?)?;
 
         match body {
             serde_json::Value::Array(rows) => {
@@ -1389,6 +1537,7 @@ pub async fn rest_update_handler(
         let ctx = Ctx::new(&state, &headers, resource).await?;
         let table = ctx.table()?;
         let if_match = parse_if_match(&headers)?;
+        let body = json_body(table, &headers, body, false)?;
         update_row(&ctx, table, &key, &body, if_match, "PATCH").await
     })
     .await
@@ -1405,6 +1554,7 @@ pub async fn rest_upsert_handler(
     respond(format!("{REST_PREFIX}/{resource}/{key}"), async {
         let ctx = Ctx::new(&state, &headers, resource).await?;
         let table = ctx.table()?;
+        let body = json_body(table, &headers, body, false)?;
         if headers.contains_key(header::IF_MATCH) {
             let if_match = parse_if_match(&headers)?;
             return update_row(&ctx, table, &key, &body, if_match, "PUT").await;

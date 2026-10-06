@@ -100,7 +100,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Feature | graphpg REST | PostgREST |
 | :--- | :--- | :--- |
 | Create one row | `POST` JSON | `POST` JSON |
-| Bulk create | `POST` JSON array, one statement, bounded by `limits.bulk_rows` | `POST` JSON array or **CSV**; `?columns=` to pick keys; form-encoded bodies |
+| Bulk create | `POST` JSON array or **CSV**, one statement, bounded by `limits.bulk_rows` | `POST` JSON array or **CSV**; `?columns=` to pick keys; form-encoded bodies |
 | **Nested writes** (create / connect / update / sync children in one request) | **Yes**: the GraphQL input shape, validated to any depth, atomic | **No** (multi-table writes need an RPC function) |
 | Update | `PATCH /rest/<table>/<key>` | `PATCH /<table>?<filters>` (any filter; many rows) |
 | Delete | `DELETE /rest/<table>/<key>` | `DELETE /<table>?<filters>` (any filter; many rows) |
@@ -131,8 +131,8 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 
 | Feature | graphpg REST | PostgREST |
 | :--- | :--- | :--- |
-| Media types | JSON (and `application/problem+json` errors); CSV and NDJSON streaming through the GraphQL `/export` endpoint | JSON, CSV, GeoJSON, plain text, XML, binary; custom handlers (domains, aggregates); `application/vnd.pgrst.object` for one row |
-| `HEAD` and `OPTIONS` | `HEAD` answers like `GET` without a body; `OPTIONS` lists the methods and answers CORS preflights | Yes |
+| Media types | JSON (and `application/problem+json` errors); CSV lists and CSV bulk creates; `multipart/form-data` writes; the bytes of a `bytea` column as their own media type; CSV and NDJSON streaming through the GraphQL `/export` endpoint | JSON, CSV, GeoJSON, plain text, XML, binary; custom handlers (domains, aggregates); `application/vnd.pgrst.object` for one row |
+| `HEAD` and `OPTIONS` | `HEAD` answers like `GET` without a body; `OPTIONS` lists the methods (`Allow`, `Accept-Post`, `Accept-Patch`) and CORS preflights are answered by the CORS layer; both are in the OpenAPI document | Yes |
 | Several schemas in one deployment | All `database.schemas` merged into one API; if two schemas have a same-named table, REST serves the default schema's | One schema per request, chosen by `Accept-Profile` / `Content-Profile` |
 | CORS | Configurable (`server.cors`): any origin in dev, none in prod unless listed | Configurable allowed origins |
 | Request ID / `Server-Timing` / `EXPLAIN` by header | No (tracing spans; GraphQL `debug.explain` in dev) | `X-Request-Id` echo, `Server-Timing`, `Accept: application/vnd.pgrst.plan` |
@@ -217,7 +217,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 ### When PostgREST fits better
 
 - You need **update or delete many rows by a filter**, or `Range` / `Content-Range` pagination.
-- You need **CSV, GeoJSON, XML, binary or custom media types** from the REST API itself.
+- You need **GeoJSON, XML, plain-text or custom media types** (domains, aggregates) from the REST API itself.
 - You rely on **embedded filters, ordering and limits**, spread, or `!inner` joins in one URL.
 - You need **POSIX regular expressions**, JSON arrow operators in the URL, or `NULLS FIRST` / `LAST`.
 - You want the token to **choose the PostgreSQL role**, or `Accept-Profile` to switch **schemas per request**.
@@ -236,7 +236,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### Known gaps
 
-What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, CSV and other media types ([#101](https://github.com/mihailtd/graphpg/issues/101)), `Range` headers, schema reload in production without a restart, a Prometheus metrics endpoint, security headers, regular-expression filters, and `Accept-Profile`-style schema selection.
+What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, GeoJSON, XML and custom media types, `Range` headers, schema reload in production without a restart, a Prometheus metrics endpoint, security headers, regular-expression filters, and `Accept-Profile`-style schema selection.
 
 ## Where graphpg is a fit
 

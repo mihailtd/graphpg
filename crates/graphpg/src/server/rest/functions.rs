@@ -264,7 +264,13 @@ pub async fn rest_rpc_handler(
                         )
                     })
                     .flatten();
-                Ok(listing_response(listing, ctx.prefs, link, !is_get))
+                Ok(listing_response(
+                    listing,
+                    ctx.prefs,
+                    link,
+                    !is_get,
+                    Media::Json,
+                ))
             }
             other => {
                 let (children, table) = match &other {
