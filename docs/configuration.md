@@ -101,6 +101,11 @@ server:
     credentials: false          # needs explicit origins, not '*'
     max_age: 600                # seconds a browser caches the preflight
 
+headers:
+  preset: strict                # strict (default in prod) | relaxed (default in dev) | off
+  set:                          # overrides on top of the preset; an empty value removes a header
+    x-frame-options: SAMEORIGIN
+
 watch:
   enabled: false                # watch DDL; default: true in dev, false in prod
   export: true                  # write export files on schema change
@@ -205,6 +210,10 @@ extensions:
 ```
 
 ---
+
+### Security headers
+
+`headers.preset` picks what every response carries. `relaxed` sends `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. `strict` adds `Strict-Transport-Security`, `X-Frame-Options: DENY`, a `Content-Security-Policy` that allows nothing (`default-src 'none'; frame-ancestors 'none'`) and `Cross-Origin-Opener-Policy: same-origin`. The CSP and `X-Frame-Options` are left off the GraphiQL and Scalar pages, which need scripts and styles. `headers.set` overrides single headers after the preset.
 
 ## Multiple schemas
 

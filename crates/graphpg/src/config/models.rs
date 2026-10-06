@@ -36,6 +36,9 @@ pub struct Config {
     /// The REST API and its OpenAPI description.
     #[serde(default, alias = "rest")]
     pub openapi: OpenapiConfig,
+    /// Security headers on every response.
+    #[serde(default)]
+    pub headers: HeadersConfig,
     /// Schema watching on DDL changes and auto-export.
     #[serde(default)]
     pub watch: WatchConfig,
@@ -352,6 +355,31 @@ impl LimitsConfig {
         }
         problems
     }
+}
+
+/// Which security headers are sent.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HeaderPreset {
+    /// `nosniff`, `Referrer-Policy`, HSTS, `X-Frame-Options`, a CSP that allows nothing, and
+    /// a same-origin opener policy. The default in `prod`.
+    #[default]
+    Strict,
+    /// `nosniff` and `Referrer-Policy` only. The default in `dev`.
+    Relaxed,
+    /// None.
+    Off,
+}
+
+/// Security headers: a preset, and header overrides on top of it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadersConfig {
+    #[serde(default)]
+    pub preset: HeaderPreset,
+    /// Headers to set (or remove, with an empty value) after the preset.
+    #[serde(default)]
+    pub set: BTreeMap<String, String>,
 }
 
 /// The HTTP listener.
