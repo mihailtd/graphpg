@@ -40,7 +40,8 @@ use tracing::Instrument;
 use super::auth::AuthSessionContext;
 use super::ServerState;
 use crate::catalog::{
-    ColumnMetadata, DatabaseCatalog, FieldKind, MutationAction, MutationField, TableMetadata,
+    ColumnMetadata, DatabaseCatalog, FieldKind, MutationAction, MutationField, PgType,
+    TableMetadata,
 };
 use crate::compiler::SqlCompiler;
 use crate::config::models::Operation;
@@ -238,21 +239,71 @@ fn strip_key_from_body(
 // Field selection and embedding
 // ---------------------------------------------------------------------------------------------
 
+/// The selection that reads a value of `pg_type` whole: none for scalars, every attribute of a
+/// composite (nested ones too), and `start` / `end` / `isEmpty` of a range (of each range of a
+/// multirange). Without it the value would come back as an empty object.
+fn value_selection(catalog: &DatabaseCatalog, pg_type: &PgType, depth: usize) -> Vec<RequestField> {
+    let element = match pg_type {
+        PgType::Array(inner) | PgType::Multirange(inner) => inner.as_ref(),
+        other => other,
+    };
+    if element.is_range() || matches!(pg_type, PgType::Multirange(_)) {
+        let bound = || {
+            RequestField::new("").with_children(vec![
+                RequestField::new("value"),
+                RequestField::new("inclusive"),
+            ])
+        };
+        let named = |name: &str| {
+            let mut field = bound();
+            field.name = name.to_string();
+            field
+        };
+        return vec![named("start"), named("end"), RequestField::new("isEmpty")];
+    }
+    let PgType::Composite(key) = element else {
+        return Vec::new();
+    };
+    if depth >= 4 {
+        return Vec::new();
+    }
+    catalog
+        .find_composite(key)
+        .map(|composite| {
+            composite
+                .attributes
+                .iter()
+                .map(|a| {
+                    RequestField::new(&a.field_name).with_children(value_selection(
+                        catalog,
+                        &a.pg_type,
+                        depth + 1,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The request field for a column. The primary key of a Relay node table is the `databaseId`
 /// field (the raw value), not the global `id`, so REST rows carry the real key under the
 /// column's name.
-fn column_field(table: &TableMetadata, col: &ColumnMetadata) -> RequestField {
+fn column_field(
+    catalog: &DatabaseCatalog,
+    table: &TableMetadata,
+    col: &ColumnMetadata,
+) -> RequestField {
     if table.implements_node() && col.is_primary_key {
         RequestField::new("databaseId").with_alias(&col.field_name)
     } else {
-        RequestField::new(&col.field_name)
+        RequestField::new(&col.field_name).with_children(value_selection(catalog, &col.pg_type, 0))
     }
 }
 
-fn column_fields(table: &TableMetadata) -> Vec<RequestField> {
+fn column_fields(catalog: &DatabaseCatalog, table: &TableMetadata) -> Vec<RequestField> {
     table
         .visible_columns()
-        .map(|c| column_field(table, c))
+        .map(|c| column_field(catalog, table, c))
         .collect()
 }
 
@@ -306,7 +357,7 @@ fn include_fields(
                     "include",
                 )
             })?;
-        let mut children = column_fields(target);
+        let mut children = column_fields(catalog, target);
         children.extend(include_fields(catalog, target, sub)?);
         out.push(RequestField::new(field).with_children(children));
     }
@@ -322,7 +373,7 @@ fn select_fields(
     include: Option<&Vec<String>>,
 ) -> Result<Vec<RequestField>, ProblemDetails> {
     let mut out = match fields.filter(|f| !f.is_empty()) {
-        None => column_fields(table),
+        None => column_fields(catalog, table),
         Some(requested) => {
             let mut selected = Vec::new();
             for name in requested {
@@ -339,7 +390,7 @@ fn select_fields(
                     .iter()
                     .any(|f: &RequestField| f.response_key() == col.field_name)
                 {
-                    selected.push(column_field(table, col));
+                    selected.push(column_field(catalog, table, col));
                 }
             }
             selected
@@ -688,8 +739,8 @@ fn mutation_field(
         })
 }
 
-fn write_columns(table: &TableMetadata) -> Vec<RequestField> {
-    let mut columns = column_fields(table);
+fn write_columns(catalog: &DatabaseCatalog, table: &TableMetadata) -> Vec<RequestField> {
+    let mut columns = column_fields(catalog, table);
     if table.has_row_version() {
         columns.push(RequestField::new("rowVersion"));
     }
@@ -744,10 +795,10 @@ async fn run_write(
         m,
         table,
         args,
-        write_columns(table),
+        write_columns(&ctx.catalog, table),
         previous_field
             .as_deref()
-            .map(|name| (name, column_fields(table))),
+            .map(|name| (name, column_fields(&ctx.catalog, table))),
     );
     let data = ctx.execute(&table.schema, op, method, true).await?;
     let payload = m.action.payload_field_name(table);
@@ -1226,7 +1277,7 @@ pub async fn rest_create_handler(
                 let data = ctx
                     .execute(
                         &table.schema,
-                        mutation_op(&m, table, args, column_fields(table)),
+                        mutation_op(&m, table, args, column_fields(&ctx.catalog, table)),
                         "POST",
                         true,
                     )
@@ -1435,7 +1486,7 @@ pub async fn rest_delete_handler(
         let data = ctx
             .execute(
                 &table.schema,
-                mutation_op(&m, table, args, column_fields(table)),
+                mutation_op(&m, table, args, column_fields(&ctx.catalog, table)),
                 "DELETE",
                 true,
             )

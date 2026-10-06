@@ -47,7 +47,7 @@ impl Mode {
     fn defaults(self) -> &'static str {
         match self {
             Mode::Dev => {
-                "headers:\n  preset: relaxed\ngraphql:\n  ui: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\n"
+                "server:\n  cors:\n    origins: ['*']\nheaders:\n  preset: relaxed\ngraphql:\n  ui: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\n"
             }
             Mode::Prod => "{}",
         }
@@ -217,7 +217,8 @@ impl Config {
                     ));
                 }
             }
-            let problems = config.limits.problems();
+            let mut problems = config.limits.problems();
+            problems.extend(config.server.cors.problems());
             if !problems.is_empty() {
                 let problems = if m == mode {
                     problems
@@ -485,6 +486,26 @@ prod:
         .unwrap();
         assert_eq!(cfg.headers.preset, HeaderPreset::Off);
         assert_eq!(cfg.headers.set["x-frame-options"], "SAMEORIGIN");
+    }
+
+    #[test]
+    fn cors_is_open_in_dev_and_closed_in_prod() {
+        assert_eq!(parse("", Mode::Dev).unwrap().server.cors.origins, ["*"]);
+        assert!(!parse("", Mode::Prod).unwrap().server.cors.enabled());
+        let yaml = "server: { cors: { origins: ['https://app.example.com'], credentials: true, max_age: 600 } }";
+        let cors = parse(yaml, Mode::Prod).unwrap().server.cors;
+        assert!(cors.enabled() && cors.credentials);
+        assert_eq!(cors.max_age, Some(600));
+    }
+
+    #[test]
+    fn cors_credentials_need_explicit_origins() {
+        let err = parse(
+            "server: { cors: { origins: ['*'], credentials: true } }",
+            Mode::Prod,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("credentials"), "{err}");
     }
 
     #[test]

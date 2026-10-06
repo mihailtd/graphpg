@@ -9,14 +9,15 @@ use super::rest::{
     rest_upsert_handler, GLOBAL_SEARCH_RESOURCE, REST_PREFIX, RPC_RESOURCE,
 };
 use super::ServerState;
-use crate::config::models::{HeaderPreset, HeadersConfig};
+use crate::config::models::{CorsConfig, HeaderPreset, HeadersConfig};
 use crate::config::Config;
 use axum::extract::DefaultBodyLimit;
-use axum::http::{HeaderName, HeaderValue};
+use axum::http::{HeaderName, HeaderValue, Method};
 use axum::routing::{get, post};
 use axum::Router;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
+use std::time::Duration;
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 /// Mounts the GraphQL API routes: `/graphql`, plus `/export` and `/import/{type_name}`.
 pub fn graphql_routes() -> Router<Arc<ServerState>> {
@@ -100,20 +101,70 @@ pub fn health_routes() -> Router<Arc<ServerState>> {
 /// Applies global middleware layers configured by [`Config`].
 pub fn apply_layers(router: Router, config: &Config) -> Router {
     let headers = Arc::new(config.headers.clone());
-    router
-        .layer(axum::middleware::from_fn(
-            move |request: axum::extract::Request, next: axum::middleware::Next| {
-                let headers = headers.clone();
-                async move {
-                    // The bundled UIs load scripts and styles the strict policy would block
-                    let ui = is_ui_path(request.uri().path());
-                    let mut response = next.run(request).await;
-                    apply_security_headers(&headers, ui, response.headers_mut());
-                    response
-                }
-            },
-        ))
-        .layer(CorsLayer::permissive())
+    let router = router.layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let headers = headers.clone();
+            async move {
+                // The bundled UIs load scripts and styles the strict policy would block
+                let ui = is_ui_path(request.uri().path());
+                let mut response = next.run(request).await;
+                apply_security_headers(&headers, ui, response.headers_mut());
+                response
+            }
+        },
+    ));
+    match cors_layer(&config.server.cors) {
+        Some(cors) => router.layer(cors),
+        None => router,
+    }
+}
+
+/// The CORS layer for `server.cors`, or none when no origin is allowed.
+fn cors_layer(cors: &CorsConfig) -> Option<CorsLayer> {
+    if !cors.enabled() {
+        return None;
+    }
+    let any = cors.origins.iter().any(|o| o == "*");
+    let origins = if any {
+        AllowOrigin::any()
+    } else {
+        AllowOrigin::list(
+            cors.origins
+                .iter()
+                .filter_map(|o| HeaderValue::from_str(o).ok()),
+        )
+    };
+    let methods: Vec<Method> = if cors.methods.is_empty() {
+        ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+            .iter()
+            .map(|m| Method::from_bytes(m.as_bytes()).expect("valid method"))
+            .collect()
+    } else {
+        cors.methods
+            .iter()
+            .filter_map(|m| Method::from_bytes(m.to_ascii_uppercase().as_bytes()).ok())
+            .collect()
+    };
+    let headers: Vec<HeaderName> = if cors.headers.is_empty() {
+        ["authorization", "content-type", "accept", "prefer"]
+            .iter()
+            .map(|h| HeaderName::from_static(h))
+            .collect()
+    } else {
+        cors.headers
+            .iter()
+            .filter_map(|h| HeaderName::from_bytes(h.as_bytes()).ok())
+            .collect()
+    };
+    let mut layer = CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods(AllowMethods::list(methods))
+        .allow_headers(AllowHeaders::list(headers))
+        .allow_credentials(cors.credentials);
+    if let Some(secs) = cors.max_age {
+        layer = layer.max_age(Duration::from_secs(secs));
+    }
+    Some(layer)
 }
 
 fn is_ui_path(path: &str) -> bool {

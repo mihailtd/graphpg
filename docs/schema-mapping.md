@@ -197,6 +197,38 @@ A simple `LANGUAGE sql` function (one `SELECT`, not `SECURITY DEFINER`, no `SET`
 
 ---
 
+## REST and OpenAPI
+
+The REST API names a **resource** after its table or view (`/rest/forums`) and a function after its SQL name (`/rest/rpc/add`); fields and function arguments use the GraphQL names (`camelCase`, so `archived_at` is `archivedAt`), and a table's `entities:` configuration (`omit`, `omit_operations`, `description`, ...) applies to both APIs. When two schemas have a table of the same name, REST serves the default schema's. `rpc` and `search` are reserved paths: tables with those names are not served over REST.
+
+Values are JSON, in the shapes the OpenAPI document describes:
+
+| PostgreSQL | JSON in REST rows | OpenAPI schema |
+| :--- | :--- | :--- |
+| `int2`, `int4` | number | `integer` (`int32`) |
+| `int8` | **string** (`"9007199254740993"`): JSON numbers are doubles | `string`, digits |
+| `float4`, `float8` | number | `number` |
+| `numeric`, `money` | **string** (`"12.50"`): exact | `string`, decimal |
+| `bool` | boolean | `boolean` |
+| `text`, `varchar`, `citext` | string (`maxLength` from `varchar(n)`) | `string` |
+| `uuid` | string | `string`, `uuid` |
+| `date` | `"2026-01-02"` | `string`, `date` |
+| `timestamptz` | ISO 8601 with offset, `"2026-01-02T03:04:05+00:00"` | `string`, `date-time` |
+| `timestamp`, `time` | ISO 8601 without a zone | `string` |
+| `interval` | ISO 8601 duration, `"P1DT2H"` | `string`, `duration` |
+| `bytea` | base64 string | `string`, `contentEncoding: base64` |
+| `json`, `jsonb` | any JSON value | any |
+| enum | the GraphQL value (`PAID`, not the label `paid`) | `string`, `enum` |
+| composite type | object of its attributes | `object` |
+| range (`int4range`, `tstzrange`, ...) | `{"start": {"value": 1, "inclusive": true}, "end": {...}, "isEmpty": false}`; a missing bound is `null` | `object` |
+| multirange | list of ranges | `array` |
+| array | array | `array` |
+| `inet`, `cidr`, `macaddr`, `tsvector`, `ltree` | string | `string` |
+| `vector` (pgvector) | array of numbers | `array` of `number` |
+| PostGIS `geometry` / `geography` | GeoJSON | any |
+
+Nullable columns are `["<type>", "null"]` in the document (JSON Schema 2020-12), `NOT NULL` columns without a default are `required`, generated and read-only columns are left out of write bodies, and column comments become descriptions. The bodies of `POST` and `PATCH` are the GraphQL input types, relations included (see [nested writes](rest-api.md#nested-writes)).
+
 ## Scalar & Array Types
 
 Every column type has a GraphQL type whose values round-trip:
