@@ -4886,6 +4886,58 @@ impl<'a> PlanningContext<'a> {
         let cast = col.pg_type.sql_cast();
         let is_array = col.pg_type.is_array();
 
+        // Regular expressions, `IS DISTINCT FROM`, and a comparison against any or all of a list
+        let is_text = matches!(
+            col.pg_type,
+            PgType::Text | PgType::Varchar | PgType::Char | PgType::Citext
+        );
+        match op {
+            "regex" if is_text => return Some(template("{c} ~ {0}", vec![value.clone()])),
+            "iregex" if is_text => return Some(template("{c} ~* {0}", vec![value.clone()])),
+            // Parameters are text: a null is no value to bind
+            "isDistinctFrom" if value.is_null() => {
+                return Some(template("{c} IS NOT NULL", vec![]))
+            }
+            "isDistinctFrom" => {
+                let cast = cast
+                    .as_deref()
+                    .map(|c| format!("::{c}"))
+                    .unwrap_or_default();
+                return Some(template(
+                    &format!("{{c}} IS DISTINCT FROM {{0}}{cast}"),
+                    vec![input(value)],
+                ));
+            }
+            "likeAny" | "likeAll" | "ilikeAny" | "ilikeAll" if is_text => {
+                let like = if op.starts_with('i') { "ILIKE" } else { "LIKE" };
+                let quantifier = if op.ends_with("All") { "ALL" } else { "ANY" };
+                let list = value.as_array()?;
+                return Some(template(
+                    &format!("{{c}} {like} {quantifier}({{0}}::text[])"),
+                    vec![pg_array_literal(&serde_json::Value::Array(list.clone()))],
+                ));
+            }
+            _ => {}
+        }
+        for (name, sql) in [
+            ("lessThan", "<"),
+            ("lessThanOrEqualTo", "<="),
+            ("greaterThan", ">"),
+            ("greaterThanOrEqualTo", ">="),
+        ] {
+            let quantifier = match op.strip_prefix(name) {
+                Some("Any") => "ANY",
+                Some("All") => "ALL",
+                _ => continue,
+            };
+            let (list, cast) = (value.as_array()?, cast.as_deref()?);
+            let items: Vec<serde_json::Value> = list.iter().map(input).collect();
+            return Some(template(
+                &format!("{{c}} {sql} {quantifier}({{0}}::{cast}[])"),
+                vec![pg_array_literal(&serde_json::Value::Array(items))],
+            ));
+        }
+
         Some(match op {
             "isNull" => FilterExpr::IsNull {
                 column: col.name.clone(),

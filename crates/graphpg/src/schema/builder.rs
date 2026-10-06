@@ -895,12 +895,26 @@ impl SchemaBuilder {
         sdl.push_str("  notLike: String\n");
         sdl.push_str("  ilike: String\n");
         sdl.push_str("  notIlike: String\n");
+        sdl.push_str("  \"\"\"POSIX regular expression match (`~`).\"\"\"\n");
+        sdl.push_str("  regex: String\n");
+        sdl.push_str("  \"\"\"Case-insensitive POSIX regular expression match (`~*`).\"\"\"\n");
+        sdl.push_str("  iregex: String\n");
+        sdl.push_str(
+            "  \"\"\"`IS DISTINCT FROM`: like `notEqualTo`, but a null is a value.\"\"\"\n",
+        );
+        sdl.push_str("  isDistinctFrom: String\n");
+        sdl.push_str("  \"\"\"`LIKE` any or all of the patterns.\"\"\"\n");
+        sdl.push_str("  likeAny: [String!]\n  likeAll: [String!]\n  ilikeAny: [String!]\n  ilikeAll: [String!]\n");
+        sdl.push_str("  \"\"\"A comparison that holds against any or all of the values (`< ANY (...)`).\"\"\"\n");
+        sdl.push_str("  lessThanAny: [String!]\n  lessThanAll: [String!]\n  lessThanOrEqualToAny: [String!]\n  lessThanOrEqualToAll: [String!]\n");
+        sdl.push_str("  greaterThanAny: [String!]\n  greaterThanAll: [String!]\n  greaterThanOrEqualToAny: [String!]\n  greaterThanOrEqualToAll: [String!]\n");
         sdl.push_str("}\n\n");
 
         for (name, ty, ordered) in COMPARISON_FILTERS {
             sdl.push_str(&format!("input {name} {{\n"));
             sdl.push_str("  isNull: Boolean\n");
             sdl.push_str(&format!("  equalTo: {ty}\n  notEqualTo: {ty}\n"));
+            sdl.push_str(&format!("  isDistinctFrom: {ty}\n"));
             if *ty != "Boolean" {
                 sdl.push_str(&format!("  in: [{ty}!]\n  notIn: [{ty}!]\n"));
             }
@@ -908,6 +922,14 @@ impl SchemaBuilder {
                 sdl.push_str(&format!(
                     "  lessThan: {ty}\n  lessThanOrEqualTo: {ty}\n  greaterThan: {ty}\n  greaterThanOrEqualTo: {ty}\n"
                 ));
+                for name in [
+                    "lessThan",
+                    "lessThanOrEqualTo",
+                    "greaterThan",
+                    "greaterThanOrEqualTo",
+                ] {
+                    sdl.push_str(&format!("  {name}Any: [{ty}!]\n  {name}All: [{ty}!]\n"));
+                }
             }
             sdl.push_str("}\n\n");
         }

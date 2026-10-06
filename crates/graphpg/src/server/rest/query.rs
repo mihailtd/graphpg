@@ -137,6 +137,30 @@ pub fn normalize_operator(op: &str) -> &'static str {
         "within" => "within",
         "withinDistance" => "withinDistance",
         "intersectsBox" => "intersectsBox",
+        "regex" | "match" => "regex",
+        "iregex" | "imatch" => "iregex",
+        "isDistinctFrom" | "isdistinct" | "isDistinct" => "isDistinctFrom",
+        "likeAny" => "likeAny",
+        "likeAll" => "likeAll",
+        "ilikeAny" => "ilikeAny",
+        "ilikeAll" => "ilikeAll",
+        "lessThanAny" | "ltAny" => "lessThanAny",
+        "lessThanAll" | "ltAll" => "lessThanAll",
+        "lessThanOrEqualToAny" | "lteAny" => "lessThanOrEqualToAny",
+        "lessThanOrEqualToAll" | "lteAll" => "lessThanOrEqualToAll",
+        "greaterThanAny" | "gtAny" => "greaterThanAny",
+        "greaterThanAll" | "gtAll" => "greaterThanAll",
+        "greaterThanOrEqualToAny" | "gteAny" => "greaterThanOrEqualToAny",
+        "greaterThanOrEqualToAll" | "gteAll" => "greaterThanOrEqualToAll",
+        "notContains" => "notContains",
+        "strictlyLeftOf" => "strictlyLeftOf",
+        "strictlyRightOf" => "strictlyRightOf",
+        "adjacentTo" => "adjacentTo",
+        "matchesPath" => "matchesPath",
+        "existsPath" => "existsPath",
+        "hasKey" => "hasKey",
+        "hasAnyKeys" => "hasAnyKeys",
+        "hasAllKeys" => "hasAllKeys",
         _ => "",
     }
 }
@@ -257,6 +281,47 @@ fn parse_filter_value(
             "false" | "0" => Ok(false.into()),
             _ => Err(format!("`{what}` must be true or false, got `{val}`")),
         },
+        "contains" | "includes" | "containedBy" | "overlaps"
+            if matches!(col.map(|c| &c.pg_type), Some(PgType::Array(_))) =>
+        {
+            list_value(
+                val,
+                col.and_then(|c| match &c.pg_type {
+                    PgType::Array(inner) => Some(
+                        crate::catalog::FunctionArgument {
+                            name: c.name.clone(),
+                            pg_type: (**inner).clone(),
+                            has_default: false,
+                        }
+                        .as_column(),
+                    ),
+                    _ => None,
+                })
+                .as_ref(),
+                what,
+            )
+        }
+        "contains" | "includes" | "containedBy" | "equalTo" | "notEqualTo"
+            if matches!(col.map(|c| &c.pg_type), Some(PgType::Json | PgType::Jsonb)) =>
+        {
+            Ok(serde_json::from_str(val).unwrap_or_else(|_| val.into()))
+        }
+        "hasAnyKeys" | "hasAllKeys" | "likeAny" | "likeAll" | "ilikeAny" | "ilikeAll" => {
+            let strings = list_value(val, None, what)?;
+            Ok(match strings {
+                serde_json::Value::Array(items) => serde_json::Value::Array(
+                    items
+                        .into_iter()
+                        .map(|v| match v {
+                            serde_json::Value::String(_) => v,
+                            other => other.to_string().into(),
+                        })
+                        .collect(),
+                ),
+                other => other,
+            })
+        }
+        op if op.ends_with("Any") || op.ends_with("All") => list_value(val, col, what),
         "in" | "notIn" => {
             if val.starts_with('[') && val.ends_with(']') {
                 return serde_json::from_str(val)
@@ -268,6 +333,58 @@ fn parse_filter_value(
                 .map(serde_json::Value::Array)
         }
         _ => parse_scalar_value(val, col, what),
+    }
+}
+
+/// A list value: a JSON array, or comma-separated scalars typed by `col`.
+fn list_value(
+    val: &str,
+    col: Option<&ColumnMetadata>,
+    what: &str,
+) -> Result<serde_json::Value, String> {
+    if val.starts_with('[') && val.ends_with(']') {
+        return serde_json::from_str(val)
+            .map_err(|e| format!("`{what}` is not a valid JSON array: {e}"));
+    }
+    val.split(',')
+        .map(|s| parse_scalar_value(s.trim(), col, what))
+        .collect::<Result<Vec<_>, _>>()
+        .map(serde_json::Value::Array)
+}
+
+/// Turns `{"or": {"0": ..., "1": ...}}`, which is what `filter[or][0][...]` builds, into the
+/// lists `and` and `or` take.
+pub(super) fn arrayify_groups(filter: serde_json::Value) -> serde_json::Value {
+    match filter {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    let value = arrayify_groups(value);
+                    let numbered = |m: &serde_json::Map<String, serde_json::Value>| {
+                        !m.is_empty() && m.keys().all(|k| k.parse::<usize>().is_ok())
+                    };
+                    match value {
+                        serde_json::Value::Object(group)
+                            if matches!(key.as_str(), "and" | "or") && numbered(&group) =>
+                        {
+                            let mut items: Vec<(usize, serde_json::Value)> = group
+                                .into_iter()
+                                .filter_map(|(k, v)| Some((k.parse().ok()?, v)))
+                                .collect();
+                            items.sort_by_key(|(i, _)| *i);
+                            (
+                                key,
+                                serde_json::Value::Array(
+                                    items.into_iter().map(|(_, v)| v).collect(),
+                                ),
+                            )
+                        }
+                        other => (key, other),
+                    }
+                })
+                .collect(),
+        ),
+        other => other,
     }
 }
 
@@ -307,7 +424,11 @@ fn resolve_column_for_path<'a>(
 ) -> Option<&'a ColumnMetadata> {
     let mut current = table_meta;
     for (i, segment) in path.iter().enumerate() {
-        if matches!(segment.as_str(), "some" | "every" | "none") {
+        if matches!(
+            segment.as_str(),
+            "some" | "every" | "none" | "and" | "or" | "not"
+        ) || segment.parse::<usize>().is_ok()
+        {
             continue;
         }
         if i == path.len() - 1 {
@@ -517,6 +638,7 @@ pub fn parse_query_params(
         }
     }
 
+    query.filter = query.filter.take().map(arrayify_groups);
     Ok(query)
 }
 
