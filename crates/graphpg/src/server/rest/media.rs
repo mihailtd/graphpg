@@ -83,6 +83,52 @@ pub fn content_type(headers: &HeaderMap) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Ranges
+// ---------------------------------------------------------------------------------------------
+
+/// The `items` range unit of a list: `Range: items=0-24` asks for rows 0 to 24.
+pub const RANGE_UNIT: &str = "items";
+
+/// The rows a `Range` header asks for: `first` is the offset, `last` is `None` for an open
+/// end (`items=10-`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemsRange {
+    pub first: usize,
+    pub last: Option<usize>,
+}
+
+/// `Range` as RFC 9110 14.2 has it: another unit, several ranges or a suffix (`items=-5`)
+/// are ignored (the whole list is sent); `items=5-2` is a `416`.
+pub fn parse_range(headers: &HeaderMap) -> Result<Option<ItemsRange>, ProblemDetails> {
+    let Some(raw) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) else {
+        return Ok(None);
+    };
+    let Some(spec) = raw.trim().strip_prefix("items=") else {
+        return Ok(None);
+    };
+    let Some((first, last)) = spec.trim().split_once('-') else {
+        return Ok(None);
+    };
+    let Ok(first) = first.trim().parse::<usize>() else {
+        return Ok(None);
+    };
+    let last = match last.trim() {
+        "" => None,
+        text => match text.parse::<usize>() {
+            Ok(last) => Some(last),
+            Err(_) => return Ok(None),
+        },
+    };
+    if last.is_some_and(|last| last < first) {
+        return Err(ProblemDetails::range_not_satisfiable(
+            format!("`{raw}` ends before it starts"),
+            None,
+        ));
+    }
+    Ok(Some(ItemsRange { first, last }))
+}
+
+// ---------------------------------------------------------------------------------------------
 // CSV
 // ---------------------------------------------------------------------------------------------
 
@@ -400,6 +446,35 @@ mod tests {
         assert_eq!(records.len(), 3);
         assert_eq!(records[1][1].0, "a, \"b\"\nc");
         assert!(csv_records("a,\"b").is_err());
+    }
+
+    #[test]
+    fn ranges_of_items() {
+        let h = |v: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(header::RANGE, v.parse().unwrap());
+            h
+        };
+        assert_eq!(parse_range(&HeaderMap::new()).unwrap(), None);
+        assert_eq!(
+            parse_range(&h("items=0-24")).unwrap(),
+            Some(ItemsRange {
+                first: 0,
+                last: Some(24)
+            })
+        );
+        assert_eq!(
+            parse_range(&h("items=10-")).unwrap(),
+            Some(ItemsRange {
+                first: 10,
+                last: None
+            })
+        );
+        // ignored: another unit, a suffix, several ranges, garbage
+        for ignored in ["bytes=0-5", "items=-5", "items=0-1,5-6", "items=a-b"] {
+            assert_eq!(parse_range(&h(ignored)).unwrap(), None, "{ignored}");
+        }
+        assert!(parse_range(&h("items=5-2")).is_err());
     }
 
     #[test]

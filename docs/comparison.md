@@ -85,8 +85,8 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Filter, order and limit *inside* an embedding | No in REST (yes in GraphQL, per field) | Yes (`posts.order=…`, `posts.limit=…`, `posts.status=eq.x`) |
 | Spread (`...author(name)`) | No | Yes |
 | Computed relationships | Functions mounted on tables (GraphQL fields); not selectable through REST | Yes (set-returning functions) |
-| Pagination | `first` / `after` / `last` / `before` (keyset, stable under writes), `offset`; `Link` headers | `limit` / `offset`, `Range` header; keyset not supported |
-| Total count | `Prefer: count=exact` (`X-Total-Count`); opt-in | `Prefer: count=exact`, `planned`, `estimated` (`Content-Range`) |
+| Pagination | `first` / `after` / `last` / `before` (keyset, stable under writes), `offset`, `Range: items=A-B` (`206`, `Content-Range`, `416`); `Link` headers | `limit` / `offset`, `Range` header; keyset not supported |
+| Total count | `Prefer: count=exact` (`X-Total-Count`, and the total in `Content-Range`); opt-in; no `planned` / `estimated` | `Prefer: count=exact`, `planned`, `estimated` (`Content-Range`) |
 | Server-side maximum | `limits.page_size.max` (rejects), default page size | `db-max-rows` (silently truncates) |
 | Aggregates | `min`, `max`, `sum`, `avg`, `distinctCount`, `stddev*`, `variance*`, `median`, `percentile`; `group` by columns, truncated dates and bins; `having`; time zones; gap filling | `avg`, `count`, `max`, `min`, `sum`; grouping by the other selected columns; **disabled by default**; no `HAVING`; no ordering by an aggregate |
 | JSON column access | The whole value; JSON-key filters; a `path` argument in GraphQL | `->` / `->>` in `select`, filters and `order` |
@@ -201,7 +201,7 @@ The grammar differs but maps one to one for the common cases:
 | `GET /people?select=*,posts(*)` | `GET /rest/people?include=posts` |
 | `GET /people?or=(age.lt.18,age.gt.65)` | `POST /rest/people/search` with `{"filter": {"or": [{"age": {"lt": 18}}, {"age": {"gt": 65}}]}}` |
 | `GET /people?limit=20&offset=40` | `GET /rest/people?first=20&offset=40`, or follow the `Link: rel="next"` header (keyset) |
-| `Range: 0-19` / `Content-Range` | Not supported: use `first` / `offset` |
+| `Range: 0-19` / `Content-Range` | `Range: items=0-19` → `206` with `Content-Range: items 0-19/*` (the total with `Prefer: count=exact`) |
 | `Prefer: count=exact` | `Prefer: count=exact` → `X-Total-Count` |
 | `POST /people` + `Prefer: return=representation` | `POST /rest/people` (the representation is the default; `return=minimal` for none) |
 | `POST` + `resolution=merge-duplicates` | `PUT /rest/people/<key>` |
@@ -216,7 +216,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### When PostgREST fits better
 
-- You need **update or delete many rows by a filter**, or `Range` / `Content-Range` pagination.
+- You need **update or delete many rows by a filter**.
 - You need **GeoJSON, XML, plain-text or custom media types** (domains, aggregates) from the REST API itself.
 - You rely on **embedded filters, ordering and limits**, spread, or `!inner` joins in one URL.
 - You need **POSIX regular expressions**, JSON arrow operators in the URL, or `NULLS FIRST` / `LAST`.
@@ -236,7 +236,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### Known gaps
 
-What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, GeoJSON, XML and custom media types, `Range` headers, schema reload in production without a restart, a Prometheus metrics endpoint, security headers, regular-expression filters, and `Accept-Profile`-style schema selection.
+What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, GeoJSON, XML and custom media types, `planned` / `estimated` counts, schema reload in production without a restart, a Prometheus metrics endpoint, security headers, regular-expression filters, and `Accept-Profile`-style schema selection.
 
 ## Where graphpg is a fit
 

@@ -114,6 +114,17 @@ impl ProblemDetails {
         Self::new(StatusCode::FORBIDDEN, detail).with_code("FORBIDDEN")
     }
 
+    /// `416`, with the size of the whole in `Content-Range: items */N` (RFC 9110 14.4).
+    pub fn range_not_satisfiable(detail: impl Into<String>, total: Option<i64>) -> Self {
+        let mut problem =
+            Self::new(StatusCode::RANGE_NOT_SATISFIABLE, detail).with_code("RANGE_NOT_SATISFIABLE");
+        let size = total.map_or_else(|| "*".to_string(), |n| n.to_string());
+        if let Ok(value) = header::HeaderValue::from_str(&format!("items */{size}")) {
+            problem.headers.push((header::CONTENT_RANGE, value));
+        }
+        problem
+    }
+
     pub fn not_acceptable(detail: impl Into<String>) -> Self {
         Self::new(StatusCode::NOT_ACCEPTABLE, detail).with_code("NOT_ACCEPTABLE")
     }

@@ -314,11 +314,15 @@ impl OpenApiGenerator {
                 "summary": format!("List {name}"),
                 "description": table.description.clone().unwrap_or_else(|| format!("Retrieve rows from `{name}`")),
                 "operationId": format!("list_{name}"),
-                "parameters": Self::generate_list_parameters(table, catalog, &config.limits),
+                "parameters": Self::list_parameters_with_range(table, catalog, &config.limits),
                 "responses": responses(json!({
                     "200": {
                         "description": format!("A list of {name} rows"),
                         "headers": {
+                            "Accept-Ranges": {
+                                "description": "`items`: the list takes `Range: items=A-B`",
+                                "schema": { "type": "string", "const": "items" }
+                            },
                             "Link": {
                                 "description": "RFC 8288 `next` / `prev` links carrying the cursors",
                                 "schema": { "type": "string" }
@@ -333,8 +337,24 @@ impl OpenApiGenerator {
                             "application/json": { "schema": rows.clone() },
                             "text/csv": { "schema": { "type": "string" } }
                         }
+                    },
+                    "206": {
+                        "description": "Partial Content: the rows of `Range: items=A-B`",
+                        "headers": {
+                            "Content-Range": {
+                                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                                "schema": { "type": "string" }
+                            },
+                            "Link": { "schema": { "type": "string" } },
+                            "X-Total-Count": { "schema": { "type": "integer" } }
+                        },
+                        "content": {
+                            "application/json": { "schema": rows.clone() },
+                            "text/csv": { "schema": { "type": "string" } }
+                        }
                     }
-                }), &[("406", "Not Acceptable: the list is `application/json` or `text/csv`")]),
+                }), &[("406", "Not Acceptable: the list is `application/json` or `text/csv`"),
+                      ("416", "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`")]),
             });
             if deprecated {
                 op["deprecated"] = json!(true);
@@ -1235,6 +1255,23 @@ impl OpenApiGenerator {
         }
         out.push((name.clone(), row));
         Some(out)
+    }
+
+    /// The parameters of a list, and the `Range` header.
+    fn list_parameters_with_range(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+        limits: &LimitsConfig,
+    ) -> Value {
+        let mut params = Self::generate_list_parameters(table, catalog, limits);
+        if let Some(params) = params.as_array_mut() {
+            params.push(json!({
+                "name": "Range", "in": "header",
+                "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
+                "schema": { "type": "string", "pattern": "^items=\\d+-\\d*$" }
+            }));
+        }
+        params
     }
 
     /// The schema of a column with the keywords its `CHECK` constraints state.

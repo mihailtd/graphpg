@@ -1,0 +1,230 @@
+//! `Range: items=A-B` on lists: `206 Partial Content`, `Content-Range`, `416`, and how the total
+//! is known only when `Prefer: count=exact` asks for it.
+mod common;
+use axum::body::Body;
+use axum::http::{HeaderMap, Request, StatusCode};
+use graphpg::catalog::CatalogInspector;
+use graphpg::schema::SchemaBuilder;
+use graphpg::server::{create_pool, create_router, DebugOptions, ServerState};
+use http_body_util::BodyExt;
+use serde_json::Value;
+use std::sync::Arc;
+use tokio_postgres::NoTls;
+use tower::ServiceExt;
+
+struct Env {
+    app: axum::Router,
+    client: tokio_postgres::Client,
+}
+
+async fn env() -> Env {
+    common::ensure_rest_extras_fixture().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema("rest_extras")
+        .await
+        .unwrap();
+    let graphql = SchemaBuilder::build(&catalog).unwrap();
+    let state = ServerState::new(
+        create_pool(common::db_url(), 4).unwrap(),
+        graphql,
+        catalog,
+        "rest_extras".to_string(),
+        DebugOptions::default(),
+    );
+    Env {
+        app: create_router(Arc::new(state)),
+        client,
+    }
+}
+
+struct Reply {
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Vec<u8>,
+}
+
+impl Reply {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).to_string()
+    }
+    fn json(&self) -> Value {
+        serde_json::from_slice(&self.body).unwrap_or_else(|_| panic!("{}", self.text()))
+    }
+    fn header(&self, name: &str) -> &str {
+        self.headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+    }
+}
+
+impl Env {
+    async fn call(
+        &self,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+    ) -> Reply {
+        let mut builder = Request::builder().method(method).uri(uri);
+        for (k, v) in headers {
+            builder = builder.header(*k, *v);
+        }
+        let res = self
+            .app
+            .clone()
+            .oneshot(builder.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        let (status, headers) = (res.status(), res.headers().clone());
+        let body = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+        Reply {
+            status,
+            headers,
+            body,
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_range_is_a_page_with_a_content_range() {
+    let env = env().await;
+    env.client
+        .batch_execute(
+            "DELETE FROM rest_extras.people WHERE id BETWEEN 9301 AND 9305;
+             INSERT INTO rest_extras.people VALUES (9301,'a'),(9302,'b'),(9303,'c'),(9304,'d'),(9305,'e');",
+        )
+        .await
+        .unwrap();
+    let list = "/rest/people?filter[id][gte]=9301&filter[id][lte]=9305&order=id&fields=id";
+    let ids = |r: &Reply| -> Vec<i64> {
+        r.json()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_i64().unwrap())
+            .collect()
+    };
+
+    // every list says it takes ranges
+    let plain = env.call("GET", list, &[], vec![]).await;
+    assert_eq!(plain.status, StatusCode::OK);
+    assert_eq!(plain.header("accept-ranges"), "items");
+    assert!(plain.header("content-range").is_empty());
+
+    // the total is `*` unless a count is asked for
+    let first = env
+        .call("GET", list, &[("range", "items=0-1")], vec![])
+        .await;
+    assert_eq!(
+        first.status,
+        StatusCode::PARTIAL_CONTENT,
+        "{}",
+        first.text()
+    );
+    assert_eq!(ids(&first), [9301, 9302]);
+    assert_eq!(first.header("content-range"), "items 0-1/*");
+    let counted = env
+        .call(
+            "GET",
+            list,
+            &[("range", "items=1-2"), ("prefer", "count=exact")],
+            vec![],
+        )
+        .await;
+    assert_eq!(ids(&counted), [9302, 9303]);
+    assert_eq!(counted.header("content-range"), "items 1-2/5");
+
+    // an open end runs to the last row
+    let rest = env
+        .call(
+            "GET",
+            list,
+            &[("range", "items=3-"), ("prefer", "count=exact")],
+            vec![],
+        )
+        .await;
+    assert_eq!(ids(&rest), [9304, 9305]);
+    assert_eq!(rest.header("content-range"), "items 3-4/5");
+    assert_eq!(rest.status, StatusCode::PARTIAL_CONTENT);
+
+    // the whole list is a `200`
+    let all = env
+        .call(
+            "GET",
+            list,
+            &[("range", "items=0-99"), ("prefer", "count=exact")],
+            vec![],
+        )
+        .await;
+    assert_eq!(all.status, StatusCode::OK);
+    assert_eq!(ids(&all).len(), 5);
+    assert_eq!(all.header("content-range"), "items 0-4/5");
+
+    // HEAD carries the same headers
+    let head = env
+        .call("HEAD", list, &[("range", "items=0-1")], vec![])
+        .await;
+    assert_eq!(head.status, StatusCode::PARTIAL_CONTENT);
+    assert!(head.body.is_empty());
+    assert_eq!(head.header("content-range"), "items 0-1/*");
+
+    // ranges that are ignored: another unit, a suffix
+    for ignored in ["bytes=0-1", "items=-2"] {
+        let res = env.call("GET", list, &[("range", ignored)], vec![]).await;
+        assert_eq!(res.status, StatusCode::OK, "{ignored}");
+        assert_eq!(ids(&res).len(), 5);
+    }
+
+    env.client
+        .batch_execute("DELETE FROM rest_extras.people WHERE id BETWEEN 9301 AND 9305")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_range_that_cannot_be_served_is_a_416() {
+    let env = env().await;
+    env.client
+        .batch_execute(
+            "DELETE FROM rest_extras.people WHERE id BETWEEN 9311 AND 9312;
+             INSERT INTO rest_extras.people VALUES (9311,'a'),(9312,'b');",
+        )
+        .await
+        .unwrap();
+    let list = "/rest/people?filter[id][gte]=9311&filter[id][lte]=9312&order=id";
+    // past the end: the size of the whole is in `Content-Range`
+    let past = env
+        .call("GET", list, &[("range", "items=10-12")], vec![])
+        .await;
+    assert_eq!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.header("content-range"), "items */2");
+    assert!(past
+        .header("content-type")
+        .starts_with("application/problem+json"));
+    // it ends before it starts
+    let backwards = env
+        .call("GET", list, &[("range", "items=5-2")], vec![])
+        .await;
+    assert_eq!(backwards.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    // it does not mix with the other ways to page
+    let mixed = env
+        .call(
+            "GET",
+            &format!("{list}&first=1"),
+            &[("range", "items=0-0")],
+            vec![],
+        )
+        .await;
+    assert_eq!(mixed.status, StatusCode::BAD_REQUEST);
+    env.client
+        .batch_execute("DELETE FROM rest_extras.people WHERE id BETWEEN 9311 AND 9312")
+        .await
+        .unwrap();
+}

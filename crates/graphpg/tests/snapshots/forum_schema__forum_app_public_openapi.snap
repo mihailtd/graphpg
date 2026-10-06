@@ -157,12 +157,28 @@ expression: openapi
                 "count=exact"
               ]
             }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
+            "schema": {
+              "type": "string",
+              "pattern": "^items=\\d+-\\d*$"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "A list of forums rows",
             "headers": {
+              "Accept-Ranges": {
+                "description": "`items`: the list takes `Range: items=A-B`",
+                "schema": {
+                  "type": "string",
+                  "const": "items"
+                }
+              },
               "Link": {
                 "description": "RFC 8288 `next` / `prev` links carrying the cursors",
                 "schema": {
@@ -178,6 +194,42 @@ expression: openapi
               "Preference-Applied": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/forums"
+                  }
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial Content: the rows of `Range: items=A-B`",
+            "headers": {
+              "Content-Range": {
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Link": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "integer"
                 }
               }
             },
@@ -229,6 +281,16 @@ expression: openapi
           },
           "406": {
             "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -562,12 +624,28 @@ expression: openapi
                 "count=exact"
               ]
             }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
+            "schema": {
+              "type": "string",
+              "pattern": "^items=\\d+-\\d*$"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "A list of forums rows",
             "headers": {
+              "Accept-Ranges": {
+                "description": "`items`: the list takes `Range: items=A-B`",
+                "schema": {
+                  "type": "string",
+                  "const": "items"
+                }
+              },
               "Link": {
                 "description": "RFC 8288 `next` / `prev` links carrying the cursors",
                 "schema": {
@@ -587,6 +665,27 @@ expression: openapi
               }
             }
           },
+          "206": {
+            "description": "Partial Content: the rows of `Range: items=A-B`",
+            "headers": {
+              "Content-Range": {
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Link": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "400": {
             "description": "Bad Request: an unknown or malformed parameter, operator, field or body"
           },
@@ -598,6 +697,9 @@ expression: openapi
           },
           "406": {
             "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+          },
+          "416": {
+            "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`"
           },
           "500": {
             "description": "Internal Server Error"
@@ -2044,12 +2146,28 @@ expression: openapi
                 "count=exact"
               ]
             }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
+            "schema": {
+              "type": "string",
+              "pattern": "^items=\\d+-\\d*$"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "A list of messages rows",
             "headers": {
+              "Accept-Ranges": {
+                "description": "`items`: the list takes `Range: items=A-B`",
+                "schema": {
+                  "type": "string",
+                  "const": "items"
+                }
+              },
               "Link": {
                 "description": "RFC 8288 `next` / `prev` links carrying the cursors",
                 "schema": {
@@ -2065,6 +2183,42 @@ expression: openapi
               "Preference-Applied": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/messages"
+                  }
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial Content: the rows of `Range: items=A-B`",
+            "headers": {
+              "Content-Range": {
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Link": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "integer"
                 }
               }
             },
@@ -2116,6 +2270,16 @@ expression: openapi
           },
           "406": {
             "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2472,12 +2636,28 @@ expression: openapi
                 "count=exact"
               ]
             }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
+            "schema": {
+              "type": "string",
+              "pattern": "^items=\\d+-\\d*$"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "A list of messages rows",
             "headers": {
+              "Accept-Ranges": {
+                "description": "`items`: the list takes `Range: items=A-B`",
+                "schema": {
+                  "type": "string",
+                  "const": "items"
+                }
+              },
               "Link": {
                 "description": "RFC 8288 `next` / `prev` links carrying the cursors",
                 "schema": {
@@ -2497,6 +2677,27 @@ expression: openapi
               }
             }
           },
+          "206": {
+            "description": "Partial Content: the rows of `Range: items=A-B`",
+            "headers": {
+              "Content-Range": {
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Link": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "400": {
             "description": "Bad Request: an unknown or malformed parameter, operator, field or body"
           },
@@ -2508,6 +2709,9 @@ expression: openapi
           },
           "406": {
             "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+          },
+          "416": {
+            "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`"
           },
           "500": {
             "description": "Internal Server Error"
@@ -4005,12 +4209,28 @@ expression: openapi
                 "count=exact"
               ]
             }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
+            "schema": {
+              "type": "string",
+              "pattern": "^items=\\d+-\\d*$"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "A list of users rows",
             "headers": {
+              "Accept-Ranges": {
+                "description": "`items`: the list takes `Range: items=A-B`",
+                "schema": {
+                  "type": "string",
+                  "const": "items"
+                }
+              },
               "Link": {
                 "description": "RFC 8288 `next` / `prev` links carrying the cursors",
                 "schema": {
@@ -4026,6 +4246,42 @@ expression: openapi
               "Preference-Applied": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/users"
+                  }
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial Content: the rows of `Range: items=A-B`",
+            "headers": {
+              "Content-Range": {
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Link": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "integer"
                 }
               }
             },
@@ -4077,6 +4333,16 @@ expression: openapi
           },
           "406": {
             "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4415,12 +4681,28 @@ expression: openapi
                 "count=exact"
               ]
             }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
+            "schema": {
+              "type": "string",
+              "pattern": "^items=\\d+-\\d*$"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "A list of users rows",
             "headers": {
+              "Accept-Ranges": {
+                "description": "`items`: the list takes `Range: items=A-B`",
+                "schema": {
+                  "type": "string",
+                  "const": "items"
+                }
+              },
               "Link": {
                 "description": "RFC 8288 `next` / `prev` links carrying the cursors",
                 "schema": {
@@ -4440,6 +4722,27 @@ expression: openapi
               }
             }
           },
+          "206": {
+            "description": "Partial Content: the rows of `Range: items=A-B`",
+            "headers": {
+              "Content-Range": {
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Link": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "400": {
             "description": "Bad Request: an unknown or malformed parameter, operator, field or body"
           },
@@ -4451,6 +4754,9 @@ expression: openapi
           },
           "406": {
             "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+          },
+          "416": {
+            "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`"
           },
           "500": {
             "description": "Internal Server Error"
