@@ -134,7 +134,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Media types | JSON (and `application/problem+json` errors); CSV and NDJSON streaming through the GraphQL `/export` endpoint | JSON, CSV, GeoJSON, plain text, XML, binary; custom handlers (domains, aggregates); `application/vnd.pgrst.object` for one row |
 | `HEAD` and `OPTIONS` | `HEAD` answers like `GET` without a body; `OPTIONS` lists the methods and answers CORS preflights | Yes |
 | Several schemas in one deployment | All `database.schemas` merged into one API; if two schemas have a same-named table, REST serves the default schema's | One schema per request, chosen by `Accept-Profile` / `Content-Profile` |
-| CORS | Permissive (configurable headers and origins are planned) | Configurable allowed origins |
+| CORS | Configurable (`server.cors`): any origin in dev, none in prod unless listed | Configurable allowed origins |
 | Request ID / `Server-Timing` / `EXPLAIN` by header | No (tracing spans; GraphQL `debug.explain` in dev) | `X-Request-Id` echo, `Server-Timing`, `Accept: application/vnd.pgrst.plan` |
 
 ### Authentication and authorization
@@ -236,7 +236,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### Known gaps
 
-What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, CSV and other media types ([#101](https://github.com/mihailtd/graphpg/issues/101)), `Range` headers, schema reload in production without a restart, a Prometheus metrics endpoint, configurable CORS and security headers, regular-expression filters, and `Accept-Profile`-style schema selection.
+What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, CSV and other media types ([#101](https://github.com/mihailtd/graphpg/issues/101)), `Range` headers, schema reload in production without a restart, a Prometheus metrics endpoint, security headers, regular-expression filters, and `Accept-Profile`-style schema selection.
 
 ## Where graphpg is a fit
 

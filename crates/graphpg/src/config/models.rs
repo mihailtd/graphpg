@@ -36,6 +36,9 @@ pub struct Config {
     /// The REST API and its OpenAPI description.
     #[serde(default, alias = "rest")]
     pub openapi: OpenapiConfig,
+    /// Security headers on every response.
+    #[serde(default)]
+    pub headers: HeadersConfig,
     /// Schema watching on DDL changes and auto-export.
     #[serde(default)]
     pub watch: WatchConfig,
@@ -354,6 +357,31 @@ impl LimitsConfig {
     }
 }
 
+/// Which security headers are sent.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HeaderPreset {
+    /// `nosniff`, `Referrer-Policy`, HSTS, `X-Frame-Options`, a CSP that allows nothing, and
+    /// a same-origin opener policy. The default in `prod`.
+    #[default]
+    Strict,
+    /// `nosniff` and `Referrer-Policy` only. The default in `dev`.
+    Relaxed,
+    /// None.
+    Off,
+}
+
+/// Security headers: a preset, and header overrides on top of it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadersConfig {
+    #[serde(default)]
+    pub preset: HeaderPreset,
+    /// Headers to set (or remove, with an empty value) after the preset.
+    #[serde(default)]
+    pub set: BTreeMap<String, String>,
+}
+
 /// The HTTP listener.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -364,6 +392,56 @@ pub struct ServerConfig {
     /// Port to listen on.
     #[serde(deserialize_with = "lenient", default = "default_port")]
     pub port: u16,
+    /// Cross-origin requests from browsers. Off in `prod` until origins are listed; `dev`
+    /// allows every origin.
+    #[serde(default)]
+    pub cors: CorsConfig,
+}
+
+/// Cross-origin resource sharing. With no `origins`, no CORS headers are sent and browsers
+/// block cross-origin calls.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CorsConfig {
+    /// Allowed origins, like `https://app.example.com`, or `*` for any.
+    #[serde(default)]
+    pub origins: Vec<String>,
+    /// Allowed methods (default: GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD).
+    #[serde(default)]
+    pub methods: Vec<String>,
+    /// Allowed request headers (default: authorization, content-type, accept, prefer).
+    #[serde(default)]
+    pub headers: Vec<String>,
+    /// Allow cookies and credentials. Needs explicit `origins`, not `*`.
+    #[serde(default, deserialize_with = "switch")]
+    pub credentials: bool,
+    /// Seconds a browser may cache the preflight answer.
+    #[serde(default)]
+    pub max_age: Option<u64>,
+}
+
+impl CorsConfig {
+    pub fn enabled(&self) -> bool {
+        !self.origins.is_empty()
+    }
+
+    fn any_origin(&self) -> bool {
+        self.origins.iter().any(|o| o == "*")
+    }
+
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.credentials && self.any_origin() {
+            problems.push(
+                "server.cors.credentials cannot be combined with origin `*`: list the origins"
+                    .to_string(),
+            );
+        }
+        if self.any_origin() && self.origins.len() > 1 {
+            problems.push("server.cors.origins: `*` cannot be listed with other origins".into());
+        }
+        problems
+    }
 }
 
 fn default_host() -> String {
@@ -378,6 +456,7 @@ impl Default for ServerConfig {
         Self {
             host: default_host(),
             port: default_port(),
+            cors: CorsConfig::default(),
         }
     }
 }
