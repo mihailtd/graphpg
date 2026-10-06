@@ -759,7 +759,11 @@ impl OpenApiGenerator {
     ) -> Value {
         let mut properties = BTreeMap::new();
         for col in table.visible_columns() {
-            let ty = Self::pg_type_to_json_schema(&col.pg_type, catalog);
+            let mut ty = Self::pg_type_to_json_schema(&col.pg_type, catalog);
+            // Exact numbers are strings in responses, but a filter may be given either way
+            if matches!(col.pg_type, PgType::Int8 | PgType::Numeric | PgType::Money) {
+                ty = json!({ "type": ["number", "string"] });
+            }
             let mut ops = BTreeMap::new();
             for op in ["equalTo", "eq", "notEqualTo", "neq"] {
                 ops.insert(op.to_string(), ty.clone());
@@ -952,25 +956,75 @@ impl OpenApiGenerator {
     ) -> serde_json::Value {
         match pg_type {
             PgType::Int2 | PgType::Int4 => json!({ "type": "integer", "format": "int32" }),
-            PgType::Int8 => json!({ "type": "integer", "format": "int64" }),
+            // 64-bit integers and decimals are strings in responses (JSON numbers are doubles)
+            PgType::Int8 => json!({
+                "type": "string",
+                "pattern": "^-?[0-9]+$",
+                "description": "A 64-bit integer, as a string"
+            }),
             PgType::Float4 => json!({ "type": "number", "format": "float" }),
-            PgType::Float8 | PgType::Numeric | PgType::Money => json!({ "type": "number" }),
+            PgType::Float8 => json!({ "type": "number" }),
+            PgType::Numeric | PgType::Money => json!({
+                "type": "string",
+                "pattern": "^-?[0-9]+(\\.[0-9]+)?$",
+                "description": "A decimal number, as a string (exact)"
+            }),
             PgType::Bool => json!({ "type": "boolean" }),
             PgType::Text | PgType::Varchar | PgType::Char | PgType::Citext => {
                 json!({ "type": "string" })
             }
             PgType::Uuid => json!({ "type": "string", "format": "uuid" }),
             PgType::Date => json!({ "type": "string", "format": "date" }),
-            PgType::Time | PgType::TimeTz => json!({ "type": "string", "format": "time" }),
-            PgType::Timestamp | PgType::TimestampTz => {
-                json!({ "type": "string", "format": "date-time" })
+            PgType::TimeTz => json!({ "type": "string", "format": "time" }),
+            PgType::Time => {
+                json!({ "type": "string", "description": "A time of day without a time zone: `10:11:12`" })
             }
+            PgType::TimestampTz => json!({ "type": "string", "format": "date-time" }),
+            PgType::Timestamp => json!({
+                "type": "string",
+                "description": "A date and time without a time zone: `2026-01-02T03:04:05`"
+            }),
             PgType::Interval => json!({ "type": "string", "format": "duration" }),
-            PgType::Bytea => json!({ "type": "string", "format": "binary" }),
-            PgType::Json | PgType::Jsonb => json!({ "type": "object" }),
+            PgType::Bytea => json!({ "type": "string", "contentEncoding": "base64" }),
+            // Any JSON value: an object, an array, a string, ...
+            PgType::Json | PgType::Jsonb => json!({}),
+            PgType::Multirange(range) => json!({
+                "type": "array",
+                "items": Self::pg_type_to_json_schema(range, catalog)
+            }),
+            PgType::TstzRange
+            | PgType::NumRange
+            | PgType::DateRange
+            | PgType::Int4Range
+            | PgType::Int8Range => {
+                let bound_type = match pg_type {
+                    PgType::TstzRange => {
+                        Self::pg_type_to_json_schema(&PgType::TimestampTz, catalog)
+                    }
+                    PgType::NumRange => Self::pg_type_to_json_schema(&PgType::Numeric, catalog),
+                    PgType::DateRange => Self::pg_type_to_json_schema(&PgType::Date, catalog),
+                    PgType::Int8Range => Self::pg_type_to_json_schema(&PgType::Int8, catalog),
+                    _ => Self::pg_type_to_json_schema(&PgType::Int4, catalog),
+                };
+                let bound = json!({
+                    "type": ["object", "null"],
+                    "description": "A bound; null when the range is unbounded on that side",
+                    "properties": { "value": bound_type, "inclusive": { "type": "boolean" } },
+                    "required": ["value", "inclusive"]
+                });
+                json!({
+                    "type": "object",
+                    "description": "A range: `start` is inclusive and `end` exclusive unless `inclusive` says otherwise",
+                    "properties": { "start": bound.clone(), "end": bound, "isEmpty": { "type": "boolean" } }
+                })
+            }
             PgType::Inet | PgType::Cidr => json!({ "type": "string" }),
             PgType::MacAddr | PgType::MacAddr8 => json!({ "type": "string" }),
             PgType::Vector => json!({ "type": "array", "items": { "type": "number" } }),
+            PgType::Geometry | PgType::Geography => json!({
+                "type": "object",
+                "description": "A GeoJSON geometry"
+            }),
             PgType::Array(inner) => {
                 let inner_schema = Self::pg_type_to_json_schema(inner, catalog);
                 json!({ "type": "array", "items": inner_schema })

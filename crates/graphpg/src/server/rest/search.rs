@@ -295,7 +295,7 @@ pub async fn rest_global_search_handler(
         let mut node = vec![RequestField::new("__typename")];
         for table in &tables {
             node.extend(
-                column_fields(table)
+                column_fields(&ctx.catalog, table)
                     .into_iter()
                     .map(|f| f.with_type_condition(&table.type_name)),
             );

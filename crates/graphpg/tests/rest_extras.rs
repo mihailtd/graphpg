@@ -1267,3 +1267,140 @@ async fn openapi_describes_views_aggregates_functions_and_search() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Rows are what the document says they are
+// ---------------------------------------------------------------------------------------------
+
+/// Whether `value` is what `schema` (a JSON Schema of the document) describes: types, nullability,
+/// enums, properties and items.
+fn conforms(doc: &Value, schema: &Value, value: &Value, at: &str) -> Result<(), String> {
+    if let Some(r) = schema["$ref"].as_str() {
+        let target =
+            &doc["components"]["schemas"][r.strip_prefix("#/components/schemas/").unwrap()];
+        return conforms(doc, target, value, at);
+    }
+    if let Some(options) = schema["anyOf"]
+        .as_array()
+        .or_else(|| schema["oneOf"].as_array())
+    {
+        return if options.iter().any(|o| conforms(doc, o, value, at).is_ok()) {
+            Ok(())
+        } else {
+            Err(format!("{at}: {value} matches none of {schema}"))
+        };
+    }
+    if schema.as_object().is_some_and(|o| o.is_empty()) {
+        return Ok(()); // any JSON value
+    }
+    let kinds: Vec<&str> = match &schema["type"] {
+        Value::String(t) => vec![t.as_str()],
+        Value::Array(ts) => ts.iter().filter_map(|t| t.as_str()).collect(),
+        _ => vec![],
+    };
+    let matches = |kind: &str| match kind {
+        "null" => value.is_null(),
+        "string" => value.is_string(),
+        "integer" => value.is_i64() || value.is_u64(),
+        "number" => value.is_number(),
+        "boolean" => value.is_boolean(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => false,
+    };
+    if !kinds.is_empty() && !kinds.iter().any(|k| matches(k)) {
+        return Err(format!("{at}: {value} is not {kinds:?} ({schema})"));
+    }
+    if let (Some(values), false) = (schema["enum"].as_array(), value.is_null()) {
+        if !values.contains(value) {
+            return Err(format!("{at}: {value} is not one of {values:?}"));
+        }
+    }
+    if let (Some(items), Some(values)) = (schema.get("items"), value.as_array()) {
+        for (i, v) in values.iter().enumerate() {
+            conforms(doc, items, v, &format!("{at}[{i}]"))?;
+        }
+    }
+    if let (Some(props), Some(obj)) = (schema["properties"].as_object(), value.as_object()) {
+        for (k, v) in obj {
+            if let Some(p) = props.get(k) {
+                conforms(doc, p, v, &format!("{at}.{k}"))?;
+            } else if schema["additionalProperties"] == false {
+                return Err(format!("{at}.{k} is not in {schema}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_column_is_read_in_the_shape_the_document_gives_it() {
+    let state = state().await;
+    let doc = (*state.current_openapi_document()).clone();
+    let app = create_router(Arc::new(state));
+
+    // composites and ranges used to come back as `{}`
+    let typed = get(&app, "/rest/typed?order=id").await;
+    let rows = typed.ok().as_array().unwrap();
+    let one = &rows[0];
+    assert_eq!(
+        one["big"], "9007199254740993",
+        "64-bit integers are strings"
+    );
+    assert_eq!(one["price"], "12.50", "decimals are exact strings");
+    assert_eq!(one["doc"], json!({ "a": { "b": [1, 2] } }));
+    assert_eq!(
+        one["list"],
+        json!([1, "two", null]),
+        "json is any JSON, not only an object"
+    );
+    assert_eq!(one["raw"], "3q2+7w==", "bytea is base64");
+    assert_eq!(
+        one["point"],
+        json!({ "x": 1, "y": 2 }),
+        "a composite has its attributes"
+    );
+    assert_eq!(
+        one["points"],
+        json!([{ "x": 3, "y": 4 }, { "x": 5, "y": 6 }])
+    );
+    assert_eq!(
+        one["span"],
+        json!({ "start": { "value": 1, "inclusive": true }, "end": { "value": 5, "inclusive": false }, "isEmpty": false }),
+        "a range has its bounds"
+    );
+    assert_eq!(one["during"]["start"]["value"], "2026-01-01T00:00:00+00:00");
+    assert_eq!(one["spans"].as_array().unwrap().len(), 2);
+    assert_eq!(one["spans"][1]["start"]["value"], 5);
+    assert_eq!(one["mood"], "PAID");
+    // an empty range and an unbounded one
+    assert_eq!(rows[1]["span"]["isEmpty"], true);
+    assert_eq!(rows[1]["during"]["start"], Value::Null);
+    assert_eq!(rows[1]["big"], Value::Null);
+
+    // ... and it all conforms to the schema of the document, for every table of the fixture
+    for resource in [
+        "typed",
+        "orders",
+        "articles",
+        "crews",
+        "sailors",
+        "counters",
+        "paid_orders",
+        "customer_totals",
+    ] {
+        let reply = get(&app, &format!("/rest/{resource}")).await;
+        let rows = reply
+            .ok()
+            .as_array()
+            .unwrap_or_else(|| panic!("{resource}: {}", reply.body));
+        assert!(
+            !rows.is_empty() || resource == "crews" || resource == "sailors",
+            "{resource} has rows"
+        );
+        let schema = &doc["components"]["schemas"][resource];
+        for row in rows {
+            conforms(&doc, schema, row, resource).unwrap_or_else(|e| panic!("{e}"));
+        }
+    }
+}
