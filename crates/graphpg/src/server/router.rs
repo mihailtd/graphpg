@@ -1,7 +1,10 @@
 //! Assembles the HTTP router from modular route definitions per feature:
 //! GraphQL, developer UIs, and health checks, with layered middleware.
 use super::bulk::{export_handler, import_handler};
-use super::http::{graphql_handler, health_handler, openapi_spec_handler, rest_handler};
+use super::http::{
+    graphql_handler, graphql_sdl_handler, graphql_subgraph_handler, health_handler,
+    openapi_spec_handler, rest_handler,
+};
 use super::rest::{
     rest_aggregate_get_handler, rest_aggregate_post_handler, rest_create_handler,
     rest_delete_handler, rest_global_search_handler, rest_item_handler, rest_list_handler,
@@ -29,6 +32,19 @@ pub fn graphql_routes() -> Router<Arc<ServerState>> {
             "/import/{type_name}",
             post(import_handler).layer(DefaultBodyLimit::disable()),
         )
+}
+
+/// Mounts the GraphQL SDL routes: `graphql.sdl_path`, and `graphql.subgraph_path` with federation.
+pub fn sdl_routes(state: &ServerState) -> Router<Arc<ServerState>> {
+    let mut router = Router::new();
+    let Some(config) = state.config.as_ref().filter(|c| c.graphql.sdl) else {
+        return router;
+    };
+    router = router.route(&config.graphql.sdl_path, get(graphql_sdl_handler));
+    if config.graphql.federation.enabled {
+        router = router.route(&config.graphql.subgraph_path, get(graphql_subgraph_handler));
+    }
+    router
 }
 
 /// Mounts the REST API routes:
@@ -184,6 +200,7 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
 
     if state.graphql_enabled {
         router = router.merge(graphql_routes().layer(body_limit));
+        router = router.merge(sdl_routes(&state));
     }
 
     if state.openapi_enabled {

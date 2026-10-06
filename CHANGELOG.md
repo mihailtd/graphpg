@@ -11,6 +11,8 @@ Releases are tagged `vX.Y.Z`; each one has generated notes on the
 - **Pinned schemas**: `graphpg schema export [--check]`, `graphpg export-openapi`, `export.openapi`, and `export.pin` (`fail` in prod, `warn` in dev) compare the exported GraphQL SDL, subgraph and OpenAPI files with the database at startup.
 - Fixed: REST rows returned composite, range and multirange columns as empty objects; the OpenAPI document described `bigint` / `numeric` as numbers (they are strings), `json` as objects, `bytea` as binary and enums by their database labels.
 - **CORS** is configurable (`server.cors`: origins, methods, headers, credentials, `max_age`). It was permissive everywhere; it is now open in dev and off in prod until origins are listed.
+- **Error detail** (`errors.detail`: `masked` in prod, `full` in dev) for GraphQL and REST; GraphQL database errors were shown as they came. A privilege or Row-Level Security refusal is now `PERMISSION_DENIED` (REST: 403) in prod.
+- **Introspection switch** (`graphql.introspection`, off in prod) and the **SDL over HTTP** (`graphql.sdl`, `/schema.graphql`, and `/subgraph.graphql` with federation).
 - Docs: a [comparison with PostgREST](docs/comparison.md#compared-with-postgrest), the REST API guide, safety limits and pinned schemas in the configuration guide.
 
 ## 1.0.1 - 2026-10-04

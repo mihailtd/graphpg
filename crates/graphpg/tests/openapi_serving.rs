@@ -174,3 +174,81 @@ async fn nothing_is_served_that_was_not_asked_for() {
         StatusCode::NOT_FOUND
     );
 }
+
+#[tokio::test]
+async fn the_graphql_sdl_is_served_only_when_asked_for() {
+    let off = app("").await;
+    assert_eq!(
+        get(&off, "/schema.graphql", None).await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    let on = app("graphql:\n  sdl: true\n  sdl_path: /sdl\n").await;
+    let (status, content_type, sdl) = get(&on, "/sdl", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/plain"), "{content_type}");
+    assert!(sdl.contains("type Forum"), "{sdl}");
+    // the default path is not mounted, and the subgraph SDL needs federation
+    assert_eq!(
+        get(&on, "/schema.graphql", None).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(&on, "/subgraph.graphql", None).await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    let federated = app("graphql:\n  sdl: true\n  federation: { enabled: true }\n").await;
+    assert_eq!(
+        get(&federated, "/schema.graphql", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&federated, "/subgraph.graphql", None).await.0,
+        StatusCode::OK
+    );
+
+    // GraphQL off: nothing of it is served
+    let disabled = app("graphql:\n  enabled: false\n  sdl: true\n").await;
+    assert_eq!(
+        get(&disabled, "/schema.graphql", None).await.0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn a_schema_reload_rebuilds_the_openapi_document_with_the_graphql_schema() {
+    common::ensure_forum_fixture().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema("app_public")
+        .await
+        .unwrap();
+    let schema = SchemaBuilder::build(&catalog).unwrap();
+    let state = ServerState::new(
+        create_pool(common::db_url(), 2).unwrap(),
+        schema,
+        catalog.clone(),
+        "app_public".to_string(),
+        DebugOptions::default(),
+    );
+    let has = |state: &ServerState, text: &str| {
+        let doc = state.current_openapi_document().to_string();
+        let sdl = state.current_schema().to_string();
+        (doc.contains(text), sdl.contains(text))
+    };
+    let note = "Described after a DDL change";
+    assert_eq!(has(&state, note), (false, false));
+
+    // DDL changed a table comment: the reload swaps in a schema and a document that show it
+    let mut changed = catalog;
+    changed.tables[0].description = Some(note.to_string());
+    let schema = SchemaBuilder::build(&changed).unwrap();
+    state.reload(schema, changed);
+    assert_eq!(has(&state, note), (true, true));
+}

@@ -36,6 +36,9 @@ pub struct Config {
     /// The REST API and its OpenAPI description.
     #[serde(default, alias = "rest")]
     pub openapi: OpenapiConfig,
+    /// How much of a failure the client sees.
+    #[serde(default)]
+    pub errors: ErrorsConfig,
     /// Security headers on every response.
     #[serde(default)]
     pub headers: HeadersConfig,
@@ -357,6 +360,27 @@ impl LimitsConfig {
     }
 }
 
+/// How much of an unexpected failure (a database error nobody can act on) reaches the client.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ErrorDetail {
+    /// A fixed message, a stable code and a request ID; the real error is logged under that
+    /// ID. The default in `prod`.
+    #[default]
+    Masked,
+    /// The database's own message too. The default in `dev`.
+    Full,
+}
+
+/// Error detail, for GraphQL and REST alike. Typed constraint errors (`EMAIL_TAKEN`) and
+/// invalid input are always shown: the client can act on them.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ErrorsConfig {
+    #[serde(default)]
+    pub detail: ErrorDetail,
+}
+
 /// Which security headers are sent.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -530,9 +554,29 @@ pub struct GraphqlConfig {
     /// Serve the GraphiQL IDE at `/graphiql`. On in `dev` mode, off in `prod`.
     #[serde(default, deserialize_with = "switch")]
     pub ui: bool,
+    /// Answer introspection queries (`__schema`, `__type`). On in `dev` mode, off in `prod`.
+    #[serde(default, deserialize_with = "switch")]
+    pub introspection: bool,
+    /// Serve the schema as SDL at `sdl_path` (and the Federation subgraph SDL at
+    /// `subgraph_path` when federation is on). On in `dev` mode, off in `prod`.
+    #[serde(default, deserialize_with = "switch")]
+    pub sdl: bool,
+    /// Path to serve the GraphQL SDL at (defaults to `/schema.graphql`).
+    #[serde(default = "default_sdl_path")]
+    pub sdl_path: String,
+    /// Path to serve the Federation subgraph SDL at (defaults to `/subgraph.graphql`).
+    #[serde(default = "default_subgraph_path")]
+    pub subgraph_path: String,
     /// Apollo Federation configuration.
     #[serde(default)]
     pub federation: FederationConfig,
+}
+
+fn default_sdl_path() -> String {
+    "/schema.graphql".to_string()
+}
+fn default_subgraph_path() -> String {
+    "/subgraph.graphql".to_string()
 }
 
 impl Default for GraphqlConfig {
@@ -540,6 +584,10 @@ impl Default for GraphqlConfig {
         Self {
             enabled: true,
             ui: false,
+            introspection: false,
+            sdl: false,
+            sdl_path: default_sdl_path(),
+            subgraph_path: default_subgraph_path(),
             federation: FederationConfig::default(),
         }
     }

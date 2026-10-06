@@ -443,10 +443,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let state = Arc::new(
         ServerState::new(pool, schema, catalog, default_schema, config.debug.into())
             .with_mode(mode)
+            .with_error_detail(config.errors.detail)
             .with_sql_comments(config.database.sql_comments)
             .with_replicas(replicas)
             .with_auth(authenticator)
             .with_graphiql(config.graphql.ui)
+            .with_introspection(config.graphql.introspection)
             .with_scalar(config.openapi.ui)
             .with_graphql_enabled(config.graphql.enabled)
             .with_openapi_enabled(config.openapi.enabled)

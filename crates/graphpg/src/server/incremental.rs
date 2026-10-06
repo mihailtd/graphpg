@@ -749,7 +749,7 @@ impl Payloads<'_> {
         let data = ExecutionEngine::run_with_auth(conn, &compiled, None, self.auth_ctx)
             .instrument(span)
             .await
-            .map_err(|err| vec![execution_error(&err, self.catalog).1])?;
+            .map_err(|err| vec![execution_error(&err, self.catalog, self.state.mask_errors).1])?;
         Ok((
             data,
             (self.state.debug.sql || self.state.debug.explain).then(|| debug_sql(&compiled)),

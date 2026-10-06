@@ -210,6 +210,11 @@ impl ProblemDetails {
             .with_code("STATEMENT_TIMEOUT");
         }
 
+        if is_prod && err.is_permission_denied() {
+            return Self::new(StatusCode::FORBIDDEN, "Permission denied")
+                .with_code("PERMISSION_DENIED");
+        }
+
         match root {
             ExecutionError::EmptyResult => Self::not_found("No matching record found"),
             ExecutionError::Rejected(msg) => {

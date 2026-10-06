@@ -56,6 +56,18 @@ impl ExecutionError {
         }
     }
 
+    /// The database refused the statement for lack of privilege, or a Row-Level Security
+    /// policy rejected a row (SQLSTATE `42501`).
+    pub fn is_permission_denied(&self) -> bool {
+        match self {
+            ExecutionError::Mutation { source, .. } => source.is_permission_denied(),
+            ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => {
+                e.code() == Some(&SqlState::INSUFFICIENT_PRIVILEGE)
+            }
+            _ => false,
+        }
+    }
+
     /// A failure that running the operation again may not hit: a serialization failure
     /// (under `REPEATABLE READ` or `SERIALIZABLE`) or a deadlock.
     pub fn is_transient(&self) -> bool {
