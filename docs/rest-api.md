@@ -2,7 +2,7 @@
 
 graphpg serves a REST API next to GraphQL, planned onto the same operation plan: the same lateral-join SQL, keyset pagination, nested writes, typed constraint errors and Row-Level Security. It is served under `/rest` when `openapi.enabled` is on, and described by an [OpenAPI 3.1 document](configuration.md#the-openapi-document-and-uis) generated from the same catalog and configuration, so the document and the API cannot drift apart.
 
-A resource is a table, view or materialized view, named as in the database (`/rest/forums`; with several schemas, the default schema's table when names collide). Views follow what PostgreSQL allows: they are always readable, writable only where PostgreSQL can update them and a key is declared (`graphpg.yaml`), and read by key only once they have one. Coming from PostgREST? The [comparison](comparison.md#compared-with-postgrest) maps its grammar to this one. Rows use the API's field names (`archivedAt`) and carry the real primary key under the key column's name (`id` is the UUID, not a Relay global ID). For tables participating in polymorphic Concrete Table Inheritance (CTI), rows automatically include `__typename` and subtype columns matching their concrete type.
+A resource is a table, view or materialized view, named as in the database (`/rest/forums`; with several schemas, the default schema's table when names collide). Views follow what PostgreSQL allows: they are always readable, writable only where PostgreSQL can update them and a key is declared (`graphpg.yaml`), and read by key only once they have one. Coming from PostgREST? The [comparison](comparison.md#compared-with-postgrest) maps its grammar to this one. Rows use the API's field names (`archivedAt`) and carry the real primary key under the key column's name (`id` is the UUID, not a Relay global ID). For tables that are the parent of a table-per-type (CTI) hierarchy, rows automatically include `__typename` and subtype columns matching their concrete type. Subtype columns can also be filtered (`filter[seats][gte]=4`: some subtype row has a `seats` of at least 4) and ordered by (`order=seats`: parents without a subtype row sort as `NULL`); GraphQL's `Filter` and `OrderBy` inputs have them too.
 
 ## Strict by design
 
@@ -53,7 +53,7 @@ Operators that need a typed value (`gtAny` on an `int` column) report a cell tha
 Lists carry RFC 8288 `Link` headers (`rel="next"` / `rel="prev"`) that keep every other parameter. The total is **opt-in**, because it scans every matching row:
 - `Prefer: count=exact`: Scans matching rows and returns the exact count in `X-Total-Count` (with `Preference-Applied: count=exact`).
 - `Prefer: count=planned`: Uses the PostgreSQL planner's row estimate (from `reltuples` or `EXPLAIN`), answering with `Preference-Applied: count=planned`, `X-Total-Count`, and `X-Total-Count-Estimate: true`.
-- `Prefer: count=estimated`: Computes an exact count when the estimate is below `limits.count_threshold` (default 10,000), falling back to the planner estimate above it. Sets `X-Total-Count-Estimate: true` whenever the estimate was used.
+- `Prefer: count=estimated`: Computes an exact count when the estimate is below `limits.count_threshold` (default 10,000), falling back to the planner estimate above it. Sets `X-Total-Count-Estimate: true` whenever the estimate was used. Above the threshold the answer is one query; below it a second, exact count follows the page, so the two are not one snapshot. A `Range` past the end is a `416` with the exact size whichever count was asked for.
 
 ### Ranges
 
@@ -228,11 +228,12 @@ In **prod** mode raw PostgreSQL messages never reach the client: unexpected fail
 
 ### Custom SQL errors (`PTxxx` and `errors.map`)
 
-Custom application errors raised in SQL are never masked in production:
-- **`PTxxx` SQLSTATE codes**: Functions and triggers can raise exceptions with PostgREST-style `PTxxx` codes (e.g. `RAISE EXCEPTION ... USING ERRCODE = 'PT402'`). If the exception message is JSON (`{"message": "...", "code": "...", "hint": "..."}`), the fields populate the RFC 9457 problem response directly. The HTTP status matches the code suffix (e.g. `PT402` -> `402 Payment Required`).
-- **`errors.map`**: Configuration mapping SQLSTATE error codes or constraint names to custom HTTP status codes, titles, codes, and problem type URIs.
+Two ways to give a database error its own status and code:
 
-Both `PTxxx` codes and mapped errors also expose the resulting code in GraphQL responses under `errors[].extensions.code`.
+- **`PTxxx` SQLSTATEs.** A function or trigger raises `RAISE EXCEPTION ... USING ERRCODE = 'PT402'`; the digits are the HTTP status (`402 Payment Required`), and a status outside 400-599 is a `400`. The author wrote the message, so it is **never masked**, in production either. A plain message becomes the `detail`, and the `HINT` the `code` (and `hint`). A JSON message (`{"message": "...", "code": "...", "hint": "...", "title": "...", "type": "...", ...}`) sets the members itself, and any further key becomes an extension member of the problem. The `DETAIL` line is `databaseDetail`.
+- **`errors.map`.** In the configuration, a SQLSTATE or a constraint name maps to a `status`, `title`, `code` and problem `type`. A constraint name wins over a SQLSTATE. Unlike a `PTxxx` error, the message is the database's own, so in **prod** a mapped error carries only its title as the `detail`, with no `hint` or `databaseDetail`; **dev** shows them.
+
+Both also set `errors[].extensions.code` over GraphQL (with the same masking; GraphQL answers `200` whatever the status).
 
 ## Limits
 

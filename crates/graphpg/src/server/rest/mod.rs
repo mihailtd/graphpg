@@ -999,7 +999,7 @@ async fn list_rows(
         query::CountPreference::Planned => (true, true),
         query::CountPreference::Estimated => (true, true),
         query::CountPreference::Exact => (true, false),
-        query::CountPreference::None => (ctx.prefs.count_exact, false),
+        query::CountPreference::None => (false, false),
     };
 
     let request = if connection {
@@ -1265,8 +1265,7 @@ pub async fn rest_list_handler(
             if listing.rows.is_empty() && range.first > 0 {
                 // Past the end: the answer names the size of the whole
                 let mut counting = Ctx::new(&state, &headers, table.name.clone()).await?;
-                counting.prefs.count = ctx.prefs.count;
-                counting.prefs.count_exact = true;
+                counting.prefs.count = query::CountPreference::Exact;
                 let first_row = RestQuery {
                     first: Some(1),
                     offset: None,

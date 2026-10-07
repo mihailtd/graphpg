@@ -5,6 +5,7 @@ pub mod http;
 pub mod incremental;
 pub mod rest;
 pub mod router;
+pub(crate) mod sql_errors;
 pub mod watcher;
 
 pub use auth::{AuthError, AuthSessionContext, Authenticator};

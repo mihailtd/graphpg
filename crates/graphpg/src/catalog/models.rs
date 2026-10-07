@@ -2722,6 +2722,42 @@ impl DatabaseCatalog {
             .find(|c| c.schema == schema && c.parent_table == table)
     }
 
+    /// The columns only the subtype tables of a table-per-type hierarchy have, grouped by field
+    /// name: a column of a subtype that the parent (or a more specific subtype's column of the
+    /// same name and a different type) does not already claim. Each group lists the subtypes
+    /// that have it, with the first one's type.
+    pub fn cti_columns(
+        &self,
+        table: &TableMetadata,
+    ) -> Vec<(String, Vec<(&CtiChild, &ColumnMetadata)>)> {
+        let Some(cti) = self.find_cti(&table.schema, &table.name) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(String, Vec<(&CtiChild, &ColumnMetadata)>)> = Vec::new();
+        for child in &cti.children {
+            let Some(child_table) = self.find_table(&child.schema, &child.table) else {
+                continue;
+            };
+            for col in child_table.visible_columns() {
+                if table
+                    .visible_columns()
+                    .any(|pc| pc.name == col.name || pc.field_name == col.field_name)
+                {
+                    continue;
+                }
+                match out.iter_mut().find(|(name, _)| *name == col.field_name) {
+                    Some((_, members)) => {
+                        if members[0].1.pg_type == col.pg_type {
+                            members.push((child, col));
+                        }
+                    }
+                    None => out.push((col.field_name.clone(), vec![(child, col)])),
+                }
+            }
+        }
+        out
+    }
+
     /// Row polymorphism of a table. Table-per-type wins over a discriminator column, since
     /// child tables carry the subtype-specific columns.
     pub fn find_polymorphism(&self, schema: &str, table: &str) -> Option<Polymorphism<'_>> {
@@ -3440,6 +3476,29 @@ impl DatabaseCatalog {
                     }
                 }
                 _ => {}
+            }
+        }
+        // The columns of the subtypes of a table-per-type hierarchy (`SEATS`): the subtype's
+        // row is the related row, and a parent without one sorts last
+        for (_, members) in self.cti_columns(table) {
+            let (child, col) = members[0];
+            if col.pg_type.is_orderable() {
+                let rel = RelationInfo {
+                    is_many: false,
+                    target_schema: child.schema.clone(),
+                    target_table: child.table.clone(),
+                    columns: child.join_columns.clone(),
+                    junction: None,
+                    period: None,
+                    history: false,
+                };
+                push(
+                    col.order_by_name(),
+                    OrderTarget::Related {
+                        rel,
+                        column: col.name.clone(),
+                    },
+                );
             }
         }
         out

@@ -104,6 +104,9 @@ server:
 
 errors:
   detail: masked                # masked (default in prod) | full (default in dev)
+  map:                          # SQLSTATE or constraint name -> status, title, code, type
+    "23514": { status: 422, title: Check failed, code: CHECK_FAILED }
+    orders_total_check: { status: 409, code: BAD_TOTAL, type: "https://example.com/errors/total" }
 
 headers:
   preset: strict                # strict (default in prod) | relaxed (default in dev) | off
@@ -164,7 +167,9 @@ The effective config of a mode is built in four steps, each overriding the last:
 
 The document states what the database already says, with no configuration:
 
-- **Single Table Inheritance and Concrete Table Inheritance as discriminated unions.** A table whose discriminator is closed by a `CHECK` (or an enum) is described as `oneOf` its variants with a `discriminator` (`propertyName` and a `mapping` of each value to `<table>.<Variant>`, each the plain row `<table>.Base` with the discriminator fixed to that value). Parent tables of a Concrete Table Inheritance (CTI) hierarchy are described as a `oneOf` union across subtypes (`<table>.<Child>`, containing both parent and subtype columns) and a fallback schema (`<table>.<Fallback>`) with a `discriminator` on `__typename`.
+- **Constraints as JSON Schema keywords.** A single-column `CHECK` becomes `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` (integer and floating-point columns), `multipleOf` (`CHECK (qty % 5 = 0)`), `minLength` / `maxLength` (`char_length`, `length`), `pattern` (`CHECK (code ~ '^[A-Z]{3}$')`) and `minItems` / `maxItems` (`cardinality`, `array_length`), on the row and on the create and update bodies. Only these simple forms are read; an `OR`, a comparison of two columns or a 64-bit or `numeric` column (strings in JSON) are left to the database, which checks every write. Where a `varchar(n)` limit and a `CHECK` both bound a length, the stricter holds. PostgreSQL regular expressions and ECMA 262 ones differ in places: treat `pattern` as a hint for clients, not a validator.
+- **Single Table Inheritance as a discriminated union.** A table whose discriminator is closed by a `CHECK` (or an enum) is described as `oneOf` its variants with a `discriminator` (`propertyName` and a `mapping` of each value to `<table>.<Variant>`, each the plain row `<table>.Base` with the discriminator fixed to that value).
+- **Table-per-type (CTI) hierarchies as a discriminated union.** The parent table of a table-per-type hierarchy is described as `oneOf` one schema per subtype (`<table>.<Child>`: the parent's row plus the subtype's own columns) and a fallback for parent rows without a subtype (`<table>.<Fallback>`), with a `discriminator` on `__typename`.
 - **Hypermedia `links` from foreign keys.** The `200` of `GET /rest/<table>/{key}` links to the row each single-column foreign key points at (`get_<table>_by_key`, the key read from the response) and to the rows that point at this one (`search_<table>`, filtered by this row's key), for the resources the API serves and the role may read. A link name is the target table, with the constraint name added when two foreign keys lead to the same table.
 
 The Scalar reference shows that document: it loads it from `openapi.path`, and `openapi.ui: true` serves the document even when `openapi.spec` is off, so the page always has something to show. With `openapi.enabled: false` there is no REST API to describe, so neither the document nor the reference is served (404).

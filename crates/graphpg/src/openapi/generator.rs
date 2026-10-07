@@ -475,7 +475,7 @@ impl OpenApiGenerator {
         if read {
             let mut params = vec![
                 key_param.clone(),
-                Self::fields_param(table),
+                Self::fields_param(table, catalog),
                 Self::include_param(table, catalog),
             ];
             params.retain(|p| !p.is_null());
@@ -794,18 +794,21 @@ impl OpenApiGenerator {
         json!({ "name": "key", "in": "path", "required": true, "description": description, "schema": schema })
     }
 
-    pub(super) fn visible_fields(table: &TableMetadata) -> Vec<String> {
+    /// The fields of a row: its columns, and the columns of the subtypes of a table-per-type
+    /// hierarchy.
+    pub(super) fn visible_fields(table: &TableMetadata, catalog: &DatabaseCatalog) -> Vec<String> {
         table
             .visible_columns()
             .map(|c| c.field_name.clone())
+            .chain(catalog.cti_columns(table).into_iter().map(|(name, _)| name))
             .collect()
     }
 
-    pub(super) fn fields_param(table: &TableMetadata) -> Value {
+    pub(super) fn fields_param(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
         json!({
             "name": "fields", "in": "query", "style": "form", "explode": false,
             "description": "Columns to return (default: all)",
-            "schema": { "type": "array", "items": { "type": "string", "enum": Self::visible_fields(table) } }
+            "schema": { "type": "array", "items": { "type": "string", "enum": Self::visible_fields(table, catalog) } }
         })
     }
 
@@ -865,7 +868,7 @@ impl OpenApiGenerator {
         };
         let (first_text, first_schema) = page("Page size for forward keyset pagination");
         let (last_text, last_schema) = page("Page size for backward keyset pagination");
-        let columns = Self::visible_fields(table);
+        let columns = Self::visible_fields(table, catalog);
         let order_item = format!("^[+-]?{}(:(asc|desc))?$", alternation(&columns));
         let mut params = vec![
             json!({
@@ -903,7 +906,7 @@ impl OpenApiGenerator {
                 "description": "Rows to skip (offset pagination)",
                 "schema": { "type": "integer", "minimum": 0 }
             }),
-            Self::fields_param(table),
+            Self::fields_param(table, catalog),
             Self::include_param(table, catalog),
             prefer_param(false),
         ];
@@ -931,7 +934,7 @@ impl OpenApiGenerator {
         catalog: &DatabaseCatalog,
         limits: &LimitsConfig,
     ) -> Value {
-        let columns = Self::visible_fields(table);
+        let columns = Self::visible_fields(table, catalog);
         let relations = Self::relation_names(table, catalog);
         let mut properties = json!({
             "filter": schema_ref(&format!("{}Filter", table.name)),
@@ -1064,7 +1067,12 @@ impl OpenApiGenerator {
         served: &[&TableMetadata],
     ) -> Value {
         let mut properties = BTreeMap::new();
-        for col in table.visible_columns() {
+        // Subtype columns: some subtype row matching is a match
+        let subtype_columns = catalog.cti_columns(table);
+        for col in table
+            .visible_columns()
+            .chain(subtype_columns.iter().map(|(_, members)| members[0].1))
+        {
             let mut ty = Self::pg_type_to_json_schema(&col.pg_type, catalog);
             // Exact numbers are strings in responses, but a filter may be given either way
             if matches!(col.pg_type, PgType::Int8 | PgType::Numeric | PgType::Money) {
@@ -1271,7 +1279,7 @@ impl OpenApiGenerator {
     /// The row schemas of a polymorphic table:
     /// - For Single Table Inheritance (STI): `<table>.Base` (the plain object), one `<table>.<Variant>`
     ///   per discriminator value, and `<table>` as the `oneOf` with a `discriminator` on the column.
-    /// - For Concrete Table Inheritance (CTI): `<table>.Base` (parent columns), one `<table>.<Child>`
+    /// - For table-per-type (CTI): `<table>.Base` (parent columns), one `<table>.<Child>`
     ///   per subtype with child columns, `<table>.<Fallback>` for parent rows without a child,
     ///   and `<table>` as the `oneOf` with a `discriminator` on `__typename`.
     ///

@@ -18,6 +18,10 @@ struct Env {
 }
 
 async fn env() -> Env {
+    env_with_threshold(None).await
+}
+
+async fn env_with_threshold(threshold: Option<u64>) -> Env {
     common::ensure_rest_extras_fixture().await;
     let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
         .await
@@ -37,6 +41,10 @@ async fn env() -> Env {
         "rest_extras".to_string(),
         DebugOptions::default(),
     );
+    let mut state = state;
+    if threshold.is_some() {
+        state.limits.count_threshold = threshold;
+    }
     Env {
         app: create_router(Arc::new(state)),
         client,
@@ -296,6 +304,46 @@ async fn planned_and_estimated_counts_over_rest() {
 
     env.client
         .batch_execute("DELETE FROM rest_extras.people WHERE id BETWEEN 9321 AND 9325")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn estimated_count_above_the_threshold_is_the_planner_estimate() {
+    let env = env_with_threshold(Some(1)).await;
+    env.client
+        .batch_execute(
+            "DELETE FROM rest_extras.people WHERE id BETWEEN 9331 AND 9335;
+             INSERT INTO rest_extras.people VALUES (9331,'a'),(9332,'b'),(9333,'c'),(9334,'d'),(9335,'e');
+             ANALYZE rest_extras.people;",
+        )
+        .await
+        .unwrap();
+    let uri = "/rest/people?filter[id][gte]=9331&filter[id][lte]=9335&order=id&first=2";
+
+    // The estimate is above the threshold of 1: it is the answer, and says so
+    let estimated = env
+        .call("GET", uri, &[("prefer", "count=estimated")], vec![])
+        .await;
+    assert_eq!(estimated.status, StatusCode::OK);
+    assert_eq!(estimated.header("preference-applied"), "count=estimated");
+    assert_eq!(estimated.header("x-total-count-estimate"), "true");
+    assert!(estimated.header("x-total-count").parse::<i64>().unwrap() > 1);
+
+    // A range past the end names the exact size, whichever count was asked for
+    let past = env
+        .call(
+            "GET",
+            "/rest/people?filter[id][gte]=9331&filter[id][lte]=9335&order=id",
+            &[("range", "items=100-"), ("prefer", "count=planned")],
+            vec![],
+        )
+        .await;
+    assert_eq!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.header("content-range"), "items */5");
+
+    env.client
+        .batch_execute("DELETE FROM rest_extras.people WHERE id BETWEEN 9331 AND 9335")
         .await
         .unwrap();
 }

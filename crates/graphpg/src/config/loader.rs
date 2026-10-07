@@ -491,6 +491,13 @@ prod:
         );
         let cfg = parse("errors: { detail: full }", Mode::Prod).unwrap();
         assert_eq!(cfg.errors.detail, ErrorDetail::Full);
+        let cfg = parse(
+            "errors:\n  map:\n    '23514': { status: 422, code: CHECK }",
+            Mode::Prod,
+        )
+        .unwrap();
+        assert_eq!(cfg.errors.map["23514"].status, Some(422));
+        assert!(parse("errors: { map: { x: { nope: 1 } } }", Mode::Prod).is_err());
     }
 
     #[test]

@@ -54,11 +54,9 @@ pub enum CountPreference {
 pub struct Preferences {
     /// `return=minimal`: write responses carry no body.
     pub return_minimal: bool,
-    /// Total count preference: `exact`, `planned`, or `estimated`.
+    /// Total count preference: list responses carry `X-Total-Count`. Off by default because an
+    /// exact count scans every matching row.
     pub count: CountPreference,
-    /// `count=exact`: list responses carry `X-Total-Count`. Off by default because the count
-    /// scans every matching row.
-    pub count_exact: bool,
     /// `previous`: an update or upsert answers with the row as it was before the write too
     /// (`RETURNING OLD`, PostgreSQL 18).
     pub previous: bool,
@@ -67,7 +65,7 @@ pub struct Preferences {
 impl Preferences {
     /// Whether any total count was requested.
     pub fn count_requested(&self) -> bool {
-        self.count != CountPreference::None || self.count_exact
+        self.count != CountPreference::None
     }
 
     /// The `Preference-Applied` header value for what was honoured.
@@ -86,11 +84,7 @@ impl Preferences {
                 CountPreference::Exact => parts.push("count=exact"),
                 CountPreference::Planned => parts.push("count=planned"),
                 CountPreference::Estimated => parts.push("count=estimated"),
-                CountPreference::None => {
-                    if self.count_exact {
-                        parts.push("count=exact");
-                    }
-                }
+                CountPreference::None => {}
             }
         }
         if honoured_previous && self.previous {
@@ -123,16 +117,15 @@ pub fn parse_prefer_header(headers: &HeaderMap) -> Preferences {
                     prefs.return_minimal = false;
                 }
             } else if key.eq_ignore_ascii_case("count") {
-                if val.eq_ignore_ascii_case("exact") {
-                    prefs.count = CountPreference::Exact;
-                    prefs.count_exact = true;
+                prefs.count = if val.eq_ignore_ascii_case("exact") {
+                    CountPreference::Exact
                 } else if val.eq_ignore_ascii_case("planned") {
-                    prefs.count = CountPreference::Planned;
-                    prefs.count_exact = false;
+                    CountPreference::Planned
                 } else if val.eq_ignore_ascii_case("estimated") {
-                    prefs.count = CountPreference::Estimated;
-                    prefs.count_exact = false;
-                }
+                    CountPreference::Estimated
+                } else {
+                    CountPreference::None
+                };
             } else if key.eq_ignore_ascii_case("previous") {
                 prefs.previous = val.eq_ignore_ascii_case("true");
             }
@@ -622,6 +615,15 @@ pub fn parse_order_string(
             .find(|c| c.field_name == name || c.name == name)
         {
             items.push(format!("{}_{dir}", col.order_by_name()));
+        } else if let Some(opt_name) = catalog
+            .cti_columns(table_meta)
+            .into_iter()
+            .find(|(field, members)| field == name || members[0].1.name == name)
+            .map(|(_, members)| members[0].1.order_by_name())
+            .filter(|n| options.iter().any(|(o, _)| o == n))
+        {
+            // A column of a subtype of a table-per-type hierarchy
+            items.push(format!("{opt_name}_{dir}"));
         } else if let Some((opt_name, _)) = options
             .into_iter()
             .find(|(n, _)| n.eq_ignore_ascii_case(name))
@@ -821,7 +823,7 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("prefer", "return=minimal, count=exact".parse().unwrap());
         let p = parse_prefer_header(&h);
-        assert!(p.return_minimal && p.count_exact);
+        assert!(p.return_minimal);
         assert_eq!(p.count, CountPreference::Exact);
         assert_eq!(
             p.applied(true, true, true).as_deref(),

@@ -4,6 +4,7 @@ use crate::execution::{ExecutionEngine, ExecutionError};
 use crate::openapi::OpenApiGenerator;
 use crate::planner::{PlannerError, QueryPlanner};
 use crate::server::cache::RequestCache;
+use crate::server::sql_errors;
 use apollo_compiler::executable::Operation;
 use apollo_compiler::response::JsonMap;
 use apollo_compiler::validation::Valid;
@@ -92,80 +93,21 @@ pub(crate) fn execution_error(
         _ => None,
     };
 
-    let mut root = err;
-    while let ExecutionError::Mutation { source, .. } = root {
-        root = source;
-    }
-    let db_error = match root {
-        ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => e.as_db_error(),
-        _ => None,
-    };
-
-    if let Some(db) = db_error {
-        let sqlstate = db.code().code();
-        let constraint = db.constraint();
-
-        let mapped = errors_config
-            .map
-            .get(sqlstate)
-            .or_else(|| constraint.and_then(|c| errors_config.map.get(c)));
-
-        if let Some(cfg) = mapped {
-            let code = cfg.code.clone().unwrap_or_else(|| sqlstate.to_string());
-            let mut extensions = serde_json::json!({ "code": code });
-            if let Some(hint) = db.hint() {
-                extensions["hint"] = serde_json::json!(hint);
-            }
-            return (
-                StatusCode::OK,
-                GraphQLError {
-                    message: db.message().to_string(),
-                    path,
-                    extensions: Some(extensions),
-                },
-            );
+    if let Some(custom) =
+        sql_errors::db_error(err).and_then(|db| sql_errors::resolve(db, errors_config, mask_errors))
+    {
+        let mut extensions = serde_json::json!({ "code": custom.code });
+        if let Some(hint) = custom.hint {
+            extensions["hint"] = serde_json::json!(hint);
         }
-
-        if sqlstate.len() == 5
-            && sqlstate.starts_with("PT")
-            && sqlstate[2..].chars().all(|c| c.is_ascii_digit())
-        {
-            let (message, code) = if let Ok(serde_json::Value::Object(map)) =
-                serde_json::from_str::<serde_json::Value>(db.message())
-            {
-                let msg = map
-                    .get("message")
-                    .or_else(|| map.get("detail"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(db.message())
-                    .to_string();
-                let c = map
-                    .get("code")
-                    .and_then(|v| v.as_str())
-                    .map(ToString::to_string)
-                    .or_else(|| db.hint().map(ToString::to_string))
-                    .unwrap_or_else(|| sqlstate.to_string());
-                (msg, c)
-            } else {
-                let c = db
-                    .hint()
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| sqlstate.to_string());
-                (db.message().to_string(), c)
-            };
-            let mut extensions = serde_json::json!({ "code": code });
-            if let Some(hint) = db.hint() {
-                extensions["hint"] = serde_json::json!(hint);
-            }
-            return (
-                StatusCode::OK,
-                GraphQLError {
-                    message,
-                    path,
-                    extensions: Some(extensions),
-                },
-            );
-        }
+        return (
+            StatusCode::OK,
+            GraphQLError {
+                message: custom.detail,
+                path,
+                extensions: Some(extensions),
+            },
+        );
     }
 
     match err.violation(catalog) {

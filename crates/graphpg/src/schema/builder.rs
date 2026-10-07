@@ -1161,6 +1161,14 @@ impl SchemaBuilder {
                     }
                 }
             }
+            // Columns of the subtypes of a table-per-type hierarchy: some subtype row matches
+            for (field_name, members) in catalog.cti_columns(table) {
+                if let Some(f_type) = Self::column_filter_type(catalog, members[0].1) {
+                    if filter_fields.insert(field_name.clone()) {
+                        connection_types_sdl.push_str(&format!("  {field_name}: {f_type}\n"));
+                    }
+                }
+            }
             // Relations: the related row matches; `some`/`every`/`none` of the related rows, or
             // their aggregates
             for field in catalog.object_fields(&table.schema, &table.name) {

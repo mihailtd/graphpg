@@ -4545,6 +4545,56 @@ impl<'a> PlanningContext<'a> {
                         }
                         continue;
                     }
+                    // A column of a subtype of a table-per-type hierarchy: a subtype row
+                    // having it matches
+                    if let Some((_, members)) = self
+                        .catalog()
+                        .cti_columns(table_meta)
+                        .into_iter()
+                        .find(|(name, _)| name == field_key)
+                    {
+                        let serde_json::Value::Object(op_map) = v else {
+                            continue;
+                        };
+                        let mut per_subtype = Vec::new();
+                        for (child, col) in members {
+                            let alias = format!("_filt{}", *alias_counter);
+                            *alias_counter += 1;
+                            let conditions: Vec<FilterExpr> = op_map
+                                .iter()
+                                .filter_map(|(op_k, op_v)| {
+                                    Self::plan_column_filter(
+                                        self.catalog(),
+                                        col,
+                                        &alias,
+                                        op_k,
+                                        op_v,
+                                    )
+                                })
+                                .collect();
+                            if conditions.is_empty() {
+                                continue;
+                            }
+                            per_subtype.push(FilterExpr::Exists {
+                                related: RelatedRows {
+                                    schema: child.schema.clone(),
+                                    table: child.table.clone(),
+                                    alias,
+                                    columns: child.join_columns.clone(),
+                                    parent_alias: table_alias.to_string(),
+                                    period: None,
+                                    junction: None,
+                                },
+                                filter: Some(Box::new(FilterExpr::And(conditions))),
+                            });
+                        }
+                        match per_subtype.len() {
+                            0 => {}
+                            1 => and_clauses.push(per_subtype.remove(0)),
+                            _ => and_clauses.push(FilterExpr::Or(per_subtype)),
+                        }
+                        continue;
+                    }
                     // Relation filters: a to-one relation's row matches
                     // (`author: { username: { startsWith: "dr_" } }`); for to-many relations,
                     // `some`, `every` or `none` of the rows match, or their aggregates do

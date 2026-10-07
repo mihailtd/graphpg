@@ -385,7 +385,7 @@ pub enum ErrorDetail {
 #[serde(deny_unknown_fields)]
 pub struct CustomErrorConfig {
     /// HTTP status code (e.g. 400, 404, 409, 422).
-    #[serde(default, deserialize_with = "limit")]
+    #[serde(default)]
     pub status: Option<u16>,
     /// Problem title (defaults to canonical reason phrase for the status).
     #[serde(default)]

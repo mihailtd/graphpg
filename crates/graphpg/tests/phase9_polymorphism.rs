@@ -593,9 +593,61 @@ async fn test_cti_rest_and_openapi() {
         ])
     );
 
+    // 2b. Filter and order by the columns of the subtypes
+    let get = |uri: &'static str| {
+        let app = app.clone();
+        async move {
+            let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            let status = res.status();
+            let body: Value =
+                serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            (status, body)
+        }
+    };
+    let (status, body) = get("/rest/vehicles?filter[seats][gte]=4&fields=name").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!([{ "__typename": "Car", "name": "Mini" }]));
+    let (_, body) = get("/rest/vehicles?filter[payloadKg][gt]=100&fields=name").await;
+    assert_eq!(body, json!([{ "__typename": "Truck", "name": "Hauler" }]));
+    let (_, body) = get(
+        "/rest/vehicles?filter[or][0][seats][gte]=4&filter[or][1][payloadKg][gte]=1&order=id&fields=name",
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!([
+            { "__typename": "Car", "name": "Mini" },
+            { "__typename": "Truck", "name": "Hauler" }
+        ])
+    );
+    let (_, body) = get("/rest/vehicles?filter[not][seats][gte]=4&order=id&fields=name").await;
+    assert_eq!(
+        body,
+        json!([
+            { "__typename": "GenericVehicle", "name": "Bike" },
+            { "__typename": "Truck", "name": "Hauler" }
+        ])
+    );
+    // A parent without a subtype row sorts as NULL: last ascending, first descending
+    let (status, body) = get("/rest/vehicles?order=seats&fields=name").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body[0]["name"], "Mini");
+    let (_, body) = get("/rest/vehicles?order=-payloadKg&fields=name").await;
+    assert_eq!(body[2]["name"], "Hauler");
+    let (status, _) = get("/rest/vehicles?filter[nope][eq]=1").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
     // 3. OpenAPI generator describes CTI as oneOf with discriminator on __typename
     let doc = OpenApiGenerator::generate_for(&catalog, &Config::default(), "polymorphism_fixture");
     let schemas = &doc["components"]["schemas"];
+    assert!(schemas["vehiclesFilter"]["properties"]
+        .get("seats")
+        .is_some());
+    assert!(schemas["vehiclesFilter"]["properties"]
+        .get("payloadKg")
+        .is_some());
     let vehicles = &schemas["vehicles"];
     assert_eq!(vehicles["discriminator"]["propertyName"], "__typename");
     let mapping = vehicles["discriminator"]["mapping"].as_object().unwrap();

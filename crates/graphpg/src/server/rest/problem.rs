@@ -1,7 +1,8 @@
 //! RFC 9457 `application/problem+json` error responses for the REST API.
 //!
-//! The `type` member is always `about:blank`: the status code carries the meaning and the
-//! stable, machine-readable `code` member (such as `EMAIL_TAKEN`) identifies the problem.
+//! The `type` member is `about:blank` unless an error was given one (`errors.map`, or a JSON
+//! `PTxxx` message): the status code carries the meaning and the stable, machine-readable
+//! `code` member (such as `EMAIL_TAKEN`) identifies the problem.
 //! Raw PostgreSQL messages never reach the client in production; the client gets a request ID
 //! that is also written to the server log together with the real error.
 
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::DatabaseCatalog;
 use crate::execution::ExecutionError;
 use crate::server::auth::AuthError;
+use crate::server::sql_errors;
 
 /// RFC 9457 Problem Details object.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -218,8 +220,8 @@ impl ProblemDetails {
     }
 
     /// Maps an execution failure: typed constraint violations keep their stable code and
-    /// message; custom SQL errors (PTxxx or errors.map) keep their status and details unmasked;
-    /// anything else is masked in production.
+    /// message; custom SQL errors keep their status (`PTxxx` messages unmasked, `errors.map`
+    /// ones masked); anything else is masked in production.
     pub fn from_execution_error(
         err: &ExecutionError,
         catalog: &DatabaseCatalog,
@@ -231,61 +233,9 @@ impl ProblemDetails {
             root = source;
         }
 
-        let db_error = match root {
-            ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => e.as_db_error(),
-            _ => None,
-        };
-
-        if let Some(db) = db_error {
-            let sqlstate = db.code().code();
-            let constraint = db.constraint();
-
-            // 1. Check errors.map configuration
-            let mapped = errors_config
-                .map
-                .get(sqlstate)
-                .or_else(|| constraint.and_then(|c| errors_config.map.get(c)));
-
-            if let Some(cfg) = mapped {
-                let status = cfg
-                    .status
-                    .and_then(|s| StatusCode::from_u16(s).ok())
-                    .unwrap_or(StatusCode::BAD_REQUEST);
-                let title = cfg
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| title_for(status).to_string());
-                let problem_type = cfg
-                    .problem_type
-                    .clone()
-                    .unwrap_or_else(|| "about:blank".to_string());
-                let code = cfg.code.clone().or_else(|| Some(sqlstate.to_string()));
-                let mut problem = Self::new(status, db.message())
-                    .with_title(title)
-                    .with_type(problem_type);
-                if let Some(c) = code {
-                    problem = problem.with_code(c);
-                }
-                if let Some(hint) = db.hint() {
-                    problem = problem.with_hint(hint);
-                }
-                if let Some(detail) = db.detail() {
-                    problem
-                        .extensions
-                        .insert("details".into(), serde_json::json!(detail));
-                }
-                return problem;
-            }
-
-            // 2. Check PostgREST PTxxx SQLSTATE error code (e.g. PT402)
-            if sqlstate.len() == 5
-                && sqlstate.starts_with("PT")
-                && sqlstate[2..].chars().all(|c| c.is_ascii_digit())
-            {
-                if let Ok(code_num) = sqlstate[2..].parse::<u16>() {
-                    let status = StatusCode::from_u16(code_num).unwrap_or(StatusCode::BAD_REQUEST);
-                    return Self::from_pt_error(status, sqlstate, db);
-                }
+        if let Some(db) = sql_errors::db_error(root) {
+            if let Some(custom) = sql_errors::resolve(db, errors_config, is_prod) {
+                return Self::from_custom(custom);
             }
         }
 
@@ -333,74 +283,25 @@ impl ProblemDetails {
         }
     }
 
-    fn from_pt_error(
-        status: StatusCode,
-        sqlstate: &str,
-        db: &tokio_postgres::error::DbError,
-    ) -> Self {
-        if let Ok(serde_json::Value::Object(map)) =
-            serde_json::from_str::<serde_json::Value>(db.message())
-        {
-            let detail = map
-                .get("detail")
-                .or_else(|| map.get("message"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(db.message())
-                .to_string();
-            let title = map
-                .get("title")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-                .unwrap_or_else(|| title_for(status).to_string());
-            let problem_type = map
-                .get("type")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "about:blank".to_string());
-            let code = map
-                .get("code")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-                .or_else(|| db.hint().map(ToString::to_string))
-                .unwrap_or_else(|| sqlstate.to_string());
-            let hint = map
-                .get("hint")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-                .or_else(|| db.hint().map(ToString::to_string));
-
-            let mut problem = Self::new(status, detail)
-                .with_title(title)
-                .with_type(problem_type)
-                .with_code(code);
-            if let Some(h) = hint {
-                problem = problem.with_hint(h);
-            }
-            for (k, v) in map {
-                if !matches!(
-                    k.as_str(),
-                    "type" | "title" | "status" | "detail" | "message" | "code" | "hint"
-                ) {
-                    problem.extensions.insert(k, v);
-                }
-            }
-            problem
-        } else {
-            let code = db
-                .hint()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| sqlstate.to_string());
-            let mut problem = Self::new(status, db.message()).with_code(code);
-            if let Some(hint) = db.hint() {
-                problem = problem.with_hint(hint);
-            }
-            if let Some(detail) = db.detail() {
-                problem
-                    .extensions
-                    .insert("details".into(), serde_json::json!(detail));
-            }
-            problem
+    fn from_custom(custom: sql_errors::CustomError) -> Self {
+        let mut problem = Self::new(custom.status, custom.detail).with_code(custom.code);
+        if let Some(title) = custom.title {
+            problem = problem.with_title(title);
         }
+        if let Some(problem_type) = custom.problem_type {
+            problem = problem.with_type(problem_type);
+        }
+        if let Some(hint) = custom.hint {
+            problem = problem.with_hint(hint);
+        }
+        problem.extensions = custom.extensions;
+        if let Some(detail) = custom.db_detail {
+            problem
+                .extensions
+                .entry("databaseDetail")
+                .or_insert(serde_json::json!(detail));
+        }
+        problem
     }
 }
 
