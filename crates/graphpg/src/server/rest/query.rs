@@ -301,6 +301,35 @@ fn parse_filter_value(
                 what,
             )
         }
+        "contains" | "includes" if matches!(col.map(|c| c.pg_type.is_range()), Some(true)) => {
+            let elem_col = col
+                .and_then(|c| c.pg_type.range_element())
+                .map(|(inner, _)| {
+                    crate::catalog::FunctionArgument {
+                        name: col.map(|c| c.name.clone()).unwrap_or_default(),
+                        pg_type: inner,
+                        has_default: false,
+                    }
+                    .as_column()
+                });
+            parse_scalar_value(val, elem_col.as_ref(), what)
+        }
+        "strictlyLeftOf" | "strictlyRightOf" | "adjacentTo" | "overlaps" | "containedBy"
+        | "equalTo" | "notEqualTo"
+            if matches!(col.map(|c| c.pg_type.is_range()), Some(true)) =>
+        {
+            let elem_col = col
+                .and_then(|c| c.pg_type.range_element())
+                .map(|(inner, _)| {
+                    crate::catalog::FunctionArgument {
+                        name: col.map(|c| c.name.clone()).unwrap_or_default(),
+                        pg_type: inner,
+                        has_default: false,
+                    }
+                    .as_column()
+                });
+            parse_range_to_object(val, elem_col.as_ref(), what)
+        }
         "contains" | "includes" | "containedBy" | "equalTo" | "notEqualTo"
             if matches!(col.map(|c| &c.pg_type), Some(PgType::Json | PgType::Jsonb)) =>
         {
@@ -350,6 +379,52 @@ fn list_value(
         .map(|s| parse_scalar_value(s.trim(), col, what))
         .collect::<Result<Vec<_>, _>>()
         .map(serde_json::Value::Array)
+}
+
+/// Parses a range value: JSON `{start: ..., end: ...}`, or PostgreSQL `[lower,upper)` string format.
+fn parse_range_to_object(
+    val: &str,
+    elem_col: Option<&ColumnMetadata>,
+    what: &str,
+) -> Result<serde_json::Value, String> {
+    let s = val.trim();
+    if s.starts_with('{') {
+        return serde_json::from_str(s).map_err(|e| format!("`{what}` is not valid JSON: {e}"));
+    }
+    if s.eq_ignore_ascii_case("empty") {
+        return Ok(serde_json::json!({}));
+    }
+    if !((s.starts_with('[') || s.starts_with('(')) && (s.ends_with(']') || s.ends_with(')'))) {
+        return Err(format!(
+            "`{what}` must be a range object or `[lower,upper)` string, got `{val}`"
+        ));
+    }
+    let lower_inclusive = s.starts_with('[');
+    let upper_inclusive = s.ends_with(']');
+    let inner = &s[1..s.len() - 1];
+    let Some((lower_raw, upper_raw)) = inner.split_once(',') else {
+        return Err(format!(
+            "`{what}` must contain a comma separating bounds, got `{val}`"
+        ));
+    };
+    let mut obj = serde_json::Map::new();
+    let lower_raw = lower_raw.trim().trim_matches('"');
+    if !lower_raw.is_empty() {
+        let val = parse_scalar_value(lower_raw, elem_col, &format!("{what}.start"))?;
+        obj.insert(
+            "start".into(),
+            serde_json::json!({ "value": val, "inclusive": lower_inclusive }),
+        );
+    }
+    let upper_raw = upper_raw.trim().trim_matches('"');
+    if !upper_raw.is_empty() {
+        let val = parse_scalar_value(upper_raw, elem_col, &format!("{what}.end"))?;
+        obj.insert(
+            "end".into(),
+            serde_json::json!({ "value": val, "inclusive": upper_inclusive }),
+        );
+    }
+    Ok(serde_json::Value::Object(obj))
 }
 
 /// Turns `{"or": {"0": ..., "1": ...}}`, which is what `filter[or][0][...]` builds, into the

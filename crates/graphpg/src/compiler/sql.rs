@@ -2374,9 +2374,10 @@ impl SqlCompiler {
             let items: Vec<serde_json::Value> = rows
                 .iter()
                 .map(|r| match r.iter().find(|cv| cv.column == spec.column) {
-                    Some(cv) if !cv.value.is_null() => {
-                        serde_json::Value::String(Self::param_text(&cv.value))
-                    }
+                    Some(cv) => match Self::cv_text(cv) {
+                        Some(text) => serde_json::Value::String(text),
+                        None => serde_json::Value::Null,
+                    },
                     _ => serde_json::Value::Null,
                 })
                 .collect();
@@ -2540,7 +2541,7 @@ impl SqlCompiler {
             .unwrap_or_default();
         let value_of = |node: &WriteNode, column: &str| -> ValueRef {
             if let Some(v) = node.values.iter().find(|v| v.column == column) {
-                return ValueRef::Literal((!v.value.is_null()).then(|| Self::param_text(&v.value)));
+                return ValueRef::Literal(Self::cv_text(v));
             }
             match node.refs.iter().find(|r| r.column == column) {
                 Some(r) => ValueRef::Node {
@@ -4134,6 +4135,19 @@ impl SqlCompiler {
         Self::bind_str(params, Self::param_text(value))
     }
 
+    /// Text form of a column value as bound parameter, formatting JSON/JSONB values as valid JSON.
+    fn cv_text(cv: &ColumnValue) -> Option<String> {
+        if cv.value.is_null() {
+            return None;
+        }
+        let text = if matches!(cv.pg_cast.as_deref(), Some("json") | Some("jsonb")) {
+            cv.value.to_string()
+        } else {
+            Self::param_text(&cv.value)
+        };
+        Some(text)
+    }
+
     /// Text form a JSON value is bound as.
     fn param_text(value: &serde_json::Value) -> String {
         match value {
@@ -4146,10 +4160,10 @@ impl SqlCompiler {
     /// `json_populate_record(NULL::"s"."t", $1::text::json)` for a composite type.
     fn bind_value(params: &mut Vec<String>, cv: &ColumnValue) -> String {
         // Parameters are bound as text, so an explicit GraphQL `null` becomes a SQL NULL literal
-        if cv.value.is_null() {
+        let Some(text) = Self::cv_text(cv) else {
             return "NULL".to_string();
-        }
-        let idx = Self::bind(params, &cv.value);
+        };
+        let idx = Self::bind_str(params, text);
         Self::assign_expr(&format!("${idx}::text"), cv, false)
     }
 

@@ -590,6 +590,45 @@ pub(crate) async fn health_handler() -> impl IntoResponse {
     }))
 }
 
+pub(crate) async fn live_handler() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "ok"
+    }))
+}
+
+pub(crate) async fn ready_handler(State(state): State<Arc<ServerState>>) -> Response {
+    let check = match state.pool.get().await {
+        Ok(client) => client
+            .query_one("SELECT 1", &[])
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        Err(err) => Err(err.to_string()),
+    };
+    match check {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "ready" })),
+        )
+            .into_response(),
+        Err(err) => {
+            let error = if state.mask_errors {
+                "Database unavailable".to_string()
+            } else {
+                format!("Database unavailable: {err}")
+            };
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "status": "not_ready",
+                    "error": error
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
 pub(crate) async fn rest_handler() -> impl IntoResponse {
     (StatusCode::OK, "hello world")
 }

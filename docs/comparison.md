@@ -73,7 +73,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 
 | Feature | graphpg REST | PostgREST |
 | :--- | :--- | :--- |
-| Filter operators | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `like`, `ilike`, `startsWith`, `endsWith`, `regex`, `iregex`, `isNull`, `isDistinctFrom`, `…Any` / `…All` of a list, array (`contains`, `containedBy`, `overlaps`) and JSON key and path operators, and the rest of the GraphQL filter inputs (range, `ltree`, PostGIS) through a JSON filter | `eq`, `gt`, `gte`, `lt`, `lte`, `neq`, `like`, `ilike`, `match`, `imatch`, `in`, `is`, `isdistinct`, `cs`, `cd`, `ov`, `sl`, `sr`, `nxr`, `nxl`, `adj`, `fts`, `plfts`, `phfts`, `wfts`; `any` / `all` modifiers |
+| Filter operators | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `like`, `ilike`, `startsWith`, `endsWith`, `regex`, `iregex`, `isNull`, `isDistinctFrom`, `…Any` / `…All` of a list, array (`contains`, `containedBy`, `overlaps`), range (`contains`, `strictlyLeftOf`, `strictlyRightOf`, `adjacentTo`, `overlaps`, `containedBy`), JSON key and path operators, and the rest of the GraphQL filter inputs (`ltree`, PostGIS) through a JSON filter | `eq`, `gt`, `gte`, `lt`, `lte`, `neq`, `like`, `ilike`, `match`, `imatch`, `in`, `is`, `isdistinct`, `cs`, `cd`, `ov`, `sl`, `sr`, `nxr`, `nxl`, `adj`, `fts`, `plfts`, `phfts`, `wfts`; `any` / `all` modifiers |
 | POSIX regular expressions | Yes (`regex`, `iregex`; `match` and `imatch` too) | Yes (`match`, `imatch`) |
 | `and` / `or` / `not` | In the query string (`filter[or][0][a][eq]=1&filter[or][1][b][gt]=2`, `filter[not]…`, nested), and in the JSON filter (`?filter={…}`, `POST …/search`) | In the query string (`or=(a.eq.1,b.gt.2)`, `not.`) |
 | Filtering through relations | `filter[author][name][eq]=…`, `some` / `every` / `none` / `count` on to-many | Embedded filters with `!inner`; `is.null` anti-joins |
@@ -109,7 +109,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Missing columns | The column default (or null) | `Prefer: missing=default` chooses the default over null |
 | Response shape | `Prefer: return=minimal` (204) or the row (default); `Location` and `ETag` | `return=minimal` (default), `headers-only`, `representation`; `Preference-Applied` |
 | Row as it was before the write | `Prefer: previous` (`RETURNING OLD`, PostgreSQL 18) | No |
-| Optimistic concurrency | Row version as `ETag` / `If-Match` (412 `STALE_VERSION`) | No row versions |
+| Optimistic concurrency | Row version as `ETag` / `If-Match` (412 `STALE_VERSION`); conditional `GET` / `HEAD` with `If-None-Match` (304 `Not Modified`) | No row versions |
 | Transactions | One per request; automatic retry on serialization failures and deadlocks | One per request; `Prefer: tx=rollback` (with `db-tx-end`) for dry runs |
 | Unknown input members | **400**: validated against the GraphQL input types, at any depth | Unknown columns are an error from PostgreSQL |
 
@@ -121,7 +121,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | `GET` vs `POST` | `GET` and `POST` for `STABLE` / `IMMUTABLE`; `POST` only for `VOLATILE` (405 otherwise) | Same rule |
 | Arguments | Query parameters (`GET`) or `{"args": {…}}` (`POST`), camelCase names, typed and validated | Query parameters or a JSON object; PostgreSQL parameter names |
 | Set-returning functions | A list with the table's own filters, ordering, pagination and embedding | The same |
-| Single JSON body parameter (`json` / `jsonb`) | No | Yes |
+| Single JSON body parameter (`json` / `jsonb`) | Yes (raw JSON body or `{"args": {…}}`) | Yes |
 | Variadic functions | Not exposed | Yes |
 | Overloads | The first one created is exposed | By argument names |
 | Procedures | Not exposed | Not supported |
@@ -135,7 +135,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | `HEAD` and `OPTIONS` | `HEAD` answers like `GET` without a body; `OPTIONS` lists the methods (`Allow`, `Accept-Post`, `Accept-Patch`) and CORS preflights are answered by the CORS layer; both are in the OpenAPI document | Yes |
 | Several schemas in one deployment | All `database.schemas` merged into one API; if two schemas have a same-named table, REST serves the default schema's | One schema per request, chosen by `Accept-Profile` / `Content-Profile` |
 | CORS | Configurable (`server.cors`): any origin in dev, none in prod unless listed | Configurable allowed origins |
-| Request ID / `Server-Timing` / `EXPLAIN` by header | No (tracing spans; GraphQL `debug.explain` in dev) | `X-Request-Id` echo, `Server-Timing`, `Accept: application/vnd.pgrst.plan` |
+| Request ID / `Server-Timing` / `EXPLAIN` by header | `X-Request-Id` echo/generation, dev `Server-Timing`, tracing spans, GraphQL `debug.explain` in dev | `X-Request-Id` echo, `Server-Timing`, `Accept: application/vnd.pgrst.plan` |
 
 ### Authentication and authorization
 

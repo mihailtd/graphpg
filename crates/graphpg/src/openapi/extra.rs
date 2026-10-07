@@ -679,6 +679,19 @@ impl OpenApiGenerator {
         if !required.is_empty() {
             body["required"] = json!(["args"]);
         }
+        let body_schema = if f.arguments.len() == 1
+            && matches!(f.arguments[0].pg_type, PgType::Json | PgType::Jsonb)
+        {
+            let single_schema = Self::argument_schema(catalog, &f.arguments[0]);
+            json!({
+                "anyOf": [
+                    body,
+                    single_schema
+                ]
+            })
+        } else {
+            body
+        };
 
         let success = match &result {
             None => json!({ "204": { "description": "Done" } }),
@@ -746,7 +759,7 @@ impl OpenApiGenerator {
             "summary": summary,
             "description": describe("Arguments are the `args` object of the body."),
             "operationId": if f.volatile { format!("rpc_{}", f.name) } else { format!("rpc_{}_post", f.name) },
-            "requestBody": { "required": !required.is_empty(), "content": json_content(body) },
+            "requestBody": { "required": !required.is_empty(), "content": json_content(body_schema) },
             "responses": responses,
         });
         if f.deprecation.is_some() {

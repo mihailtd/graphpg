@@ -2,8 +2,8 @@
 //! GraphQL, developer UIs, and health checks, with layered middleware.
 use super::bulk::{export_handler, import_handler};
 use super::http::{
-    graphql_handler, graphql_sdl_handler, graphql_subgraph_handler, health_handler,
-    openapi_spec_handler, rest_handler,
+    graphql_handler, graphql_sdl_handler, graphql_subgraph_handler, health_handler, live_handler,
+    openapi_spec_handler, ready_handler, rest_handler,
 };
 use super::rest::{
     rest_aggregate_get_handler, rest_aggregate_post_handler, rest_column_get_handler,
@@ -168,21 +168,55 @@ pub fn ui_routes(state: &ServerState) -> Router<Arc<ServerState>> {
     router
 }
 
-/// Mounts the liveness health check route: `/health`.
+/// Mounts health check and operational probe routes: `/health`, `/live`, and `/ready`.
 pub fn health_routes() -> Router<Arc<ServerState>> {
-    Router::new().route("/health", get(health_handler))
+    Router::new()
+        .route("/health", get(health_handler))
+        .route("/live", get(live_handler))
+        .route("/ready", get(ready_handler))
 }
 
 /// Applies global middleware layers configured by [`Config`].
 pub fn apply_layers(router: Router, config: &Config) -> Router {
+    apply_layers_with_mode(router, config, false)
+}
+
+/// Applies global middleware layers configured by [`Config`] and the runtime mode.
+pub fn apply_layers_with_mode(router: Router, config: &Config, is_dev: bool) -> Router {
     let headers = Arc::new(config.headers.clone());
     let router = router.layer(axum::middleware::from_fn(
-        move |request: axum::extract::Request, next: axum::middleware::Next| {
+        move |mut request: axum::extract::Request, next: axum::middleware::Next| {
             let headers = headers.clone();
             async move {
+                let start = std::time::Instant::now();
+                let req_id_header = HeaderName::from_static("x-request-id");
+                let request_id = request
+                    .headers()
+                    .get(&req_id_header)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+                if let Ok(val) = HeaderValue::from_str(&request_id) {
+                    request.headers_mut().insert(req_id_header.clone(), val);
+                }
+
                 // The bundled UIs load scripts and styles the strict policy would block
                 let ui = is_ui_path(request.uri().path());
                 let mut response = next.run(request).await;
+
+                if let Ok(val) = HeaderValue::from_str(&request_id) {
+                    response.headers_mut().insert(req_id_header, val);
+                }
+                if is_dev {
+                    let elapsed = start.elapsed();
+                    let dur_ms = elapsed.as_secs_f64() * 1000.0;
+                    if let Ok(st_val) = HeaderValue::from_str(&format!("total;dur={dur_ms:.2}")) {
+                        response
+                            .headers_mut()
+                            .insert(HeaderName::from_static("server-timing"), st_val);
+                    }
+                }
                 apply_security_headers(&headers, ui, response.headers_mut());
                 response
             }
@@ -221,10 +255,19 @@ fn cors_layer(cors: &CorsConfig) -> Option<CorsLayer> {
             .collect()
     };
     let headers: Vec<HeaderName> = if cors.headers.is_empty() {
-        ["authorization", "content-type", "accept", "prefer"]
-            .iter()
-            .map(|h| HeaderName::from_static(h))
-            .collect()
+        [
+            "authorization",
+            "content-type",
+            "accept",
+            "prefer",
+            "x-request-id",
+            "if-none-match",
+            "if-match",
+            "range",
+        ]
+        .iter()
+        .map(|h| HeaderName::from_static(h))
+        .collect()
     } else {
         cors.headers
             .iter()
@@ -271,8 +314,9 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
     router = router.merge(ui_routes(&state));
 
     let config = state.config.as_ref().cloned().unwrap_or_default();
+    let is_dev = state.mode == crate::config::Mode::Dev;
     let router = router.with_state(state);
-    apply_layers(router, &config)
+    apply_layers_with_mode(router, &config, is_dev)
 }
 
 /// Sets the headers of `config.preset`, then the overrides. Headers a handler already set stay.

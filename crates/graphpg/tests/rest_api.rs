@@ -965,3 +965,82 @@ async fn omitted_operations_are_neither_served_nor_described() {
     let reply = call(&app, "DELETE", &format!("/rest/forums/{CATS}"), &[], None).await;
     reply.assert_problem(StatusCode::FORBIDDEN, "FORBIDDEN");
 }
+
+#[tokio::test]
+async fn conditional_get_answers_304_when_if_none_match_matches() {
+    let app = app().await;
+    let initial = call(&app, "GET", &format!("/rest/forums/{CATS}"), &[], None).await;
+    assert_eq!(initial.status, StatusCode::OK);
+    let etag = initial.header("etag").expect("ETag header present");
+
+    // Matching ETag returns 304 Not Modified without body
+    let not_modified = call(
+        &app,
+        "GET",
+        &format!("/rest/forums/{CATS}"),
+        &[("if-none-match", etag)],
+        None,
+    )
+    .await;
+    assert_eq!(not_modified.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(not_modified.header("etag"), Some(etag));
+    assert!(not_modified.body.is_null());
+
+    // Wildcard '*' also returns 304
+    let wildcard = call(
+        &app,
+        "GET",
+        &format!("/rest/forums/{CATS}"),
+        &[("if-none-match", "*")],
+        None,
+    )
+    .await;
+    assert_eq!(wildcard.status, StatusCode::NOT_MODIFIED);
+
+    // Mismatched ETag returns 200 OK with data
+    let mismatched = call(
+        &app,
+        "GET",
+        &format!("/rest/forums/{CATS}"),
+        &[("if-none-match", "\"bogus-version\"")],
+        None,
+    )
+    .await;
+    assert_eq!(mismatched.status, StatusCode::OK);
+    assert_eq!(mismatched.body["id"], CATS);
+}
+
+#[tokio::test]
+async fn request_id_and_operational_probes() {
+    let app = app().await;
+
+    // Probes
+    let live = call(&app, "GET", "/live", &[], None).await;
+    assert_eq!(live.status, StatusCode::OK);
+    assert_eq!(live.body["status"], "ok");
+
+    let ready = call(&app, "GET", "/ready", &[], None).await;
+    assert_eq!(ready.status, StatusCode::OK);
+    assert_eq!(ready.body["status"], "ready");
+
+    let health = call(&app, "GET", "/health", &[], None).await;
+    assert_eq!(health.status, StatusCode::OK);
+    assert_eq!(health.body["status"], "ok");
+
+    // X-Request-Id echo and generation
+    let with_id = call(
+        &app,
+        "GET",
+        "/rest/forums",
+        &[("x-request-id", "test-req-id-42")],
+        None,
+    )
+    .await;
+    assert_eq!(with_id.header("x-request-id"), Some("test-req-id-42"));
+
+    let generated = call(&app, "GET", "/rest/forums", &[], None).await;
+    let gen_id = generated
+        .header("x-request-id")
+        .expect("generated request id");
+    assert!(!gen_id.is_empty());
+}

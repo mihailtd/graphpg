@@ -122,6 +122,7 @@ CREATE FUNCTION sum_ids(ids int[]) RETURNS int LANGUAGE sql IMMUTABLE
     AS $$ SELECT coalesce(sum(i), 0)::int FROM unnest(ids) i $$;
 CREATE FUNCTION statuses() RETURNS SETOF order_status LANGUAGE sql STABLE
     AS $$ SELECT unnest(enum_range(NULL::rest_extras.order_status)) $$;
+CREATE FUNCTION echo_json(payload jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$ SELECT payload $$;
 CREATE FUNCTION status_of(s order_status) RETURNS order_status LANGUAGE sql IMMUTABLE AS $$ SELECT s $$;
 CREATE FUNCTION origin() RETURNS point2 LANGUAGE sql IMMUTABLE AS $$ SELECT ROW(0, 1)::rest_extras.point2 $$;
 CREATE FUNCTION tags() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ SELECT ARRAY['a', 'b'] $$;

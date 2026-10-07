@@ -942,6 +942,14 @@ expression: openapi
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "Row version: returns 304 without a body when it matches",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -972,6 +980,17 @@ expression: openapi
                       "eq": "$response.body#/id"
                     }
                   }
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified: the row has not changed since the version in `If-None-Match`",
+            "headers": {
+              "ETag": {
+                "description": "Row version",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -1570,11 +1589,30 @@ expression: openapi
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "Row version: returns 304 without a body when it matches",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "The requested forums row",
+            "headers": {
+              "ETag": {
+                "description": "Row version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified: the row has not changed since the version in `If-None-Match`",
             "headers": {
               "ETag": {
                 "description": "Row version",
@@ -2958,6 +2996,14 @@ expression: openapi
                 "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "Row version: returns 304 without a body when it matches",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2991,6 +3037,17 @@ expression: openapi
                 "description": "The `forums` this `messages` refers to (`forum_id`)",
                 "parameters": {
                   "key": "$response.body#/forumId"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified: the row has not changed since the version in `If-None-Match`",
+            "headers": {
+              "ETag": {
+                "description": "Row version",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -3612,11 +3669,30 @@ expression: openapi
                 "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "Row version: returns 304 without a body when it matches",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "The requested messages row",
+            "headers": {
+              "ETag": {
+                "description": "Row version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified: the row has not changed since the version in `If-None-Match`",
             "headers": {
               "ETag": {
                 "description": "Row version",
@@ -5000,6 +5076,14 @@ expression: openapi
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "Row version: returns 304 without a body when it matches",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5030,6 +5114,17 @@ expression: openapi
                       "eq": "$response.body#/id"
                     }
                   }
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified: the row has not changed since the version in `If-None-Match`",
+            "headers": {
+              "ETag": {
+                "description": "Row version",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -5633,11 +5728,30 @@ expression: openapi
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "Row version: returns 304 without a body when it matches",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "The requested users row",
+            "headers": {
+              "ETag": {
+                "description": "Row version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified: the row has not changed since the version in `If-None-Match`",
             "headers": {
               "ETag": {
                 "description": "Row version",

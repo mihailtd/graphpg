@@ -16,7 +16,10 @@ Releases are tagged `vX.Y.Z`; each one has generated notes on the
 - **REST media types**: CSV lists (`Accept: text/csv`, `406` otherwise), CSV bulk creates, `multipart/form-data` writes, the bytes of a `bytea` column at `/rest/<table>/<key>/<column>`, `OPTIONS` with `Allow` / `Accept-Post` / `Accept-Patch`; `HEAD` and `OPTIONS` are in the OpenAPI document.
 - **OpenAPI inference**: `CHECK` constraints as JSON Schema keywords (bounds, `multipleOf`, length, `pattern`, item counts), Single Table Inheritance as `oneOf` with a `discriminator`, and `links` from foreign keys on the single-row `GET`.
 - **REST ranges**: `Range: items=A-B` on lists answers `206` with `Content-Range` (the total with `Prefer: count=exact`) or `416`; every list sends `Accept-Ranges: items`.
-- **REST filters**: `regex` / `iregex`, `isDistinctFrom`, `…Any` / `…All` of a list (also in GraphQL filters), `or` / `and` / `not` groups in the query string, array and JSON operators in `GET`.
+- **REST filters**: `regex` / `iregex`, `isDistinctFrom`, `…Any` / `…All` of a list (also in GraphQL filters), `or` / `and` / `not` groups in the query string, array and JSON operators in `GET`, and range filter operators (`contains`, `strictlyLeftOf`, `strictlyRightOf`, `adjacentTo`, `overlaps`, `containedBy`) accepting `[lower,upper)` string bounds and JSON input objects.
+- **HTTP semantics & tracing**: `X-Request-Id` middleware echoes incoming request IDs or generates a UUIDv4 on all responses and error payloads; `Server-Timing` latency header emitted in dev mode; conditional reads on `GET` and `HEAD /rest/{resource}/{key}` with `If-None-Match` answering `304 Not Modified` with no body.
+- **Operational probes**: `/live` (liveness probe answering 200 OK) and `/ready` (readiness probe validating database connectivity via `SELECT 1`, returning 503 if unreachable).
+- **RPC improvements**: functions with a single `json` or `jsonb` parameter accept raw JSON bodies directly without the `{"args": …}` wrapper.
 - Docs: a [comparison with PostgREST](docs/comparison.md#compared-with-postgrest), the REST API guide, safety limits and pinned schemas in the configuration guide.
 
 ## 1.0.1 - 2026-10-04

@@ -91,15 +91,22 @@ fn parse_argument_text(
                 .map(serde_json::Value::Array)
                 .map_err(invalid)
         }
-        PgType::Array(_) | PgType::Json | PgType::Jsonb | PgType::Composite(_)
+        PgType::Array(_) | PgType::Composite(_)
             if text.starts_with('{') || text.starts_with('[') =>
         {
             serde_json::from_str(text)
                 .map_err(|e| invalid(format!("`{name}` is not valid JSON: {e}")))
         }
-        PgType::Json | PgType::Jsonb | PgType::Composite(_) => {
-            Ok(serde_json::Value::String(text.to_string()))
+        PgType::Json | PgType::Jsonb => {
+            if text.starts_with('{') || text.starts_with('[') {
+                serde_json::from_str(text)
+                    .map_err(|e| invalid(format!("`{name}` is not valid JSON: {e}")))
+            } else {
+                Ok(serde_json::from_str(text)
+                    .unwrap_or_else(|_| serde_json::Value::String(text.to_string())))
+            }
         }
+        PgType::Composite(_) => Ok(serde_json::Value::String(text.to_string())),
         _ => query::parse_scalar_value(text, Some(&column), &name).map_err(invalid),
     }
 }
@@ -228,17 +235,53 @@ pub async fn rest_rpc_handler(
                     "POST takes its arguments and options in the JSON body, not the query string",
                 ));
             }
-            let mut body = if body.is_empty() {
-                serde_json::Map::new()
+            let single_json_arg = f.arguments.len() == 1
+                && matches!(f.arguments[0].pg_type, PgType::Json | PgType::Jsonb);
+            let (args, options) = if single_json_arg {
+                if body.is_empty() {
+                    (
+                        serde_json::Map::new(),
+                        Options::Body(serde_json::Map::new()),
+                    )
+                } else {
+                    let parsed = parse_json_body(&body)?;
+                    match parsed {
+                        serde_json::Value::Object(mut map) if map.contains_key("args") => {
+                            let args = match map.remove("args") {
+                                Some(serde_json::Value::Object(args)) => args,
+                                Some(_) => {
+                                    return Err(ProblemDetails::invalid(
+                                        "`args` must be an object",
+                                        "args",
+                                    ))
+                                }
+                                None => serde_json::Map::new(),
+                            };
+                            (args, Options::Body(map))
+                        }
+                        raw_json => {
+                            let mut args = serde_json::Map::new();
+                            args.insert(f.arguments[0].graphql_name(), raw_json);
+                            (args, Options::Body(serde_json::Map::new()))
+                        }
+                    }
+                }
             } else {
-                json_object(parse_json_body(&body)?)?
+                let mut body = if body.is_empty() {
+                    serde_json::Map::new()
+                } else {
+                    json_object(parse_json_body(&body)?)?
+                };
+                let args = match body.remove("args") {
+                    None => serde_json::Map::new(),
+                    Some(serde_json::Value::Object(args)) => args,
+                    Some(_) => {
+                        return Err(ProblemDetails::invalid("`args` must be an object", "args"))
+                    }
+                };
+                (args, Options::Body(body))
             };
-            let args = match body.remove("args") {
-                None => serde_json::Map::new(),
-                Some(serde_json::Value::Object(args)) => args,
-                Some(_) => return Err(ProblemDetails::invalid("`args` must be an object", "args")),
-            };
-            (args, Options::Body(body))
+            (args, options)
         };
         let args = bind_arguments(&ctx, f, arguments)?;
 
