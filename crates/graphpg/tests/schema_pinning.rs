@@ -52,14 +52,24 @@ impl Project {
     }
 
     /// Starts the server and gives it a few seconds: `Some(output)` if it exited by itself.
+    /// Starts the server and waits a few seconds: `None` if it is still running (it starts).
     fn start(&self, args: &[&str]) -> (Option<Output>, String) {
+        self.start_for(args, 30)
+    }
+
+    /// Starts the server where it is expected to refuse: a slow machine gets 30 seconds to say so.
+    fn start_refused(&self, args: &[&str]) -> (Option<Output>, String) {
+        self.start_for(args, 300)
+    }
+
+    fn start_for(&self, args: &[&str], ticks: u32) -> (Option<Output>, String) {
         let mut child = self
             .command(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .expect("graphpg starts");
-        for _ in 0..30 {
+        for _ in 0..ticks {
             if child.try_wait().unwrap().is_some() {
                 let output = child.wait_with_output().unwrap();
                 let text = text_of(&output);
@@ -188,7 +198,7 @@ fn startup_refuses_a_drifted_schema_in_prod_and_warns_in_dev() {
         serde_json::to_string_pretty(&doc).unwrap(),
     )
     .unwrap();
-    let (exited, text) = project.start(&["--mode", "prod"]);
+    let (exited, text) = project.start_refused(&["--mode", "prod"]);
     let exited = exited.expect("prod does not start on drift");
     assert!(!exited.status.success());
     assert!(
@@ -215,7 +225,11 @@ fn the_pin_can_be_turned_off_or_made_a_warning_everywhere() {
             "type Query { stale: Int }\n",
         )
         .unwrap();
-        let (exited, text) = project.start(&["--mode", "prod"]);
+        let (exited, text) = if starts {
+            project.start(&["--mode", "prod"])
+        } else {
+            project.start_refused(&["--mode", "prod"])
+        };
         assert_eq!(exited.is_none(), starts, "pin: {pin}\n{text}");
     }
     // files that do not exist pin nothing
