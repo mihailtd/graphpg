@@ -113,6 +113,24 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Transactions | One per request; automatic retry on serialization failures and deadlocks | One per request; `Prefer: tx=rollback` (with `db-tx-end`) for dry runs |
 | Unknown input members | **400**: validated against the GraphQL input types, at any depth | Unknown columns are an error from PostgreSQL |
 
+### Throughput against PostgREST
+
+[`benchmarks/rest`](../benchmarks/rest) runs the same requests against both on one PostgreSQL (18.6), with the same schema, data (100 000 posts, 300 000 comments) and a pool of 10 connections each: graphpg 1.0.1 and PostgREST 16.4, 20 virtual users, 10 s per scenario, one run on one machine (AMD Ryzen 9 9900X) that also runs the databases and the load generator.
+
+| Scenario | graphpg req/s | PostgREST req/s | graphpg p50 / p95 ms | PostgREST p50 / p95 ms |
+| :--- | ---: | ---: | ---: | ---: |
+| List of 20 rows, 3 columns, ordered by key | 33426 | 21282 | 0.49 / 0.80 | 0.71 / 1.86 |
+| List filtered on an enum, newest first (indexed) | 32501 | 19894 | 0.52 / 0.80 | 0.74 / 2.21 |
+| One row by primary key | 74031 | 24606 | 0.22 / 0.35 | 0.60 / 2.05 |
+| 20 posts with author and comments embedded | 17227 | 11995 | 0.97 / 1.67 | 1.22 / 3.51 |
+| Pagination: `offset` deep into 100 000 rows | 3100 | 2884 | 6.34 / 9.09 | 6.36 / 12.65 |
+| Pagination: rows after a key, deep into 100 000 rows | 35040 | 22077 | 0.48 / 0.74 | 0.70 / 1.82 |
+| Insert one row | 5328 | 4948 | 3.49 / 4.30 | 3.70 / 5.85 |
+| Update one row by key | 5400 | 3970 | 3.49 / 4.25 | 3.93 / 11.14 |
+| Update 10 rows by filter | 4191 | 4292 | 4.11 / 7.59 | 4.10 / 7.80 |
+
+What it shows: both are limited by PostgreSQL where a query is expensive (`offset` deep into a table takes about 6 ms in both, and is the slowest read: keyset pagination is what makes it fast in both), and the difference is in the cost around the query, where graphpg's lower latency and higher throughput on reads come from. What it does not: it is a small indexed schema on loopback, with the load generator on the same machine, and the two connect as the same database user (PostgREST then switches role per request, which is how it enforces roles). Treat the ratios as indicative, rerun it on your hardware and on your own queries ([how](../benchmarks/rest/README.md)), and read the [feature comparison](#compared-with-postgrest) as the more important part of the choice.
+
 ### Functions
 
 | Feature | graphpg REST | PostgREST |

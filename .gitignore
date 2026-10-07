@@ -45,3 +45,8 @@ node_modules/
 
 # graphpg-ui generated assets
 crates/graphpg-ui/assets/
+
+# benchmark output (the dated results are kept)
+benchmarks/rest/results/graphpg.md
+benchmarks/rest/results/postgrest.md
+benchmarks/rest/results/*.log

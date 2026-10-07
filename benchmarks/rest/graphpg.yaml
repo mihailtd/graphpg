@@ -1,0 +1,11 @@
+# graphpg for the REST benchmark: the `bench` schema, REST on, nothing else.
+database:
+  schemas: [bench]
+  # The pool PostgREST gets too (`PGRST_DB_POOL`): same database, same connections
+  pool_size: 10
+graphql:
+  enabled: false
+openapi:
+  enabled: true
+limits:
+  page_size: { default: 100, max: 1000 }
