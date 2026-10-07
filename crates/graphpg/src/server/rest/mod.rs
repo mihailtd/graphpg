@@ -57,6 +57,9 @@ use crate::planner::{QueryPlanner, RequestField, RequestOperation, ResponseShape
 use media::Media;
 use validate::{validate_argument, Root};
 
+/// `GET /rest/node/{id}`: the row a Relay global ID (GraphQL's `id`) names. A table cannot use it.
+pub const NODE_RESOURCE: &str = "node";
+
 /// Path prefix of the REST API.
 pub const REST_PREFIX: &str = "/rest";
 pub use aggregates::MAX_GROUP_KEYS;
@@ -83,7 +86,7 @@ pub fn resolve_table<'a>(
     resource: &str,
 ) -> Option<&'a TableMetadata> {
     // `/rest/rpc/…` and `/rest/search` are not resources
-    if resource == RPC_RESOURCE || resource == GLOBAL_SEARCH_RESOURCE {
+    if resource == RPC_RESOURCE || resource == GLOBAL_SEARCH_RESOURCE || resource == NODE_RESOURCE {
         return None;
     }
     catalog
@@ -104,7 +107,7 @@ pub fn resolve_table_in<'a>(
     schema: &str,
     resource: &str,
 ) -> Option<&'a TableMetadata> {
-    if resource == RPC_RESOURCE || resource == GLOBAL_SEARCH_RESOURCE {
+    if resource == RPC_RESOURCE || resource == GLOBAL_SEARCH_RESOURCE || resource == NODE_RESOURCE {
         return None;
     }
     catalog.find_table(schema, resource).or_else(|| {
@@ -137,6 +140,7 @@ pub fn rest_schemas(catalog: &DatabaseCatalog, default_schema: &str) -> Vec<Stri
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
             && schema != RPC_RESOURCE
             && schema != GLOBAL_SEARCH_RESOURCE
+            && schema != NODE_RESOURCE
     });
     schemas
 }
@@ -271,6 +275,140 @@ pub fn parse_primary_key(
         obj.insert(col.field_name.clone(), query::parse_key_scalar(part, col)?);
     }
     Ok(serde_json::Value::Object(obj))
+}
+
+/// A row addressed in a path: by its primary key, or by one of its other unique keys
+/// (`GET /rest/users/alice?by=username`, like GraphQL's `userByUsername`).
+#[derive(Debug, Clone)]
+pub(super) struct RowAddress {
+    /// Columns of the unique key; empty for the primary key.
+    pub unique: Vec<String>,
+    /// `ByUsername`: the end of the names of the root fields of a unique key.
+    suffix: String,
+    /// The key as the arguments of the root fields.
+    pub args: HashMap<String, serde_json::Value>,
+    /// The parsed primary key: a body must agree with it. `None` for a unique key, whose
+    /// columns can be updated.
+    pub primary: Option<serde_json::Value>,
+    /// The key as written in the path.
+    pub label: String,
+}
+
+impl RowAddress {
+    /// The primary key `key`.
+    pub fn primary(table: &TableMetadata, key: &str) -> Result<Self, ProblemDetails> {
+        let parsed = parse_primary_key(key, table).map_err(ProblemDetails::bad_request)?;
+        Ok(Self {
+            unique: Vec::new(),
+            suffix: String::new(),
+            args: key_args(table, &parsed),
+            primary: Some(parsed),
+            label: key.to_string(),
+        })
+    }
+
+    /// The row whose unique key `by` (column names, comma-separated) has the values `key`
+    /// (comma-separated, in the order of `by`).
+    pub fn unique(table: &TableMetadata, key: &str, by: &str) -> Result<Self, ProblemDetails> {
+        let wanted: Vec<&str> = by
+            .split(',')
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+            .collect();
+        let found = table.lookup_keys().find(|(_, cols)| {
+            cols.len() == wanted.len()
+                && wanted
+                    .iter()
+                    .all(|w| cols.iter().any(|c| c.field_name == *w || c.name == *w))
+        });
+        let Some((_, cols)) = found else {
+            let keys: Vec<String> = table
+                .lookup_keys()
+                .map(|(_, cols)| {
+                    cols.iter()
+                        .map(|c| c.field_name.clone())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .collect();
+            return Err(ProblemDetails::invalid(
+                format!(
+                    "`{by}` is not a unique key of `{}` that rows can be addressed by{}",
+                    table.name,
+                    if keys.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", keys.join("; "))
+                    }
+                ),
+                "by",
+            ));
+        };
+        // Values come in the order the key was named
+        let ordered: Vec<&ColumnMetadata> = wanted
+            .iter()
+            .filter_map(|w| {
+                cols.iter()
+                    .copied()
+                    .find(|c| c.field_name == *w || c.name == *w)
+            })
+            .collect();
+        let values: Vec<&str> = key.split(',').map(str::trim).collect();
+        if values.len() != ordered.len() {
+            return Err(ProblemDetails::bad_request(format!(
+                "`{by}` takes {} value(s) separated by commas, got {}",
+                ordered.len(),
+                values.len()
+            )));
+        }
+        let mut args = HashMap::new();
+        for (col, value) in ordered.iter().zip(values) {
+            args.insert(
+                col.field_name.clone(),
+                query::parse_key_scalar(value, col).map_err(ProblemDetails::bad_request)?,
+            );
+        }
+        Ok(Self {
+            unique: cols.iter().map(|c| c.name.clone()).collect(),
+            suffix: crate::catalog::models::unique_key_suffix(&cols),
+            args,
+            primary: None,
+            label: key.to_string(),
+        })
+    }
+
+    /// The address a path and its `by` parameter name.
+    pub fn of(table: &TableMetadata, key: &str, by: Option<&str>) -> Result<Self, ProblemDetails> {
+        match by {
+            Some(by) => Self::unique(table, key, by),
+            None => Self::primary(table, key),
+        }
+    }
+
+    /// The root field that reads the row.
+    pub fn read_root(&self, table: &TableMetadata) -> String {
+        format!("{}{}", table.single_field, self.suffix)
+    }
+}
+
+/// Takes the `by` parameter (the unique key a path addresses a row by) out of a query string.
+pub(super) fn take_by(raw_query: Option<&str>) -> Result<(Option<String>, String), ProblemDetails> {
+    let mut by = None;
+    let mut rest = Vec::new();
+    for pair in raw_query.unwrap_or("").split('&').filter(|p| !p.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if key == "by" {
+            by = Some(
+                percent_encoding::percent_decode_str(&value.replace('+', " "))
+                    .decode_utf8()
+                    .map_err(|_| ProblemDetails::bad_request("Invalid UTF-8 in `by`"))?
+                    .to_string(),
+            );
+        } else {
+            rest.push(pair);
+        }
+    }
+    Ok((by, rest.join("&")))
 }
 
 /// Arguments addressing one row by its parsed key.
@@ -504,9 +642,10 @@ fn include_fields(
     ctx: &Ctx,
     table: &TableMetadata,
     tree: &IncludeTree,
-    embed: &BTreeMap<String, EmbedControls>,
+    query: &RestQuery,
     prefix: &str,
 ) -> Result<Vec<RequestField>, ProblemDetails> {
+    let embed = &query.embed;
     let catalog = &ctx.catalog;
     let mut out = Vec::new();
     for (name, sub) in &tree.0 {
@@ -522,7 +661,8 @@ fn include_fields(
             &path,
             embedded.controls.and_then(|c| c.fields.as_ref()),
         )?;
-        children.extend(include_fields(ctx, embedded.target, sub, embed, &path)?);
+        apply_json_paths(&mut children, embedded.target, &path, &query.json_paths);
+        children.extend(include_fields(ctx, embedded.target, sub, query, &path)?);
         if !embedded.connection {
             out.push(RequestField::new(&embedded.field).with_children(children));
             continue;
@@ -680,10 +820,9 @@ pub(crate) fn computed_value_exists(
 fn select_fields(
     ctx: &Ctx,
     table: &TableMetadata,
-    fields: Option<&Vec<String>>,
-    include: Option<&Vec<String>>,
-    embed: &BTreeMap<String, EmbedControls>,
+    query: &RestQuery,
 ) -> Result<Vec<RequestField>, ProblemDetails> {
+    let (fields, include) = (query.fields.as_ref(), query.include.as_ref());
     let catalog = &*ctx.catalog;
     let cti = catalog.find_cti(&table.schema, &table.name);
     let mut out = match fields.filter(|f| !f.is_empty()) {
@@ -771,16 +910,50 @@ fn select_fields(
             selected
         }
     };
+    apply_json_paths(&mut out, table, "", &query.json_paths);
     if let Some(include) = include {
         out.extend(include_fields(
             ctx,
             table,
             &build_include_tree(include)?,
-            embed,
+            query,
             "",
         )?);
     }
     Ok(out)
+}
+
+/// `path[column]=$.a.b`: the first item of a JSON path of a `json` / `jsonb` column, instead of
+/// the whole value. `prefix` is the `include` path of the relation the columns belong to.
+fn apply_json_paths(
+    fields: &mut [RequestField],
+    table: &TableMetadata,
+    prefix: &str,
+    paths: &BTreeMap<String, String>,
+) {
+    for field in fields.iter_mut() {
+        let Some(col) = table
+            .visible_columns()
+            .find(|c| c.field_name == field.response_key())
+        else {
+            continue;
+        };
+        let key = |name: &str| {
+            if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}.{name}")
+            }
+        };
+        if let Some(path) = paths
+            .get(&key(&col.field_name))
+            .or_else(|| paths.get(&key(&col.name)))
+        {
+            field
+                .arguments
+                .insert("path".to_string(), serde_json::json!(path));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -889,6 +1062,14 @@ impl Ctx {
                 ("rest_method", method),
             ]);
         }
+        let (want_sql, want_explain) = (
+            self.state.debug.sql || self.state.debug.explain,
+            self.state.debug.explain,
+        );
+        if want_sql {
+            let statements = crate::server::http::debug_sql(&compiled);
+            let _ = DEBUG.try_with(|d| d.borrow_mut().sql.push(statements));
+        }
         let compiled = Arc::new(compiled);
         let span = tracing::info_span!("rest.execute", rest.resource = %self.resource, rest.method = %method);
         let auth = self.auth.clone();
@@ -902,7 +1083,15 @@ impl Ctx {
                 .map_err(|e| self.unavailable(&e))?;
             tokio::spawn(
                 async move {
-                    ExecutionEngine::run_with_auth(&*client, &compiled, None, auth.as_ref()).await
+                    let mut plans = Vec::new();
+                    let result = ExecutionEngine::run_with_auth(
+                        &*client,
+                        &compiled,
+                        want_explain.then_some(&mut plans),
+                        auth.as_ref(),
+                    )
+                    .await;
+                    (result, plans)
                 }
                 .instrument(span),
             )
@@ -915,14 +1104,22 @@ impl Ctx {
                 .map_err(|e| self.unavailable(&e))?;
             tokio::spawn(
                 async move {
-                    ExecutionEngine::run_with_auth(&*client, &compiled, None, auth.as_ref()).await
+                    let mut plans = Vec::new();
+                    let result = ExecutionEngine::run_with_auth(
+                        &*client,
+                        &compiled,
+                        want_explain.then_some(&mut plans),
+                        auth.as_ref(),
+                    )
+                    .await;
+                    (result, plans)
                 }
                 .instrument(span),
             )
             .await
         };
 
-        let result = joined.map_err(|err| {
+        let (result, plans) = joined.map_err(|err| {
             ProblemDetails::internal(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_SERVER_ERROR",
@@ -931,6 +1128,9 @@ impl Ctx {
                 self.is_prod,
             )
         })?;
+        if !plans.is_empty() {
+            let _ = DEBUG.try_with(|d| d.borrow_mut().explain.extend(plans));
+        }
         result.map_err(|err| {
             ProblemDetails::from_execution_error(
                 &err,
@@ -942,10 +1142,47 @@ impl Ctx {
     }
 }
 
+tokio::task_local! {
+    /// What `debug.sql` and `debug.explain` collect during a request: the statements and the
+    /// plans, sent back in `X-Debug-SQL` and `X-Debug-Explain` headers.
+    static DEBUG: std::cell::RefCell<DebugInfo>;
+}
+
+#[derive(Default)]
+struct DebugInfo {
+    sql: Vec<serde_json::Value>,
+    explain: Vec<String>,
+}
+
 /// Turns a handler's result into a response, naming the request URL as the problem instance.
+/// With `debug.sql` / `debug.explain` (dev) the statements and plans it ran are in headers.
 async fn respond(instance: String, work: impl Future<Output = RestResult>) -> Response {
-    work.await
-        .unwrap_or_else(|problem| problem.with_instance(instance).into_response())
+    let (result, debug) = DEBUG
+        .scope(std::cell::RefCell::new(DebugInfo::default()), async {
+            let result = work.await;
+            (result, DEBUG.with(|d| std::mem::take(&mut *d.borrow_mut())))
+        })
+        .await;
+    let mut response =
+        result.unwrap_or_else(|problem| problem.with_instance(instance).into_response());
+    let encode = |value: &serde_json::Value| {
+        percent_encode(value.to_string().as_bytes(), URL_ENCODE_SET).to_string()
+    };
+    if !debug.sql.is_empty() {
+        set_header(
+            response.headers_mut(),
+            header::HeaderName::from_static("x-debug-sql"),
+            &encode(&serde_json::Value::Array(debug.sql)),
+        );
+    }
+    if !debug.explain.is_empty() {
+        set_header(
+            response.headers_mut(),
+            header::HeaderName::from_static("x-debug-explain"),
+            &encode(&serde_json::json!(debug.explain)),
+        );
+    }
+    response
 }
 
 fn shaping_error(err: impl std::fmt::Display, is_prod: bool) -> ProblemDetails {
@@ -1155,10 +1392,26 @@ fn mutation_field(
     action: MutationAction,
     what: &str,
 ) -> Result<MutationField, ProblemDetails> {
+    mutation_field_by(catalog, table, action, what, &[])
+}
+
+/// The mutation field of `action` addressing rows by the unique key `unique` (column names; the
+/// primary key when empty).
+fn mutation_field_by(
+    catalog: &DatabaseCatalog,
+    table: &TableMetadata,
+    action: MutationAction,
+    what: &str,
+    unique: &[String],
+) -> Result<MutationField, ProblemDetails> {
     catalog
         .table_mutation_fields(table)
         .into_iter()
-        .find(|m| m.action == action && m.unique_key.is_empty())
+        .find(|m| {
+            m.action == action
+                && m.unique_key.len() == unique.len()
+                && unique.iter().all(|u| m.unique_key.contains(u))
+        })
         .ok_or_else(|| {
             ProblemDetails::bad_request(format!("{what} is not supported for `{}`", table.name))
         })
@@ -1300,13 +1553,7 @@ async fn list_rows(
         args: initial_args,
     } = target;
     let mut args = initial_args.clone();
-    let row_fields = select_fields(
-        ctx,
-        table,
-        query.fields.as_ref(),
-        query.include.as_ref(),
-        &query.embed,
-    )?;
+    let row_fields = select_fields(ctx, table, query)?;
 
     if let Some(filter) = &query.filter {
         ctx.validate(Root::Query, root, "filter", filter, "filter")?;
@@ -1490,6 +1737,15 @@ fn listing_response(
             }
         }
     }
+    if media == Media::Ndjson {
+        set_header(&mut out, header::CONTENT_TYPE, "application/x-ndjson");
+        let mut lines = String::new();
+        for row in &listing.rows {
+            lines.push_str(&row.to_string());
+            lines.push('\n');
+        }
+        return (StatusCode::OK, out, lines).into_response();
+    }
     if media == Media::Csv {
         set_header(&mut out, header::CONTENT_TYPE, "text/csv; charset=utf-8");
         return (StatusCode::OK, out, media::rows_to_csv(&listing.rows, None)).into_response();
@@ -1550,6 +1806,42 @@ fn build_link_header(
         links.push(format!("{}; rel=\"prev\"", render(params)));
     }
     (!links.is_empty()).then(|| links.join(", "))
+}
+
+/// Handler for `GET /rest/node/{id}`: GraphQL's `node(id:)`. A global ID names a table and a key,
+/// so the answer is a redirect to the row's own URL (`303 See Other`, query string kept).
+pub async fn rest_node_handler(
+    State(state): State<Arc<ServerState>>,
+    Path(id): Path<String>,
+    RawQuery(raw_query): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    respond(format!("{REST_PREFIX}/{NODE_RESOURCE}/{id}"), async {
+        let ctx = Ctx::new(&state, &headers, None, NODE_RESOURCE.to_string()).await?;
+        let not_found = || ProblemDetails::not_found(format!("No row has the global ID `{id}`"));
+        let (type_name, key) =
+            crate::schema::SchemaBuilder::decode_global_id(&id).ok_or_else(not_found)?;
+        let (schema, name) = ctx
+            .catalog
+            .table_for_type_any(&type_name)
+            .ok_or_else(not_found)?;
+        let table = ctx.catalog.find_table(schema, name).ok_or_else(not_found)?;
+        ctx.allow(table, Operation::Read)?;
+        // The unqualified path when it names this table, else the path of its schema
+        let owner = resolve_table(&ctx.catalog, &ctx.state.default_schema, &table.name)
+            .is_some_and(|t| std::ptr::eq(t, table));
+        let base = rest_base(&(!owner).then(|| table.schema.clone()));
+        let encode = |s: &str| percent_encode(s.as_bytes(), URL_ENCODE_SET).to_string();
+        let mut location = format!("{base}/{}/{}", encode(&table.name), encode(&key));
+        if let Some(query) = raw_query.filter(|q| !q.is_empty()) {
+            location.push('?');
+            location.push_str(&query);
+        }
+        let mut out = HeaderMap::new();
+        set_header(&mut out, header::LOCATION, &location);
+        Ok((StatusCode::SEE_OTHER, out).into_response())
+    })
+    .await
 }
 
 /// Handler for `GET /rest/{resource}`.
@@ -1830,27 +2122,18 @@ pub async fn rest_item_handler(
         let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let table = ctx.table()?;
         ctx.allow(table, Operation::Read)?;
-        let parsed_key = parse_primary_key(&key, table).map_err(ProblemDetails::bad_request)?;
-        let query = parse_query_params(
-            raw_query.as_deref().unwrap_or(""),
-            QueryKind::Item,
-            table,
-            &ctx.catalog,
-        )
-        .map_err(ProblemDetails::bad_request)?;
+        let (by, raw_query) = take_by(raw_query.as_deref())?;
+        let address = RowAddress::of(table, &key, by.as_deref())?;
+        let query = parse_query_params(&raw_query, QueryKind::Item, table, &ctx.catalog)
+            .map_err(ProblemDetails::bad_request)?;
 
-        let mut fields = select_fields(
-            &ctx,
-            table,
-            query.fields.as_ref(),
-            query.include.as_ref(),
-            &query.embed,
-        )?;
+        let mut fields = select_fields(&ctx, table, &query)?;
         if table.has_row_version() {
             fields.push(RequestField::new("rowVersion"));
         }
-        let request = RequestField::new(&table.single_field)
-            .with_arguments(key_args(table, &parsed_key))
+        let root = address.read_root(table);
+        let request = RequestField::new(&root)
+            .with_arguments(address.args.clone())
             .with_children(fields);
         let data = ctx
             .execute(
@@ -1860,7 +2143,7 @@ pub async fn rest_item_handler(
                 false,
             )
             .await?;
-        let mut row = ResponseShaper::unwrap_single(&data, &table.single_field)
+        let mut row = ResponseShaper::unwrap_single(&data, &root)
             .map_err(|e| shaping_error(e, ctx.is_prod))?;
         finish_rows(&ctx.catalog, table, &query, std::slice::from_mut(&mut row));
         if row.is_null() {
@@ -1998,10 +2281,11 @@ pub async fn rest_column_put_handler(
                 column.field_name.clone(): base64::engine::general_purpose::STANDARD.encode(&body)
             });
             let if_match = parse_if_match(&headers)?;
+            let address = RowAddress::primary(table, &key)?;
             update_row(
                 &ctx,
                 table,
-                &key,
+                &address,
                 input.to_string().as_bytes(),
                 if_match,
                 "PUT",
@@ -2102,31 +2386,33 @@ pub async fn rest_create_handler(
 async fn update_row(
     ctx: &Ctx,
     table: &TableMetadata,
-    key: &str,
+    address: &RowAddress,
     body: &[u8],
     if_match: Option<String>,
     method: &str,
 ) -> RestResult {
     ctx.allow(table, Operation::Update)?;
-    let parsed_key = parse_primary_key(key, table).map_err(ProblemDetails::bad_request)?;
     let mut input = json_object(parse_json_body(body)?)?;
-    strip_key_from_body(table, &parsed_key, &mut input)?;
+    if let Some(primary) = &address.primary {
+        strip_key_from_body(table, primary, &mut input)?;
+    }
     if input.is_empty() {
         return Err(ProblemDetails::bad_request(
             "Request body has no fields to update",
         ));
     }
 
-    let m = mutation_field(
+    let m = mutation_field_by(
         &ctx.catalog,
         table,
         MutationAction::Update,
-        "Updating by primary key",
+        "Updating by this key",
+        &address.unique,
     )?;
     let input = serde_json::Value::Object(input);
     ctx.validate(Root::Mutation, &m.name, "input", &input, "body")?;
 
-    let mut args = key_args(table, &parsed_key);
+    let mut args = address.args.clone();
     args.insert("input".into(), input);
     if let Some(version) = if_match {
         if !ctx.has_argument(Root::Mutation, &m.name, "expectedVersion") {
@@ -2141,8 +2427,8 @@ async fn update_row(
     let written = run_write(ctx, table, &m, args, method, ctx.prefs.previous).await?;
     if written.row.is_null() {
         return Err(ProblemDetails::not_found(format!(
-            "No `{}` row found with key `{key}`",
-            table.name
+            "No `{}` row found with key `{}`",
+            table.name, address.label
         )));
     }
     Ok(write_response(
@@ -2159,18 +2445,27 @@ async fn update_row(
 pub async fn rest_update_handler(
     State(state): State<Arc<ServerState>>,
     Scoped(schema, (resource, key)): Scoped<(String, String)>,
+    RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
     respond(format!("{}/{resource}/{key}", rest_base(&schema)), async {
         let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let table = ctx.table()?;
+        ctx.allow(table, Operation::Update)?;
         let if_match = parse_if_match(&headers)?;
+        let (by, rest) = take_by(raw_query.as_deref())?;
+        if !rest.is_empty() {
+            return Err(ProblemDetails::bad_request(
+                "A row update takes its parameters in the body: only `by` goes in the query string",
+            ));
+        }
+        let address = RowAddress::of(table, &key, by.as_deref())?;
         if media::content_type(&headers).as_deref() == Some(media::JSON_PATCH) {
-            return collection::json_patch_row(&ctx, table, &key, &body, if_match).await;
+            return collection::json_patch_row(&ctx, table, &address, &body, if_match).await;
         }
         let body = json_body(table, &headers, body, false)?;
-        update_row(&ctx, table, &key, &body, if_match, "PATCH").await
+        update_row(&ctx, table, &address, &body, if_match, "PATCH").await
     })
     .await
 }
@@ -2189,7 +2484,8 @@ pub async fn rest_upsert_handler(
         let body = json_body(table, &headers, body, false)?;
         if headers.contains_key(header::IF_MATCH) {
             let if_match = parse_if_match(&headers)?;
-            return update_row(&ctx, table, &key, &body, if_match, "PUT").await;
+            let address = RowAddress::primary(table, &key)?;
+            return update_row(&ctx, table, &address, &body, if_match, "PUT").await;
         }
 
         ctx.allow(table, Operation::Upsert)?;
@@ -2240,22 +2536,30 @@ pub async fn rest_upsert_handler(
 pub async fn rest_delete_handler(
     State(state): State<Arc<ServerState>>,
     Scoped(schema, (resource, key)): Scoped<(String, String)>,
+    RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
     respond(format!("{}/{resource}/{key}", rest_base(&schema)), async {
         let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let table = ctx.table()?;
         ctx.allow(table, Operation::Delete)?;
-        let parsed_key = parse_primary_key(&key, table).map_err(ProblemDetails::bad_request)?;
+        let (by, rest) = take_by(raw_query.as_deref())?;
+        if !rest.is_empty() {
+            return Err(ProblemDetails::bad_request(
+                "A row delete takes no parameters but `by`",
+            ));
+        }
+        let address = RowAddress::of(table, &key, by.as_deref())?;
         let if_match = parse_if_match(&headers)?;
 
-        let m = mutation_field(
+        let m = mutation_field_by(
             &ctx.catalog,
             table,
             MutationAction::Delete,
-            "Deleting by primary key",
+            "Deleting by this key",
+            &address.unique,
         )?;
-        let mut args = key_args(table, &parsed_key);
+        let mut args = address.args.clone();
         if let Some(version) = if_match {
             if !ctx.has_argument(Root::Mutation, &m.name, "expectedVersion") {
                 return Err(ProblemDetails::bad_request(format!(

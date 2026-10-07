@@ -1662,3 +1662,83 @@ async fn test_custom_sql_problem_responses() {
     assert_eq!(gql_body["errors"][0]["extensions"]["code"], "CHECK_FAILED");
     assert_eq!(gql_body["errors"][0]["message"], "Check Constraint Failed");
 }
+
+#[tokio::test]
+async fn full_text_search_can_mark_the_words_that_matched() {
+    let app = app().await;
+    let plain = post(
+        &app,
+        "/rest/articles/search/full-text",
+        json!({ "query": "ranking" }),
+    )
+    .await;
+    assert!(plain.ok()["hits"][0].get("highlight").is_none());
+
+    let marked = post(
+        &app,
+        "/rest/articles/search/full-text",
+        json!({ "query": "ranking", "highlight": true }),
+    )
+    .await;
+    assert_eq!(marked.status, StatusCode::OK, "{}", marked.body);
+    let highlight = marked.ok()["hits"][0]["highlight"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(highlight.contains("<b>ranking</b>"), "{highlight}");
+
+    let custom = post(
+        &app,
+        "/rest/articles/search/full-text",
+        json!({ "query": "ranking", "highlight": { "startSel": "[", "stopSel": "]" } }),
+    )
+    .await;
+    assert!(custom.ok()["hits"][0]["highlight"]
+        .as_str()
+        .unwrap()
+        .contains("[ranking]"));
+
+    // Only full-text searches mark words; the options are checked
+    for (uri, body) in [
+        (
+            "/rest/articles/search/fuzzy",
+            json!({ "query": "x", "highlight": true }),
+        ),
+        (
+            "/rest/articles/search/full-text",
+            json!({ "query": "x", "highlight": "yes" }),
+        ),
+        (
+            "/rest/articles/search/full-text",
+            json!({ "query": "x", "highlight": { "nope": 1 } }),
+        ),
+    ] {
+        let r = post(&app, uri, body).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{uri}: {}", r.body);
+    }
+}
+
+#[tokio::test]
+async fn a_json_column_can_be_read_through_a_path() {
+    let app = app().await;
+    let whole = get(&app, "/rest/typed/1?fields=id,doc").await;
+    assert_eq!(whole.ok()["doc"], json!({ "a": { "b": [1, 2] } }));
+    let part = get(&app, "/rest/typed/1?fields=id,doc&path[doc]=$.a.b").await;
+    assert_eq!(part.status, StatusCode::OK, "{}", part.body);
+    assert_eq!(part.ok()["doc"], json!([1, 2]));
+    let list = get(&app, "/rest/typed?fields=id,doc&path[doc]=$.a.b&order=id").await;
+    assert_eq!(list.ok()[0]["doc"], json!([1, 2]));
+    assert_eq!(list.ok()[1]["doc"], Value::Null);
+    for uri in [
+        "/rest/typed/1?path[id]=$.a",
+        "/rest/typed/1?path[nope]=$.a",
+        "/rest/typed/1?path[doc]=a.b",
+        "/rest/typed/1?path[doc][x]=$.a",
+    ] {
+        assert_eq!(
+            get(&app, uri).await.status,
+            StatusCode::BAD_REQUEST,
+            "{uri}"
+        );
+    }
+}

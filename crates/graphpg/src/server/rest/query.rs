@@ -34,6 +34,10 @@ pub struct RestQuery {
     /// Controls of the embedded relations, by `include` path (`posts`, `posts.comments`).
     #[serde(default)]
     pub embed: BTreeMap<String, EmbedControls>,
+    /// `path[column]`: the JSON path (`$.a.b`) a `json` column is read through, by column
+    /// (`meta`) or, in an embedded relation, by `include` path and column (`posts.meta`).
+    #[serde(default)]
+    pub json_paths: BTreeMap<String, String>,
     /// `include` paths whose parents must have a matching embedded row.
     #[serde(default)]
     pub inner: Vec<String>,
@@ -830,6 +834,33 @@ pub(super) fn finish_embeds(
         }
         controls.filter = controls.filter.take().map(arrayify_groups);
     }
+    for (key, path) in &query.json_paths {
+        let (relation, column) = key.rsplit_once('.').unwrap_or(("", key));
+        let owner = if relation.is_empty() {
+            table
+        } else {
+            if !included.contains(relation) {
+                return Err(format!(
+                    "`path[{key}]` is not in `include`: add `include={relation}`"
+                ));
+            }
+            walk_relation(catalog, table, relation)?.target
+        };
+        let col = owner
+            .visible_columns()
+            .find(|c| c.field_name == column || c.name == column);
+        if !col.is_some_and(|c| matches!(c.pg_type, PgType::Json | PgType::Jsonb)) {
+            return Err(format!(
+                "`path[{key}]`: `{column}` is not a `json` column of `{}`",
+                owner.name
+            ));
+        }
+        if !path.starts_with('$') {
+            return Err(format!(
+                "`path[{key}]` must be a JSON path starting with `$` (`$.address.city`)"
+            ));
+        }
+    }
     let mut conditions = Vec::new();
     for (param, paths) in [("inner", &query.inner), ("anti", &query.anti)] {
         for path in paths {
@@ -1003,6 +1034,9 @@ pub fn parse_query_params(
                         Some(existing) => merge_json(existing, filt),
                         None => controls.filter = Some(filt),
                     }
+                }
+                Some((root, segments)) if root == "path" && segments.len() == 1 => {
+                    query.json_paths.insert(segments[0].clone(), val);
                 }
                 Some((root, segments))
                     if segments.len() == 1

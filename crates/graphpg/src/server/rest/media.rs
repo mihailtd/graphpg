@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 
 pub const CSV: &str = "text/csv";
 pub const JSON: &str = "application/json";
+pub const NDJSON: &str = "application/x-ndjson";
 pub const JSON_PATCH: &str = "application/json-patch+json";
 pub const MULTIPART: &str = "multipart/form-data";
 pub const OCTET_STREAM: &str = "application/octet-stream";
@@ -16,6 +17,8 @@ pub const OCTET_STREAM: &str = "application/octet-stream";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Media {
     Json,
+    /// One JSON object per line.
+    Ndjson,
     Csv,
 }
 
@@ -63,12 +66,15 @@ pub fn negotiate(headers: &HeaderMap) -> Result<Media, ProblemDetails> {
         if matches(range, JSON) {
             return Ok(Media::Json);
         }
+        if matches(range, NDJSON) {
+            return Ok(Media::Ndjson);
+        }
         if matches(range, CSV) {
             return Ok(Media::Csv);
         }
     }
     Err(ProblemDetails::not_acceptable(format!(
-        "This resource is sent as `{JSON}` or `{CSV}`"
+        "This resource is sent as `{JSON}`, `{NDJSON}` or `{CSV}`"
     )))
 }
 

@@ -309,7 +309,10 @@ impl OpenApiGenerator {
         if let Some(target) = doc.pointer_mut("/paths").and_then(Value::as_object_mut) {
             for (path, item) in paths {
                 // The root and the search over every resource are not a schema's
-                if path == REST_PREFIX || path == format!("{REST_PREFIX}/search") {
+                if path == REST_PREFIX
+                    || path == format!("{REST_PREFIX}/search")
+                    || path.starts_with(&format!("{REST_PREFIX}/node/"))
+                {
                     continue;
                 }
                 if let Some(rest) = path.strip_prefix(REST_PREFIX) {
@@ -369,6 +372,29 @@ impl OpenApiGenerator {
             })
             .filter(|t| !config.entities.get(&t.name).is_some_and(|e| e.omit))
             .collect();
+
+        // GraphQL's `node(id:)`: a global ID names a table and a key
+        if tables.iter().any(|t| t.implements_node()) {
+            paths.insert(
+                format!("{REST_PREFIX}/node/{{id}}"),
+                json!({ "get": {
+                    "summary": "Row by global ID",
+                    "description": "The row a Relay global ID (the `id` GraphQL gives every row) names: a redirect to the row's own URL, query string kept",
+                    "operationId": "get_node",
+                    "parameters": [{
+                        "name": "id", "in": "path", "required": true,
+                        "description": "A Relay global ID: base64 of `<Type>:<key>`",
+                        "schema": { "type": "string" }
+                    }],
+                    "responses": responses(json!({
+                        "303": {
+                            "description": "See Other: the row's URL",
+                            "headers": { "Location": { "schema": { "type": "string" } } }
+                        }
+                    }), &[("404", "Not Found: no table has that type, or the ID is malformed")]),
+                } }),
+            );
+        }
 
         let mut inputs = graphql.map(super::input_types::InputTypes::new);
         for table in &tables {
@@ -722,6 +748,7 @@ impl OpenApiGenerator {
                         },
                         "content": {
                             "application/json": { "schema": rows.clone() },
+                            "application/x-ndjson": { "schema": { "type": "string", "description": "One row per line" } },
                             "text/csv": { "schema": { "type": "string" } }
                         }
                     },
@@ -742,10 +769,11 @@ impl OpenApiGenerator {
                         },
                         "content": {
                             "application/json": { "schema": rows.clone() },
+                            "application/x-ndjson": { "schema": { "type": "string", "description": "One row per line" } },
                             "text/csv": { "schema": { "type": "string" } }
                         }
                     }
-                }), &[("406", "Not Acceptable: the list is `application/json` or `text/csv`"),
+                }), &[("406", "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`"),
                       ("416", "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`")]),
             });
             if deprecated {
@@ -958,10 +986,11 @@ impl OpenApiGenerator {
                             },
                             "content": {
                                 "application/json": { "schema": rows.clone() },
+                                "application/x-ndjson": { "schema": { "type": "string", "description": "One row per line" } },
                                 "text/csv": { "schema": { "type": "string" } }
                             }
                         }
-                    }), &[("406", "Not Acceptable: the list is `application/json` or `text/csv`")]),
+                    }), &[("406", "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`")]),
                 }
             }));
         }
@@ -970,11 +999,13 @@ impl OpenApiGenerator {
             return;
         }
         let key_param = Self::key_parameter(table, catalog);
+        let by = Self::by_parameter(table);
         let mut item = serde_json::Map::new();
 
         if read {
             let mut params = vec![
                 key_param.clone(),
+                by.clone(),
                 Self::fields_param(table, catalog),
                 Self::include_param(table, catalog),
             ];
@@ -1056,7 +1087,7 @@ impl OpenApiGenerator {
                 "summary": format!("Update {name} by key"),
                 "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
                 "operationId": format!("update_{name}_by_key"),
-                "parameters": [key_param.clone(),
+                "parameters": [key_param.clone(), by.clone(),
                     if_match_param("Row version (the `ETag`) the update must apply to; 412 if the row changed"),
                     prefer_previous_param()],
                 "requestBody": { "required": true, "content": {
@@ -1085,7 +1116,7 @@ impl OpenApiGenerator {
                 "summary": format!("Delete {name} by key"),
                 "description": format!("Delete a single row from `{name}` by primary key"),
                 "operationId": format!("delete_{name}_by_key"),
-                "parameters": [key_param,
+                "parameters": [key_param, by,
                     if_match_param("Row version (the `ETag`) the delete must apply to; 412 if the row changed"),
                     prefer_param(true)],
                 "responses": write_responses("Deleted: the row", false),
@@ -1104,6 +1135,15 @@ impl OpenApiGenerator {
                 "options".into(),
                 options_of(format!("options_{name}_by_key"), media),
             );
+            // A parameter a table has no use for (`by`) is null
+            for operation in item.values_mut() {
+                if let Some(params) = operation
+                    .get_mut("parameters")
+                    .and_then(Value::as_array_mut)
+                {
+                    params.retain(|p| !p.is_null());
+                }
+            }
             paths.insert(format!("{REST_PREFIX}/{name}/{{key}}"), Value::Object(item));
         }
 
@@ -1328,6 +1368,28 @@ impl OpenApiGenerator {
         })
     }
 
+    /// `by`: address a row by one of its other unique keys instead of the primary key
+    /// (`/rest/users/alice?by=username`), or null when the table has none.
+    fn by_parameter(table: &TableMetadata) -> Value {
+        let keys: Vec<String> = table
+            .lookup_keys()
+            .map(|(_, cols)| {
+                cols.iter()
+                    .map(|c| c.field_name.clone())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect();
+        if keys.is_empty() || !table.operations.read {
+            return Value::Null;
+        }
+        json!({
+            "name": "by", "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": { "type": "string", "enum": keys }
+        })
+    }
+
     /// What a list can be ordered by besides the table's own columns, as the REST grammar spells
     /// it: `author.username` (a column of a to-one relation's row), `messagesCount` (the number
     /// of rows of a to-many relation), a computed column, and `natural` / `primary_key`.
@@ -1403,10 +1465,33 @@ impl OpenApiGenerator {
         collection: bool,
     ) -> Vec<Value> {
         let mut params = Vec::new();
+        let json_path = |column: &str, owner: &str| {
+            json!({
+                "name": format!("path[{column}]"), "in": "query",
+                "description": format!("A JSON path (`$.address.city`): `{owner}` returns the first item it selects from the `json` column instead of the whole value"),
+                "schema": { "type": "string", "pattern": "^\\$" }
+            })
+        };
+        for col in table
+            .visible_columns()
+            .filter(|c| matches!(c.pg_type, PgType::Json | PgType::Jsonb))
+        {
+            params.push(json_path(&col.field_name, &col.field_name));
+        }
         let embeddables = Self::embeddables(table, catalog);
         for e in &embeddables {
             let name = &e.name;
             let columns = Self::visible_fields(e.target, catalog);
+            for col in e
+                .target
+                .visible_columns()
+                .filter(|c| matches!(c.pg_type, PgType::Json | PgType::Jsonb))
+            {
+                params.push(json_path(
+                    &format!("{name}.{}", col.field_name),
+                    &col.field_name,
+                ));
+            }
             params.push(json!({
                 "name": format!("fields[{name}]"), "in": "query", "style": "form", "explode": false,
                 "description": format!("Columns of the embedded `{name}` (default: all); `include={name}` first"),

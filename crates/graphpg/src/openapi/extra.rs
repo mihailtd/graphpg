@@ -403,6 +403,37 @@ impl OpenApiGenerator {
                     json!({ "type": "array", "items": { "type": "string", "enum": relations } }),
                 );
             }
+            if method == crate::catalog::SearchMethod::FullText {
+                properties.insert(
+                    "highlight".into(),
+                    json!({
+                        "description": "Mark the words that matched in the text of the document (`ts_headline`): the hits then have a `highlight`. `true` for the defaults",
+                        "oneOf": [
+                            { "type": "boolean" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "startSel": { "type": "string", "default": "<b>" },
+                                    "stopSel": { "type": "string", "default": "</b>" },
+                                    "maxWords": { "type": "integer" },
+                                    "minWords": { "type": "integer" },
+                                    "maxFragments": { "type": "integer", "description": "Fragments to show (0: the start of the text)" }
+                                },
+                                "additionalProperties": false
+                            }
+                        ]
+                    }),
+                );
+            }
+            let mut hit_properties =
+                json!({ "score": { "type": "number" }, "row": schema_ref(name) });
+            if method == crate::catalog::SearchMethod::FullText {
+                hit_properties["highlight"] = json!({ "type": ["string", "null"], "description": "The matching fragments, the words marked (with `highlight`)" });
+            }
+            if method == crate::catalog::SearchMethod::Nearest {
+                hit_properties["distance"] =
+                    json!({ "type": "number", "description": "Distance from `near`" });
+            }
             let mut body = json!({
                 "type": "object",
                 "description": format!("A `{segment}` search of `{name}`: the arguments of the GraphQL field `{root}`, `first`, `filter` to scope the matches and `fields`"),
@@ -426,7 +457,7 @@ impl OpenApiGenerator {
                             "properties": {
                                 "hits": { "type": "array", "items": {
                                     "type": "object",
-                                    "properties": { "score": { "type": "number" }, "row": schema_ref(name) },
+                                    "properties": hit_properties,
                                     "required": ["score", "row"]
                                 } },
                                 "hasMore": { "type": "boolean" }

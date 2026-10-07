@@ -60,6 +60,11 @@ fn shape_results(
                         out.insert("type".into(), serde_json::Value::String(kind));
                     }
                     out.insert("row".into(), row);
+                    for extra in ["highlight", "distance"] {
+                        if let Some(value) = hit.get(extra) {
+                            out.insert(extra.into(), value.clone());
+                        }
+                    }
                     Some(serde_json::Value::Object(out))
                 })
                 .collect()
@@ -92,7 +97,7 @@ pub async fn rest_search_method_handler(
             }
 
             let available = ctx.catalog.search_fields(table);
-            let (root, _) = available
+            let (root, search_method) = available
                 .iter()
                 .find(|(_, m)| method_segment(*m) == method)
                 .ok_or_else(|| {
@@ -116,6 +121,7 @@ pub async fn rest_search_method_handler(
             };
             let fields = take_string_list(&mut body, "fields")?;
             let include = take_string_list(&mut body, "include")?;
+            let highlight = take_highlight(&mut body, *search_method)?;
 
             let schema = ctx.state.current_schema();
             let accepted = validate::root_argument_names(&schema, Root::Query, root);
@@ -153,20 +159,27 @@ pub async fn rest_search_method_handler(
                 }
             }
 
-            let row_fields = select_fields(
-                &ctx,
-                table,
-                fields.as_ref(),
-                include.as_ref(),
-                &BTreeMap::new(),
-            )?;
+            let selection = RestQuery {
+                fields,
+                include,
+                ..Default::default()
+            };
+            let row_fields = select_fields(&ctx, table, &selection)?;
+            // Full-text searches can mark the words that matched, nearest ones say how far
+            let mut hit = vec![
+                RequestField::new("score"),
+                RequestField::new("node").with_children(row_fields),
+            ];
+            if let Some(arguments) = highlight {
+                hit.push(RequestField::new("highlight").with_arguments(arguments));
+            }
+            if *search_method == SearchMethod::Nearest {
+                hit.push(RequestField::new("distance"));
+            }
             let request = RequestField::new(root)
                 .with_arguments(args)
                 .with_children(vec![
-                    RequestField::new("hits").with_children(vec![
-                        RequestField::new("score"),
-                        RequestField::new("node").with_children(row_fields),
-                    ]),
+                    RequestField::new("hits").with_children(hit),
                     RequestField::new("hasMore"),
                 ]);
             let data = ctx
@@ -184,6 +197,45 @@ pub async fn rest_search_method_handler(
         },
     )
     .await
+}
+
+/// `highlight` of a full-text search: `true`, or `{startSel, stopSel, maxWords, minWords,
+/// maxFragments}`; the arguments of the hit's `highlight` field.
+fn take_highlight(
+    body: &mut serde_json::Map<String, serde_json::Value>,
+    method: SearchMethod,
+) -> Result<Option<HashMap<String, serde_json::Value>>, ProblemDetails> {
+    let Some(value) = body.remove("highlight") else {
+        return Ok(None);
+    };
+    if method != SearchMethod::FullText {
+        return Err(ProblemDetails::invalid(
+            "`highlight` marks the words of a full-text search that matched: it is for `full-text`",
+            "highlight",
+        ));
+    }
+    match value {
+        serde_json::Value::Bool(true) => Ok(Some(HashMap::new())),
+        serde_json::Value::Bool(false) | serde_json::Value::Null => Ok(None),
+        serde_json::Value::Object(options) => {
+            if let Some(unknown) = options.keys().find(|k| {
+                !matches!(
+                    k.as_str(),
+                    "startSel" | "stopSel" | "maxWords" | "minWords" | "maxFragments"
+                )
+            }) {
+                return Err(ProblemDetails::invalid(
+                    format!("Unknown `highlight` option `{unknown}`: startSel, stopSel, maxWords, minWords, maxFragments"),
+                    "highlight",
+                ));
+            }
+            Ok(Some(options.into_iter().collect()))
+        }
+        _ => Err(ProblemDetails::invalid(
+            "`highlight` is `true` or an object of options",
+            "highlight",
+        )),
+    }
 }
 
 fn take_string_list(

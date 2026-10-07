@@ -40,6 +40,86 @@ expression: openapi
         }
       }
     },
+    "/rest/node/{id}": {
+      "get": {
+        "summary": "Row by global ID",
+        "description": "The row a Relay global ID (the `id` GraphQL gives every row) names: a redirect to the row's own URL, query string kept",
+        "operationId": "get_node",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "A Relay global ID: base64 of `<Type>:<key>`",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "See Other: the row's URL",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found: no table has that type, or the ID is malformed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/rest/forums": {
       "get": {
         "summary": "List forums",
@@ -392,6 +472,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -439,6 +525,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -477,7 +569,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1635,7 +1727,7 @@ expression: openapi
             "description": "Forbidden: the operation is not permitted on this resource"
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`"
           },
           "416": {
             "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`"
@@ -1788,6 +1880,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -1826,7 +1924,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3619,6 +3717,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -3666,6 +3770,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -3704,7 +3814,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4796,7 +4906,7 @@ expression: openapi
             "description": "Forbidden: the operation is not permitted on this resource"
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`"
           },
           "416": {
             "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`"
@@ -4949,6 +5059,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -4987,7 +5103,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6672,6 +6788,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -6719,6 +6841,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -6757,7 +6885,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7856,7 +7984,7 @@ expression: openapi
             "description": "Forbidden: the operation is not permitted on this resource"
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`"
           },
           "416": {
             "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`"
@@ -8009,6 +8137,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -8047,7 +8181,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -8083,6 +8217,17 @@ expression: openapi
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "username"
+              ]
             }
           },
           {
@@ -8319,6 +8464,17 @@ expression: openapi
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "username"
+              ]
             }
           },
           {
@@ -8717,6 +8873,17 @@ expression: openapi
             }
           },
           {
+            "name": "by",
+            "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "username"
+              ]
+            }
+          },
+          {
             "name": "If-Match",
             "in": "header",
             "description": "Row version (the `ETag`) the delete must apply to; 412 if the row changed",
@@ -8859,6 +9026,17 @@ expression: openapi
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "username"
+              ]
             }
           },
           {
