@@ -199,7 +199,7 @@ A simple `LANGUAGE sql` function (one `SELECT`, not `SECURITY DEFINER`, no `SET`
 
 ## REST and OpenAPI
 
-The REST API names a **resource** after its table or view (`/rest/forums`) and a function after its SQL name (`/rest/rpc/add`); fields and function arguments use the GraphQL names (`camelCase`, so `archived_at` is `archivedAt`), and a table's `entities:` configuration (`omit`, `omit_operations`, `description`, ...) applies to both APIs. When two schemas have a table of the same name, REST serves the default schema's. `rpc` and `search` are reserved paths: tables with those names are not served over REST.
+The REST API names a **resource** after its table or view (`/rest/forums`) and a function after its SQL name (`/rest/rpc/add`); fields and function arguments use the GraphQL names (`camelCase`, so `archived_at` is `archivedAt`), and a table's `entities:` configuration (`omit`, `omit_operations`, `description`, ...) applies to both APIs. With several schemas, `/rest/<resource>` is the default schema's table and every schema's own are at `/rest/<schema>/<resource>` (see [Several schemas](rest-api.md#several-schemas)). `rpc` and `search` are reserved paths: tables with those names are not served over REST.
 
 Values are JSON, in the shapes the OpenAPI document describes:
 

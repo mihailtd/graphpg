@@ -78,6 +78,7 @@ Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) 
 | [Federation and RBAC](docs/federation-and-rbac.md) | Apollo Federation subgraphs and schema pruning by role |
 | [Performance](docs/performance.md) | Indexes and settings, replicas, observability |
 | [Comparison](docs/comparison.md) | How graphpg differs from PostGraphile and Hasura (GraphQL) and from PostgREST (REST) |
+| [GraphQL and OpenAPI parity](docs/graphql-openapi-parity.md) | What each API knows about the database that the other does not, and whether it could be ported |
 
 ## Security notes
 
