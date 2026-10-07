@@ -417,6 +417,7 @@ fn is_variable_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::models::EventOperation;
     use super::*;
     use std::collections::HashMap;
 
@@ -498,6 +499,26 @@ prod:
         .unwrap();
         assert_eq!(cfg.errors.map["23514"].status, Some(422));
         assert!(parse("errors: { map: { x: { nope: 1 } } }", Mode::Prod).is_err());
+        let cfg = parse(
+            "entities:\n  orders:\n    events: { operations: [insert, delete], description: hi }",
+            Mode::Prod,
+        )
+        .unwrap();
+        let events = cfg.entities["orders"].events.as_ref().unwrap();
+        assert_eq!(
+            events.operations,
+            [EventOperation::Insert, EventOperation::Delete]
+        );
+        let cfg = parse("entities:\n  orders:\n    events: {}", Mode::Prod).unwrap();
+        assert_eq!(
+            cfg.entities["orders"].events.as_ref().unwrap().operations,
+            EventOperation::all()
+        );
+        assert!(parse(
+            "entities:\n  orders:\n    events: { operations: [truncate] }",
+            Mode::Prod
+        )
+        .is_err());
     }
 
     #[test]

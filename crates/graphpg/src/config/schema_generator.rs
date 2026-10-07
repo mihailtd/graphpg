@@ -703,6 +703,20 @@ impl ConfigSchemaGenerator {
                     "properties": column_properties,
                     "additionalProperties": false
                 },
+                "events": {
+                    "type": "object",
+                    "description": "Change events of the table (event triggers), described as OpenAPI webhooks",
+                    "properties": {
+                        "operations": {
+                            "type": "array",
+                            "items": { "type": "string", "enum": ["insert", "update", "delete"] },
+                            "uniqueItems": true,
+                            "description": "Row changes that raise an event (default: all)"
+                        },
+                        "description": { "type": "string", "description": "What the events of the table mean" }
+                    },
+                    "additionalProperties": false
+                },
                 "foreign_keys": {
                     "type": "object",
                     "description": "Relation fields by constraint name; other names declare virtual foreign keys",

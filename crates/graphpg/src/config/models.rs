@@ -1114,6 +1114,44 @@ pub struct EntityConfig {
     /// Mark entity as @shareable in Apollo Federation.
     #[serde(default)]
     pub shareable: Option<bool>,
+    /// Change events of the table (event triggers): the OpenAPI document describes them as
+    /// `webhooks`, with the payload typed from the table's row.
+    #[serde(default)]
+    pub events: Option<EventsConfig>,
+}
+
+/// The change events of a table.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EventsConfig {
+    /// Row changes that raise an event (default: all of them).
+    #[serde(default = "EventOperation::all")]
+    pub operations: Vec<EventOperation>,
+    /// What the events of the table mean, for the documentation of the webhook.
+    pub description: Option<String>,
+}
+
+/// A change of a row.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum EventOperation {
+    Insert,
+    Update,
+    Delete,
+}
+
+impl EventOperation {
+    pub fn all() -> Vec<Self> {
+        vec![Self::Insert, Self::Update, Self::Delete]
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Insert => "insert",
+            Self::Update => "update",
+            Self::Delete => "delete",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

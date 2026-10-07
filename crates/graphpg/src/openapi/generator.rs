@@ -410,11 +410,12 @@ impl OpenApiGenerator {
             schemas.extend(inputs.into_components());
         }
         Self::generate_rpc_paths(catalog, config, default_schema, &tables, &mut paths);
+        let webhooks = Self::generate_webhooks(&tables, config, &mut schemas);
 
         // The filter of a relation whose table the API does not serve has nothing to refer to
         fix_dangling_refs(&mut paths, &schemas);
 
-        json!({
+        let mut doc = json!({
             "openapi": "3.1.0",
             "info": {
                 "title": "graphpg REST API",
@@ -435,7 +436,98 @@ impl OpenApiGenerator {
                     }
                 }
             }
-        })
+        });
+        if !webhooks.is_empty() {
+            doc["webhooks"] = Value::Object(webhooks);
+        }
+        doc
+    }
+
+    /// OpenAPI 3.1 `webhooks`: the change events the configuration declares for the tables the
+    /// API serves (`entities.<table>.events`), one `<table>.<operation>` each, with a payload
+    /// holding the row as it was (`old`) and as it is (`new`). Adds the payload components.
+    fn generate_webhooks(
+        tables: &[&TableMetadata],
+        config: &Config,
+        schemas: &mut serde_json::Map<String, Value>,
+    ) -> serde_json::Map<String, Value> {
+        use crate::config::models::EventOperation;
+        let mut webhooks = serde_json::Map::new();
+        for table in tables {
+            let Some(events) = config
+                .entities
+                .get(&table.name)
+                .and_then(|e| e.events.as_ref())
+            else {
+                continue;
+            };
+            let name = &table.name;
+            let mut operations = events.operations.clone();
+            operations.sort();
+            operations.dedup();
+            for op in operations {
+                let (old, new, what) = match op {
+                    EventOperation::Insert => (
+                        json!({ "type": "null" }),
+                        schema_ref(name),
+                        "A row was inserted",
+                    ),
+                    EventOperation::Update => {
+                        (schema_ref(name), schema_ref(name), "A row was updated")
+                    }
+                    EventOperation::Delete => (
+                        schema_ref(name),
+                        json!({ "type": "null" }),
+                        "A row was deleted",
+                    ),
+                };
+                let event = format!("{name}.{}", op.as_str());
+                let mut capitalized = op.as_str().to_string();
+                capitalized[..1].make_ascii_uppercase();
+                let component = format!("{name}{capitalized}Event");
+                schemas.insert(
+                    component.clone(),
+                    json!({
+                        "type": "object",
+                        "description": format!("{what} in `{name}`: the row as it was (`old`) and as it is (`new`)"),
+                        "properties": {
+                            "id": { "type": "string", "format": "uuid", "description": "Identifies the event, the same on every delivery attempt" },
+                            "createdAt": { "type": "string", "format": "date-time", "description": "When the change was committed" },
+                            "table": {
+                                "type": "object",
+                                "properties": { "schema": { "type": "string" }, "name": { "type": "string", "const": name } },
+                                "required": ["schema", "name"]
+                            },
+                            "op": { "type": "string", "const": op.as_str() },
+                            "old": old,
+                            "new": new
+                        },
+                        "required": ["id", "createdAt", "table", "op", "old", "new"]
+                    }),
+                );
+                let description = match &events.description {
+                    Some(text) => format!("{what} in `{name}`. {text}"),
+                    None => format!("{what} in `{name}`."),
+                };
+                webhooks.insert(
+                    event.clone(),
+                    json!({
+                        "post": {
+                            "summary": format!("{event} event"),
+                            "description": description,
+                            "operationId": format!("webhook_{name}_{}", op.as_str()),
+                            "requestBody": { "required": true, "content": {
+                                "application/json": { "schema": schema_ref(&component) }
+                            } },
+                            "responses": {
+                                "2XX": { "description": "The event was received: any 2xx acknowledges it" }
+                            }
+                        }
+                    }),
+                );
+            }
+        }
+        webhooks
     }
 
     fn generate_table_paths(

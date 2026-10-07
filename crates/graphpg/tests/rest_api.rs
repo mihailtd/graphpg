@@ -1121,3 +1121,91 @@ async fn computed_relationships_are_selected_through_include_and_fields() {
     .await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.body);
 }
+
+#[tokio::test]
+async fn openapi_describes_the_change_events_of_a_table_as_webhooks() {
+    use graphpg::config::models::{EntityConfig, EventOperation, EventsConfig};
+    common::ensure_forum_fixture().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema("app_public")
+        .await
+        .unwrap();
+    let mut config = graphpg::config::Config::default();
+    config.entities.insert(
+        "forums".to_string(),
+        EntityConfig {
+            events: Some(EventsConfig {
+                operations: vec![EventOperation::Delete, EventOperation::Insert],
+                description: Some("Fired by the moderation tools".to_string()),
+            }),
+            ..Default::default()
+        },
+    );
+    config.entities.insert(
+        "messages".to_string(),
+        EntityConfig {
+            events: Some(EventsConfig {
+                operations: EventOperation::all(),
+                description: None,
+            }),
+            ..Default::default()
+        },
+    );
+    let doc = graphpg::openapi::OpenApiGenerator::generate_with_schema(
+        &catalog,
+        &config,
+        "app_public",
+        None,
+    );
+
+    // One webhook per declared change, in OpenAPI 3.1's `webhooks`; none for a table without events
+    let webhooks = doc["webhooks"].as_object().unwrap();
+    let mut names: Vec<&str> = webhooks.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "forums.delete",
+            "forums.insert",
+            "messages.delete",
+            "messages.insert",
+            "messages.update"
+        ]
+    );
+    let post = &webhooks["forums.insert"]["post"];
+    assert!(post["description"]
+        .as_str()
+        .unwrap()
+        .contains("Fired by the moderation tools"));
+    assert_eq!(
+        post["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/forumsInsertEvent"
+    );
+
+    // The payload wraps the row as it was and as it is, with the table's own schema
+    let schemas = &doc["components"]["schemas"];
+    let insert = &schemas["forumsInsertEvent"]["properties"];
+    assert_eq!(insert["op"]["const"], "insert");
+    assert_eq!(insert["old"], json!({ "type": "null" }));
+    assert_eq!(insert["new"]["$ref"], "#/components/schemas/forums");
+    let update = &schemas["messagesUpdateEvent"]["properties"];
+    assert_eq!(update["old"]["$ref"], "#/components/schemas/messages");
+    assert_eq!(update["new"]["$ref"], "#/components/schemas/messages");
+    let delete = &schemas["forumsDeleteEvent"]["properties"];
+    assert_eq!(delete["new"], json!({ "type": "null" }));
+
+    // No events declared, no `webhooks`
+    let plain = graphpg::openapi::OpenApiGenerator::generate_with_schema(
+        &catalog,
+        &graphpg::config::Config::default(),
+        "app_public",
+        None,
+    );
+    assert!(plain.get("webhooks").is_none());
+}
