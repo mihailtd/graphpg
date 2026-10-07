@@ -235,6 +235,10 @@ pub struct LimitsConfig {
     /// bulk creates).
     #[serde(default = "default_bulk_rows", deserialize_with = "limit")]
     pub bulk_rows: Option<usize>,
+    /// GraphQL `update<Types>(where:)` and `delete<Types>(where:)` with no condition (every row)
+    /// need `unfiltered: true`. REST always asks for it (`unfiltered=true`). Off by default.
+    #[serde(default)]
+    pub require_filter: bool,
     /// Most groups an aggregate request may return.
     #[serde(default = "default_groups", deserialize_with = "limit")]
     pub groups: Option<usize>,
@@ -309,6 +313,7 @@ impl Default for LimitsConfig {
             depth: default_depth(),
             cost: default_cost(),
             bulk_rows: default_bulk_rows(),
+            require_filter: false,
             groups: default_groups(),
             request_body_bytes: default_body(),
             statement_timeout: default_timeout(),
@@ -326,6 +331,7 @@ impl LimitsConfig {
             depth: self.depth,
             cost: self.cost,
             bulk_rows: self.bulk_rows,
+            require_filter: self.require_filter,
         }
     }
 

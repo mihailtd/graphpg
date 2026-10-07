@@ -234,10 +234,10 @@ async fn test_unique_keys_become_lookups_and_conflict_keys() {
         "  updateTeamBySlug(slug: String!, input: UpdateTeamInput!, \"\"\"Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).\"\"\" expectedVersion: String): UpdateTeamPayload!",
         "  deleteTeamBySlug(slug: String!, \"\"\"Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).\"\"\" expectedVersion: String): DeleteTeamPayload!",
         "  createTeams(inputs: [CreateTeamInput!]!, onConflict: TeamOnConflict): CreateTeamsPayload!",
-        "  updateTeams(where: TeamFilter!, set: UpdateTeamInput!): UpdateTeamsPayload!",
-        "  deleteTeams(where: TeamFilter!): DeleteTeamsPayload!",
+        "  updateTeams(where: TeamFilter!, set: UpdateTeamInput!, \"\"\"Allow a `where` without conditions, which updates every row (see `limits.require_filter`).\"\"\" unfiltered: Boolean = false): UpdateTeamsPayload!",
+        "  deleteTeams(where: TeamFilter!, \"\"\"Allow a `where` without conditions, which deletes every row (see `limits.require_filter`).\"\"\" unfiltered: Boolean = false): DeleteTeamsPayload!",
         "  createLogLines(inputs: [CreateLogLineInput!]!): CreateLogLinesPayload!",
-        "  updateLogLines(where: LogLineFilter!, set: UpdateLogLineInput!): UpdateLogLinesPayload!",
+        "  updateLogLines(where: LogLineFilter!, set: UpdateLogLineInput!, \"\"\"Allow a `where` without conditions, which updates every row (see `limits.require_filter`).\"\"\" unfiltered: Boolean = false): UpdateLogLinesPayload!",
     ] {
         assert!(mutation.contains(field), "missing `{field}`:\n{mutation}");
     }

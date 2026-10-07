@@ -629,6 +629,10 @@ pub struct ConnectionSelections {
     /// Each selected `totalCount`: its response key, and whether it is an estimate.
     #[serde(default)]
     pub total_counts: Vec<(String, bool)>,
+    /// `totalCount(estimate: true, exactBelow: n)`: by response key, counted exactly when the
+    /// estimate is at most `n` rows.
+    #[serde(default)]
+    pub exact_below: Vec<(String, u64)>,
 }
 
 /// Fields selected on a `<Type>SearchResults` object.

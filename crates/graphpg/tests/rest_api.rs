@@ -790,7 +790,9 @@ async fn openapi_matches_the_behaviour() {
             "Range",
             "after",
             "anti",
+            "args[uniqueAuthorCount][featured]",
             "before",
+            "cursors",
             "fields",
             "fields[featuredMessages]",
             "fields[messages]",
@@ -809,7 +811,9 @@ async fn openapi_matches_the_behaviour() {
             "offset[messages]",
             "order",
             "order[featuredMessages]",
-            "order[messages]"
+            "order[messages]",
+            "partition",
+            "window"
         ]
     );
     let first = params.iter().find(|p| p["name"] == "first").unwrap();
@@ -1208,4 +1212,284 @@ async fn openapi_describes_the_change_events_of_a_table_as_webhooks() {
         None,
     );
     assert!(plain.get("webhooks").is_none());
+}
+
+#[tokio::test]
+async fn openapi_documents_what_the_api_accepts() {
+    let state = state().await;
+    let doc = (*state.current_openapi_document()).clone();
+    let app = create_router(Arc::new(state));
+
+    // `order`: relation counts, the columns of to-one relations and computed columns, in the
+    // spelling the API takes (camel case)
+    let params = doc["paths"]["/rest/forums"]["get"]["parameters"]
+        .as_array()
+        .unwrap();
+    let order = params.iter().find(|p| p["name"] == "order").unwrap();
+    let pattern = order["schema"]["items"]["pattern"].as_str().unwrap();
+    for name in ["messagesCount", "uniqueAuthorCount", "natural", "name"] {
+        assert!(pattern.contains(name), "{name} in {pattern}");
+    }
+    let messages = doc["paths"]["/rest/messages"]["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "order")
+        .unwrap()["schema"]["items"]["pattern"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(messages.contains(r"author\.username"), "{messages}");
+    for uri in [
+        "/rest/forums?order=-messagesCount&fields=name",
+        "/rest/forums?order=messages_count&fields=name",
+        "/rest/forums?order=uniqueAuthorCount&fields=name",
+        "/rest/messages?order=author.username&fields=body",
+    ] {
+        assert_eq!(get(&app, uri).await.status, StatusCode::OK, "{uri}");
+    }
+
+    // The codes a write can fail with, per table
+    let codes = &doc["components"]["schemas"]["forumsErrorCode"]["oneOf"];
+    let codes: Vec<&str> = codes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["const"].as_str().unwrap())
+        .collect();
+    assert!(
+        codes.contains(&"NAME_REQUIRED") && codes.contains(&"STALE_VERSION"),
+        "{codes:?}"
+    );
+    let post_409 = &doc["paths"]["/rest/forums"]["post"]["responses"]["409"]["content"]
+        ["application/problem+json"]["schema"];
+    assert_eq!(post_409["$ref"], "#/components/schemas/forumsProblem");
+    assert!(
+        doc["paths"]["/rest/forums/{key}"]["patch"]["responses"]["422"]["content"]
+            ["application/problem+json"]["schema"]["$ref"]
+            .as_str()
+            .unwrap()
+            .ends_with("forumsProblem")
+    );
+
+    // The relations a row can carry, when embedded
+    let forums = &doc["components"]["schemas"]["forums"]["properties"];
+    assert_eq!(forums["messages"]["type"], "array");
+    assert_eq!(
+        forums["messages"]["items"]["$ref"],
+        "#/components/schemas/messages"
+    );
+    assert!(forums["randomUser"]["anyOf"].is_array());
+    assert!(!doc["components"]["schemas"]["forums"]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("messages")));
+
+    // The streaming endpoints of the GraphQL router
+    let export = &doc["paths"]["/export"]["post"];
+    assert!(export["responses"]["200"]["content"]["application/x-ndjson"].is_object());
+    let import = &doc["paths"]["/import/{type}"]["post"];
+    let types = import["parameters"][0]["schema"]["enum"]
+        .as_array()
+        .unwrap();
+    assert!(types.contains(&json!("Forum")), "{types:?}");
+}
+
+#[tokio::test]
+async fn a_row_is_addressed_by_a_unique_key_too() {
+    let app = app().await;
+    // `?by=` names the unique key the path holds the value of (GraphQL's `userByUsername`)
+    let alice = get(&app, "/rest/users/Alice?by=username&fields=id,username").await;
+    assert_eq!(alice.status, StatusCode::OK, "{}", alice.body);
+    assert_eq!(alice.body["username"], "Alice");
+    assert_eq!(alice.body["id"], "a11ce000-0000-0000-0000-0000000a11ce");
+    assert!(alice.header("etag").is_some());
+
+    // The same key writes: the unique column itself can change, the primary key cannot
+    let renamed = call(
+        &app,
+        "PATCH",
+        "/rest/users/Cecilia?by=username",
+        &[],
+        Some(json!({ "gravatarUrl": "https://example.com/c.png" })),
+    )
+    .await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.body);
+    assert_eq!(renamed.body["gravatarUrl"], "https://example.com/c.png");
+    let back = call(
+        &app,
+        "PATCH",
+        "/rest/users/Cecilia?by=username",
+        &[],
+        Some(json!({ "gravatarUrl": null })),
+    )
+    .await;
+    assert_eq!(back.status, StatusCode::OK, "{}", back.body);
+
+    // A JSON Patch addresses a row the same way
+    let patched = call(
+        &app,
+        "PATCH",
+        "/rest/users/Cecilia?by=username",
+        &[("content-type", "application/json-patch+json")],
+        Some(json!([{ "op": "add", "path": "/gravatarUrl", "value": "x" }])),
+    )
+    .await;
+    assert_eq!(patched.status, StatusCode::OK, "{}", patched.body);
+    call(
+        &app,
+        "PATCH",
+        "/rest/users/Cecilia?by=username",
+        &[],
+        Some(json!({ "gravatarUrl": null })),
+    )
+    .await;
+
+    // No such row, no such key
+    assert_eq!(
+        get(&app, "/rest/users/nobody?by=username").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, "DELETE", "/rest/users/nobody?by=username", &[], None)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    for uri in [
+        "/rest/users/Alice?by=gravatarUrl",
+        "/rest/users/Alice?by=nope",
+        "/rest/users/Alice?by=username,id",
+    ] {
+        assert_eq!(
+            get(&app, uri).await.status,
+            StatusCode::BAD_REQUEST,
+            "{uri}"
+        );
+    }
+
+    // The document says so
+    let state = state().await;
+    let doc = (*state.current_openapi_document()).clone();
+    let by = doc["paths"]["/rest/users/{key}"]["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "by")
+        .unwrap()
+        .clone();
+    assert_eq!(by["schema"]["enum"], json!(["username"]));
+    assert!(doc["paths"]["/rest/forums/{key}"]["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|p| p["name"] != "by"));
+}
+
+#[tokio::test]
+async fn a_global_id_redirects_to_the_row() {
+    use base64::Engine;
+    let app = app().await;
+    let id = base64::engine::general_purpose::STANDARD.encode(format!("Forum:{CATS}"));
+    let r = get(&app, &format!("/rest/node/{id}?fields=name")).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        r.header("location"),
+        Some(format!("/rest/forums/{CATS}?fields=name").as_str())
+    );
+    for bad in [
+        "not-an-id".to_string(),
+        base64::engine::general_purpose::STANDARD.encode("Nothing:1"),
+    ] {
+        assert_eq!(
+            get(&app, &format!("/rest/node/{bad}")).await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+}
+
+#[tokio::test]
+async fn debug_headers_carry_the_sql_and_the_plans_in_dev() {
+    common::ensure_forum_fixture().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema("app_public")
+        .await
+        .unwrap();
+    let schema = SchemaBuilder::build(&catalog).unwrap();
+    let debug = |sql, explain| {
+        let (catalog, schema) = (catalog.clone(), schema.clone());
+        async move {
+            let state = ServerState::new(
+                create_pool(common::db_url(), 4).unwrap(),
+                schema,
+                catalog,
+                "app_public".to_string(),
+                DebugOptions { sql, explain },
+            );
+            create_router(Arc::new(state))
+        }
+    };
+
+    let off = debug(false, false).await;
+    let plain = get(&off, "/rest/forums?first=1").await;
+    assert!(plain.header("x-debug-sql").is_none() && plain.header("x-debug-explain").is_none());
+
+    let sql = debug(true, false).await;
+    let r = get(&sql, "/rest/forums?first=1").await;
+    let header = percent_encoding::percent_decode_str(r.header("x-debug-sql").unwrap())
+        .decode_utf8()
+        .unwrap()
+        .to_string();
+    let statements: Value = serde_json::from_str(&header).unwrap();
+    assert!(statements[0]["query"]
+        .as_str()
+        .unwrap()
+        .to_lowercase()
+        .contains("select"));
+    assert!(r.header("x-debug-explain").is_none());
+
+    let explain = debug(true, true).await;
+    let r = get(&explain, "/rest/forums?first=1").await;
+    assert!(r.header("x-debug-sql").is_some());
+    let plan = percent_encoding::percent_decode_str(r.header("x-debug-explain").unwrap())
+        .decode_utf8()
+        .unwrap()
+        .to_string();
+    assert!(plan.to_lowercase().contains("scan"), "{plan}");
+    // Failures carry them too
+    let r = get(&explain, "/rest/forums?filter[name][nope]=1").await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_list_can_be_read_as_ndjson() {
+    let app = app().await;
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/rest/forums?fields=name&order=name&filter[name][in]=Cats,Dogs,Postgres")
+                .header("accept", "application/x-ndjson")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["content-type"], "application/x-ndjson");
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    let rows: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows[0], json!({ "name": "Cats" }));
+    assert_eq!(rows.len(), 3);
+    assert!(text.ends_with('\n'));
 }

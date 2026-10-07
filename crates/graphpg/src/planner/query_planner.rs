@@ -1324,6 +1324,17 @@ impl<'a> PlanningContext<'a> {
         };
         let filter = |alias_counter: &mut usize| -> Result<RowTarget, PlannerError> {
             let value = arg("where").unwrap_or_default();
+            // Every row needs saying so
+            if self.planner.limits.require_filter
+                && value
+                    .as_object()
+                    .is_none_or(|conditions| conditions.is_empty())
+                && arg("unfiltered").and_then(|v| v.as_bool()) != Some(true)
+            {
+                return Err(PlannerError::InvalidInput(format!(
+                    "{field_name}: `where` has no condition, so it matches every row: add one, or pass `unfiltered: true` to mean it"
+                )));
+            }
             Ok(RowTarget::Filter(self.plan_filter_object(
                 &value,
                 &schema,
@@ -2650,6 +2661,13 @@ impl<'a> PlanningContext<'a> {
                     selections.estimate_total |= estimate;
                     let key = conn_sel.response_key().to_string();
                     if !selections.total_counts.iter().any(|(k, _)| *k == key) {
+                        if let Some(n) = conn_sel
+                            .argument("exactBelow")
+                            .and_then(|v| v.as_u64())
+                            .filter(|_| estimate)
+                        {
+                            selections.exact_below.push((key.clone(), n));
+                        }
                         selections.total_counts.push((key, estimate));
                     }
                 }

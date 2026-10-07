@@ -194,9 +194,9 @@ fn json_patch_schema() -> Value {
 /// Replaces the `$ref`s to components that do not exist with a plain object schema.
 fn fix_dangling_refs(
     paths: &mut serde_json::Map<String, Value>,
-    schemas: &serde_json::Map<String, Value>,
+    schemas: &mut serde_json::Map<String, Value>,
 ) {
-    fn fix(value: &mut Value, schemas: &serde_json::Map<String, Value>) {
+    fn fix(value: &mut Value, names: &std::collections::HashSet<String>) {
         match value {
             Value::Object(map) => {
                 if let Some(name) = map
@@ -204,18 +204,20 @@ fn fix_dangling_refs(
                     .and_then(Value::as_str)
                     .and_then(|r| r.strip_prefix("#/components/schemas/"))
                 {
-                    if !schemas.contains_key(name) {
+                    if !names.contains(name) {
                         *value = json!({ "type": "object" });
                         return;
                     }
                 }
-                map.values_mut().for_each(|v| fix(v, schemas));
+                map.values_mut().for_each(|v| fix(v, names));
             }
-            Value::Array(items) => items.iter_mut().for_each(|v| fix(v, schemas)),
+            Value::Array(items) => items.iter_mut().for_each(|v| fix(v, names)),
             _ => {}
         }
     }
-    paths.values_mut().for_each(|v| fix(v, schemas));
+    let names: std::collections::HashSet<String> = schemas.keys().cloned().collect();
+    paths.values_mut().for_each(|v| fix(v, &names));
+    schemas.values_mut().for_each(|v| fix(v, &names));
 }
 
 fn regex_escape(s: &str) -> String {
@@ -307,7 +309,10 @@ impl OpenApiGenerator {
         if let Some(target) = doc.pointer_mut("/paths").and_then(Value::as_object_mut) {
             for (path, item) in paths {
                 // The root and the search over every resource are not a schema's
-                if path == REST_PREFIX || path == format!("{REST_PREFIX}/search") {
+                if path == REST_PREFIX
+                    || path == format!("{REST_PREFIX}/search")
+                    || path.starts_with(&format!("{REST_PREFIX}/node/"))
+                {
                     continue;
                 }
                 if let Some(rest) = path.strip_prefix(REST_PREFIX) {
@@ -368,6 +373,29 @@ impl OpenApiGenerator {
             .filter(|t| !config.entities.get(&t.name).is_some_and(|e| e.omit))
             .collect();
 
+        // GraphQL's `node(id:)`: a global ID names a table and a key
+        if tables.iter().any(|t| t.implements_node()) {
+            paths.insert(
+                format!("{REST_PREFIX}/node/{{id}}"),
+                json!({ "get": {
+                    "summary": "Row by global ID",
+                    "description": "The row a Relay global ID (the `id` GraphQL gives every row) names: a redirect to the row's own URL, query string kept",
+                    "operationId": "get_node",
+                    "parameters": [{
+                        "name": "id", "in": "path", "required": true,
+                        "description": "A Relay global ID: base64 of `<Type>:<key>`",
+                        "schema": { "type": "string" }
+                    }],
+                    "responses": responses(json!({
+                        "303": {
+                            "description": "See Other: the row's URL",
+                            "headers": { "Location": { "schema": { "type": "string" } } }
+                        }
+                    }), &[("404", "Not Found: no table has that type, or the ID is malformed")]),
+                } }),
+            );
+        }
+
         let mut inputs = graphql.map(super::input_types::InputTypes::new);
         for table in &tables {
             let name = &table.name;
@@ -402,6 +430,7 @@ impl OpenApiGenerator {
                 Self::generate_search_request_schema(table, catalog, &config.limits),
             );
             Self::generate_table_paths(table, catalog, config, &mut paths);
+            Self::attach_error_codes(table, catalog, &mut paths, &mut schemas);
             Self::generate_aggregate_paths(table, config, &mut schemas, &mut paths);
             Self::generate_search_method_paths(table, catalog, config, graphql, &mut paths);
         }
@@ -411,9 +440,13 @@ impl OpenApiGenerator {
         }
         Self::generate_rpc_paths(catalog, config, default_schema, &tables, &mut paths);
         let webhooks = Self::generate_webhooks(&tables, config, &mut schemas);
+        // The streaming endpoints belong to the GraphQL router, and need something to export
+        if config.graphql.enabled && !tables.is_empty() {
+            Self::generate_bulk_paths(&tables, &mut paths);
+        }
 
         // The filter of a relation whose table the API does not serve has nothing to refer to
-        fix_dangling_refs(&mut paths, &schemas);
+        fix_dangling_refs(&mut paths, &mut schemas);
 
         let mut doc = json!({
             "openapi": "3.1.0",
@@ -441,6 +474,137 @@ impl OpenApiGenerator {
             doc["webhooks"] = Value::Object(webhooks);
         }
         doc
+    }
+
+    /// The codes a write of `table` can be rejected with (the GraphQL `<Type>ErrorCode` enum):
+    /// `{table}ErrorCode` lists them with what each means, and `{table}Problem` is a problem whose
+    /// `code` is one of them, the schema of the 400, 409 and 422 answers of its writes.
+    fn attach_error_codes(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+        paths: &mut serde_json::Map<String, Value>,
+        schemas: &mut serde_json::Map<String, Value>,
+    ) {
+        let name = &table.name;
+        let codes = catalog.error_codes(table);
+        if codes.is_empty() {
+            return;
+        }
+        let described: Vec<Value> = codes
+            .iter()
+            .map(|(code, doc)| json!({ "const": code, "description": doc }))
+            .collect();
+        schemas.insert(
+            format!("{name}ErrorCode"),
+            json!({
+                "description": format!("Why a write of `{name}` rows can be rejected: the `code` of the 409 and 422 problems"),
+                "type": "string",
+                "oneOf": described
+            }),
+        );
+        schemas.insert(
+            format!("{name}Problem"),
+            json!({
+                "description": format!("A problem of a write to `{name}`; its `code` is one of `{name}ErrorCode` (or one of the general ones)"),
+                "allOf": [
+                    schema_ref("ProblemDetails"),
+                    { "properties": { "code": { "anyOf": [schema_ref(&format!("{name}ErrorCode")), { "type": "string" }] } } }
+                ]
+            }),
+        );
+        for path in [
+            format!("{REST_PREFIX}/{name}"),
+            format!("{REST_PREFIX}/{name}/{{key}}"),
+        ] {
+            let Some(item) = paths.get_mut(&path).and_then(Value::as_object_mut) else {
+                continue;
+            };
+            for method in ["post", "patch", "put", "delete"] {
+                for status in ["400", "409", "422"] {
+                    if let Some(content) = item.get_mut(method).and_then(|op| {
+                        op.pointer_mut(&format!(
+                            "/responses/{status}/content/application~1problem+json"
+                        ))
+                    }) {
+                        *content = json!({ "schema": schema_ref(&format!("{name}Problem")) });
+                    }
+                }
+            }
+        }
+    }
+
+    /// `/export` and `/import/{type}`: streaming bulk data, next to the REST API (they share its
+    /// authentication and Row-Level Security).
+    fn generate_bulk_paths(tables: &[&TableMetadata], paths: &mut serde_json::Map<String, Value>) {
+        paths.insert(
+            "/export".to_string(),
+            json!({
+                "post": {
+                    "summary": "Export a connection",
+                    "description": "Streams every row a GraphQL query's single connection field (its `nodes`) selects, read from a server-side portal in batches, so neither side holds the whole result: for tables of any size, where a list is bounded by `limits.page_size`.",
+                    "operationId": "export_rows",
+                    "requestBody": { "required": true, "content": { "application/json": { "schema": {
+                        "type": "object",
+                        "required": ["query"],
+                        "properties": {
+                            "query": { "type": "string", "description": "A GraphQL query whose only root field is a connection" },
+                            "operationName": { "type": "string" },
+                            "variables": { "type": "object" },
+                            "format": { "type": "string", "enum": ["ndjson", "csv"], "default": "ndjson" }
+                        },
+                        "additionalProperties": false
+                    } } } },
+                    "responses": responses(json!({
+                        "200": {
+                            "description": "The rows, one JSON object per line (or CSV)",
+                            "content": {
+                                "application/x-ndjson": { "schema": { "type": "string" } },
+                                "text/csv": { "schema": { "type": "string" } }
+                            }
+                        }
+                    }), &[("503", "Service Unavailable: the database is unavailable")]),
+                }
+            }),
+        );
+        let importable: Vec<&&TableMetadata> =
+            tables.iter().filter(|t| t.operations.create).collect();
+        if importable.is_empty() {
+            return;
+        }
+        let types: Vec<String> = importable.iter().map(|t| t.type_name.clone()).collect();
+        let one_of: Vec<Value> = importable
+            .iter()
+            .map(|t| schema_ref(&format!("{}CreateInput", t.name)))
+            .collect();
+        paths.insert(
+            "/import/{type}".to_string(),
+            json!({
+                "post": {
+                    "summary": "Import rows",
+                    "description": "Inserts the rows of the body, one `Create<Type>Input` JSON object per line, checked like any write and streamed into a staging table, then inserted in one statement: in one transaction, so every row is inserted or none.",
+                    "operationId": "import_rows",
+                    "parameters": [{
+                        "name": "type", "in": "path", "required": true,
+                        "description": "The GraphQL type of the rows",
+                        "schema": { "type": "string", "enum": types }
+                    }],
+                    "requestBody": { "required": true, "content": { "application/x-ndjson": { "schema": {
+                        "type": "string",
+                        "description": "One row per line, each a `CreateInput` of the type",
+                        "examples": [one_of.clone()]
+                    } } } },
+                    "responses": responses(json!({
+                        "200": {
+                            "description": "Every row was inserted",
+                            "content": { "application/json": { "schema": {
+                                "type": "object",
+                                "properties": { "data": { "type": "object", "properties": { "inserted": { "type": "integer" } } } }
+                            } } }
+                        }
+                    }), &[("409", "Conflict: a unique constraint, with its typed `code`")]),
+                }
+            }),
+        );
     }
 
     /// OpenAPI 3.1 `webhooks`: the change events the configuration declares for the tables the
@@ -584,6 +748,7 @@ impl OpenApiGenerator {
                         },
                         "content": {
                             "application/json": { "schema": rows.clone() },
+                            "application/x-ndjson": { "schema": { "type": "string", "description": "One row per line" } },
                             "text/csv": { "schema": { "type": "string" } }
                         }
                     },
@@ -604,10 +769,11 @@ impl OpenApiGenerator {
                         },
                         "content": {
                             "application/json": { "schema": rows.clone() },
+                            "application/x-ndjson": { "schema": { "type": "string", "description": "One row per line" } },
                             "text/csv": { "schema": { "type": "string" } }
                         }
                     }
-                }), &[("406", "Not Acceptable: the list is `application/json` or `text/csv`"),
+                }), &[("406", "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`"),
                       ("416", "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`")]),
             });
             if deprecated {
@@ -820,10 +986,11 @@ impl OpenApiGenerator {
                             },
                             "content": {
                                 "application/json": { "schema": rows.clone() },
+                                "application/x-ndjson": { "schema": { "type": "string", "description": "One row per line" } },
                                 "text/csv": { "schema": { "type": "string" } }
                             }
                         }
-                    }), &[("406", "Not Acceptable: the list is `application/json` or `text/csv`")]),
+                    }), &[("406", "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`")]),
                 }
             }));
         }
@@ -832,11 +999,13 @@ impl OpenApiGenerator {
             return;
         }
         let key_param = Self::key_parameter(table, catalog);
+        let by = Self::by_parameter(table);
         let mut item = serde_json::Map::new();
 
         if read {
             let mut params = vec![
                 key_param.clone(),
+                by.clone(),
                 Self::fields_param(table, catalog),
                 Self::include_param(table, catalog),
             ];
@@ -918,7 +1087,7 @@ impl OpenApiGenerator {
                 "summary": format!("Update {name} by key"),
                 "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
                 "operationId": format!("update_{name}_by_key"),
-                "parameters": [key_param.clone(),
+                "parameters": [key_param.clone(), by.clone(),
                     if_match_param("Row version (the `ETag`) the update must apply to; 412 if the row changed"),
                     prefer_previous_param()],
                 "requestBody": { "required": true, "content": {
@@ -947,7 +1116,7 @@ impl OpenApiGenerator {
                 "summary": format!("Delete {name} by key"),
                 "description": format!("Delete a single row from `{name}` by primary key"),
                 "operationId": format!("delete_{name}_by_key"),
-                "parameters": [key_param,
+                "parameters": [key_param, by,
                     if_match_param("Row version (the `ETag`) the delete must apply to; 412 if the row changed"),
                     prefer_param(true)],
                 "responses": write_responses("Deleted: the row", false),
@@ -966,6 +1135,15 @@ impl OpenApiGenerator {
                 "options".into(),
                 options_of(format!("options_{name}_by_key"), media),
             );
+            // A parameter a table has no use for (`by`) is null
+            for operation in item.values_mut() {
+                if let Some(params) = operation
+                    .get_mut("parameters")
+                    .and_then(Value::as_array_mut)
+                {
+                    params.retain(|p| !p.is_null());
+                }
+            }
             paths.insert(format!("{REST_PREFIX}/{name}/{{key}}"), Value::Object(item));
         }
 
@@ -1190,6 +1368,116 @@ impl OpenApiGenerator {
         })
     }
 
+    /// What a row of a list can carry besides its columns: its cursor, window values among the
+    /// matching rows and running sums (the `edges` of the GraphQL connection).
+    fn edge_parameters(table: &TableMetadata) -> Vec<Value> {
+        let numeric: Vec<String> = table
+            .visible_columns()
+            .filter(|c| c.pg_type.is_numeric())
+            .map(|c| c.field_name.clone())
+            .collect();
+        let groups: Vec<String> = table
+            .group_by_values()
+            .iter()
+            .map(|(_, c, unit)| match unit {
+                None => c.field_name.clone(),
+                Some("bin") => format!("{}:binned", c.field_name),
+                Some(unit) => format!("{}:{unit}", c.field_name),
+            })
+            .collect();
+        let mut params = vec![
+            json!({
+                "name": "cursors", "in": "query",
+                "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+                "schema": { "type": "boolean", "default": false }
+            }),
+            json!({
+                "name": "window", "in": "query", "style": "form", "explode": false,
+                "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+                "schema": { "type": "array", "items": { "type": "string", "enum": ["rowNumber", "rank", "denseRank", "percentRank"] } }
+            }),
+            json!({
+                "name": "partition", "in": "query", "style": "form", "explode": false,
+                "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+                "schema": { "type": "array", "items": { "type": "string", "enum": groups } }
+            }),
+        ];
+        if !numeric.is_empty() {
+            params.push(json!({
+                "name": "running", "in": "query", "style": "form", "explode": false,
+                "description": "Running sums of these columns up to each row, in the list's order (a ledger's balance): `_window.runningSum.<column>`",
+                "schema": { "type": "array", "items": { "type": "string", "enum": numeric } }
+            }));
+        }
+        params
+    }
+
+    /// `by`: address a row by one of its other unique keys instead of the primary key
+    /// (`/rest/users/alice?by=username`), or null when the table has none.
+    fn by_parameter(table: &TableMetadata) -> Value {
+        let keys: Vec<String> = table
+            .lookup_keys()
+            .map(|(_, cols)| {
+                cols.iter()
+                    .map(|c| c.field_name.clone())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect();
+        if keys.is_empty() || !table.operations.read {
+            return Value::Null;
+        }
+        json!({
+            "name": "by", "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": { "type": "string", "enum": keys }
+        })
+    }
+
+    /// What a list can be ordered by besides the table's own columns, as the REST grammar spells
+    /// it: `author.username` (a column of a to-one relation's row), `messagesCount` (the number
+    /// of rows of a to-many relation), a computed column, and `natural` / `primary_key`.
+    pub(super) fn order_names(table: &TableMetadata, catalog: &DatabaseCatalog) -> Vec<String> {
+        use crate::catalog::{FunctionReturn, PgType};
+        let mut names = vec!["natural".to_string(), "primary_key".to_string()];
+        for field in catalog.object_fields(&table.schema, &table.name) {
+            match &field.kind {
+                FieldKind::Relation(rel) if rel.is_many => {
+                    if !rel.history {
+                        names.push(format!("{}Count", field.name));
+                    }
+                }
+                FieldKind::Relation(rel) if rel.junction.is_none() => {
+                    let Some(target) = catalog.find_table(&rel.target_schema, &rel.target_table)
+                    else {
+                        continue;
+                    };
+                    for col in target
+                        .visible_columns()
+                        .filter(|c| c.pg_type.is_orderable())
+                    {
+                        names.push(format!("{}.{}", field.name, col.field_name));
+                    }
+                }
+                FieldKind::Function(i) => {
+                    let f = &catalog.functions[*i];
+                    let orderable = match &f.returns {
+                        FunctionReturn::Value(t) => {
+                            t.is_orderable() && !matches!(t, PgType::Array(_))
+                        }
+                        _ => false,
+                    };
+                    let no_other_args = f.arguments.iter().skip(1).all(|a| a.has_default);
+                    if f.row_argument && orderable && !f.returns_set && no_other_args {
+                        names.push(field.name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
     /// The to-one and to-many relations (not their connections) and the computed relationships
     /// (functions mounted on the table that return rows) that can be embedded.
     pub(super) fn relation_names(table: &TableMetadata, catalog: &DatabaseCatalog) -> Vec<String> {
@@ -1200,13 +1488,21 @@ impl OpenApiGenerator {
     }
 
     pub(super) fn embeddables<'a>(
-        table: &TableMetadata,
+        table: &'a TableMetadata,
         catalog: &'a DatabaseCatalog,
     ) -> Vec<crate::server::rest::Embeddable<'a>> {
         catalog
             .object_fields(&table.schema, &table.name)
             .iter()
-            .filter(|f| matches!(f.kind, FieldKind::Relation(_) | FieldKind::Function(_)))
+            .filter(|f| {
+                matches!(
+                    f.kind,
+                    FieldKind::Relation(_)
+                        | FieldKind::Function(_)
+                        | FieldKind::Tree(_)
+                        | FieldKind::ArcTarget
+                )
+            })
             .filter_map(|f| crate::server::rest::find_embeddable(catalog, table, &f.name))
             .collect()
     }
@@ -1221,17 +1517,76 @@ impl OpenApiGenerator {
         collection: bool,
     ) -> Vec<Value> {
         let mut params = Vec::new();
+        if table.period_key().is_some() {
+            params.push(json!({
+                "name": "asOf", "in": "query",
+                "description": "Read the table as it was at this time: the versions whose period contains it",
+                "schema": { "type": "string", "format": "date-time" }
+            }));
+        }
+        let json_path = |column: &str, owner: &str| {
+            json!({
+                "name": format!("path[{column}]"), "in": "query",
+                "description": format!("A JSON path (`$.address.city`): `{owner}` returns the first item it selects from the `json` column instead of the whole value"),
+                "schema": { "type": "string", "pattern": "^\\$" }
+            })
+        };
+        for col in table
+            .visible_columns()
+            .filter(|c| matches!(c.pg_type, PgType::Json | PgType::Jsonb))
+        {
+            params.push(json_path(&col.field_name, &col.field_name));
+        }
         let embeddables = Self::embeddables(table, catalog);
         for e in &embeddables {
             let name = &e.name;
             let columns = Self::visible_fields(e.target, catalog);
+            for col in e
+                .target
+                .visible_columns()
+                .filter(|c| matches!(c.pg_type, PgType::Json | PgType::Jsonb))
+            {
+                params.push(json_path(
+                    &format!("{name}.{}", col.field_name),
+                    &col.field_name,
+                ));
+            }
+            let columns = if e.kind == crate::server::rest::EmbedKind::Arc {
+                // The union of the columns of the tables an arc leads to
+                let mut all: Vec<String> = Vec::new();
+                for (_, t) in &e.arc_targets {
+                    for c in t.visible_columns() {
+                        if !all.contains(&c.field_name) {
+                            all.push(c.field_name.clone());
+                        }
+                    }
+                }
+                all
+            } else {
+                columns
+            };
             params.push(json!({
                 "name": format!("fields[{name}]"), "in": "query", "style": "form", "explode": false,
                 "description": format!("Columns of the embedded `{name}` (default: all); `include={name}` first"),
                 "schema": { "type": "array", "items": { "type": "string", "enum": columns } }
             }));
+            // Temporal tables are read at a point in time
+            if e.kind != crate::server::rest::EmbedKind::Arc && e.target.period_key().is_some() {
+                params.push(json!({
+                    "name": format!("asOf[{name}]"), "in": "query",
+                    "description": format!("Read the embedded `{name}` as it was at this time: the versions whose period contains it"),
+                    "schema": { "type": "string", "format": "date-time" }
+                }));
+            }
             if !e.many {
                 continue;
+            }
+            if e.kind == crate::server::rest::EmbedKind::Tree {
+                params.push(json!({
+                    "name": format!("depth[{name}]"), "in": "query",
+                    "description": format!("How many levels of the hierarchy `{name}` walks (default: all, cycles end it)"),
+                    "schema": { "type": "integer", "minimum": 1 }
+                }));
             }
             params.push(json!({
                 "name": format!("filter[{name}]"), "in": "query", "style": "deepObject", "explode": true,
@@ -1243,16 +1598,50 @@ impl OpenApiGenerator {
                 "description": format!("Order of the embedded `{name}` rows: `column`, `-column` or `column:desc`"),
                 "schema": { "type": "array", "items": { "type": "string", "pattern": format!("^[+-]?{}(:(asc|desc))?$", alternation(&columns)) } }
             }));
-            params.push(json!({
-                "name": format!("first[{name}]"), "in": "query",
-                "description": format!("Number of embedded `{name}` rows (at most `limits.page_size.max`)"),
-                "schema": Self::page_schema(limits)
-            }));
-            params.push(json!({
-                "name": format!("offset[{name}]"), "in": "query",
-                "description": format!("Embedded `{name}` rows to skip"),
-                "schema": { "type": "integer", "minimum": 0 }
-            }));
+            // A hierarchy is walked to its depth, not paged
+            if e.kind != crate::server::rest::EmbedKind::Tree {
+                params.push(json!({
+                    "name": format!("first[{name}]"), "in": "query",
+                    "description": format!("Number of embedded `{name}` rows (at most `limits.page_size.max`)"),
+                    "schema": Self::page_schema(limits)
+                }));
+                params.push(json!({
+                    "name": format!("offset[{name}]"), "in": "query",
+                    "description": format!("Embedded `{name}` rows to skip"),
+                    "schema": { "type": "integer", "minimum": 0 }
+                }));
+            }
+        }
+        // Computed fields (functions of a row) take arguments: `args[field][argument]`
+        let mut owners: Vec<(String, &TableMetadata)> = vec![(String::new(), table)];
+        owners.extend(
+            embeddables
+                .iter()
+                .map(|e| (format!("{}.", e.name), e.target)),
+        );
+        for (prefix, owner) in owners {
+            for field in catalog.object_fields(&owner.schema, &owner.name) {
+                let FieldKind::Function(i) = &field.kind else {
+                    continue;
+                };
+                let f = &catalog.functions[*i];
+                if !catalog.function_is_exposed(f) || f.volatile {
+                    continue;
+                }
+                for arg in crate::server::rest::field_arguments(f) {
+                    params.push(json!({
+                        "name": format!("args[{prefix}{}][{}]", field.name, arg.graphql_name()),
+                        "in": "query",
+                        "required": !arg.has_default,
+                        "description": format!(
+                            "Argument `{}` of the computed field `{}` of `{}` (select it with `fields={}`{})",
+                            arg.graphql_name(), field.name, owner.name, field.name,
+                            if prefix.is_empty() { String::new() } else { format!(" or `include={}`", prefix.trim_end_matches('.')) }
+                        ),
+                        "schema": Self::pg_type_to_json_schema(&arg.pg_type, catalog)
+                    }));
+                }
+            }
         }
         let relations: Vec<String> = embeddables
             .iter()
@@ -1321,7 +1710,9 @@ impl OpenApiGenerator {
         let (first_text, first_schema) = page("Page size for forward keyset pagination");
         let (last_text, last_schema) = page("Page size for backward keyset pagination");
         let columns = Self::visible_fields(table, catalog);
-        let order_item = format!("^[+-]?{}(:(asc|desc))?$", alternation(&columns));
+        let mut orderable = columns.clone();
+        orderable.extend(Self::order_names(table, catalog));
+        let order_item = format!("^[+-]?{}(:(asc|desc))?$", alternation(&orderable));
         let mut params = vec![
             json!({
                 "name": "filter", "in": "query", "style": "deepObject", "explode": true,
@@ -1330,7 +1721,7 @@ impl OpenApiGenerator {
             }),
             json!({
                 "name": "order", "in": "query", "style": "form", "explode": false,
-                "description": "Columns to order by: `column`, `-column` or `column:desc`",
+                "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
                 "schema": { "type": "array", "items": { "type": "string", "pattern": order_item } }
             }),
             json!({
@@ -1363,6 +1754,9 @@ impl OpenApiGenerator {
             prefer_param(false),
         ];
         params.extend(Self::embed_parameters(table, catalog, limits, true));
+        if table.operations.connection {
+            params.extend(Self::edge_parameters(table));
+        }
         params.retain(|p| !p.is_null());
         Value::Array(params)
     }
@@ -1647,6 +2041,73 @@ impl OpenApiGenerator {
                     );
                 }
             }
+            // Spatial conditions on a geometry (`GeoJSONFilter`)
+            if matches!(col.pg_type, PgType::Geometry | PgType::Geography) {
+                let geometry = json!({ "type": "object", "description": "A GeoJSON geometry" });
+                for op in ["intersects", "within", "contains"] {
+                    ops.insert(op.to_string(), geometry.clone());
+                }
+                ops.insert(
+                    "withinDistance".to_string(),
+                    json!({
+                        "type": "object",
+                        "description": "Within a distance of a geometry (meters for geographies)",
+                        "properties": { "geometry": geometry, "distance": { "type": "number" } },
+                        "required": ["geometry", "distance"]
+                    }),
+                );
+                ops.insert(
+                    "intersectsBox".to_string(),
+                    json!({
+                        "type": "object",
+                        "description": "Its bounding box intersects this box (WGS 84, srid 4326, by default)",
+                        "properties": {
+                            "xmin": { "type": "number" }, "ymin": { "type": "number" },
+                            "xmax": { "type": "number" }, "ymax": { "type": "number" },
+                            "srid": { "type": "integer" }
+                        },
+                        "required": ["xmin", "ymin", "xmax", "ymax"]
+                    }),
+                );
+            }
+            // `ltree` paths (`LTreeFilter`)
+            if col.pg_type == PgType::Ltree {
+                for (op, text) in [
+                    ("ancestorOf", "Is this path or above it"),
+                    ("descendantOf", "Is this path or below it"),
+                    ("matches", "Matches an `lquery` pattern, e.g. `*.science.*`"),
+                    (
+                        "matchesText",
+                        "Matches an `ltxtquery` of labels, e.g. `science & !biology`",
+                    ),
+                ] {
+                    ops.insert(
+                        op.to_string(),
+                        json!({ "type": "string", "description": text }),
+                    );
+                }
+            }
+            // Full-text documents (`FullTextFilter`)
+            if col.pg_type == PgType::TsVector {
+                ops.insert(
+                    "matches".to_string(),
+                    json!({ "type": "string", "description": "A web-search-style query: words, \"quoted phrases\", `or`, `-excluded`" }),
+                );
+            }
+            // Multiranges (`<Scalar>MultirangeFilter`): a set of ranges
+            if let PgType::Multirange(range) = &col.pg_type {
+                let range_schema = Self::pg_type_to_json_schema(range, catalog);
+                ops.insert("containsRange".to_string(), range_schema.clone());
+                ops.insert("overlaps".to_string(), range_schema.clone());
+                ops.insert("containedBy".to_string(), range_schema);
+                ops.insert("isEmpty".to_string(), json!({ "type": "boolean" }));
+                if let Some((elem, _)) = range.range_element() {
+                    ops.insert(
+                        "contains".to_string(),
+                        Self::pg_type_to_json_schema(&elem, catalog),
+                    );
+                }
+            }
             if matches!(
                 col.pg_type,
                 PgType::Text | PgType::Varchar | PgType::Char | PgType::Citext
@@ -1746,6 +2207,28 @@ impl OpenApiGenerator {
             if !col.is_nullable {
                 required.push(col.field_name.clone());
             }
+        }
+
+        // The relations `include` embeds: present only when asked for
+        let mut properties = properties;
+        for e in Self::embeddables(table, catalog) {
+            let target = if e.kind == crate::server::rest::EmbedKind::Arc {
+                // One row of one of several tables, told apart by `__typename`
+                json!({ "oneOf": e.arc_targets.iter().map(|(_, t)| schema_ref(&t.name)).collect::<Vec<_>>() })
+            } else {
+                schema_ref(&e.target.name)
+            };
+            let (schema, text) = if e.many {
+                (json!({ "type": "array", "items": target }), "rows")
+            } else {
+                (json!({ "anyOf": [target, { "type": "null" }] }), "row")
+            };
+            let mut schema = schema;
+            schema["description"] = json!(format!(
+                "The related `{}` {text}; present when embedded with `include={}`",
+                e.target.name, e.name
+            ));
+            properties.entry(e.name).or_insert(schema);
         }
 
         let mut schema = json!({
@@ -2280,5 +2763,87 @@ mod tests {
             nullable(json!({ "$ref": "#/components/schemas/X" })),
             json!({ "anyOf": [{ "$ref": "#/components/schemas/X" }, { "type": "null" }] })
         );
+    }
+
+    #[test]
+    fn the_filter_lists_the_operators_of_spatial_path_text_and_multirange_columns() {
+        let column = |name: &str, pg_type: PgType| ColumnMetadata {
+            name: name.to_string(),
+            pg_type,
+            is_nullable: true,
+            is_primary_key: false,
+            default_value: None,
+            is_generated: false,
+            description: None,
+            limits: Default::default(),
+            generation: None,
+            deprecation: None,
+            field_name: name.to_string(),
+            omit: false,
+            readonly: false,
+            enum_key: None,
+            domain: None,
+        };
+        let table = TableMetadata {
+            schema: "public".to_string(),
+            name: "places".to_string(),
+            kind: RelationKind::Table,
+            columns: vec![
+                column("area", PgType::Geometry),
+                column("path", PgType::Ltree),
+                column("doc", PgType::TsVector),
+                column("spans", PgType::Multirange(Box::new(PgType::Int4Range))),
+            ],
+            primary_key: vec![],
+            foreign_keys: vec![],
+            description: None,
+            type_name: "Place".to_string(),
+            list_field: "places".to_string(),
+            single_field: "place".to_string(),
+            connection_field: "placesConnection".to_string(),
+            all_connection_field: None,
+            operations: Default::default(),
+            unique_keys: vec![],
+            constraints: vec![],
+            version_column: None,
+            deprecation: None,
+            federation_key: None,
+            federation_shareable: false,
+        };
+        let mut catalog = DatabaseCatalog::default();
+        catalog.tables.push(table.clone());
+        let filter = OpenApiGenerator::generate_filter_schema(&table, &catalog, &[]);
+        let ops = |column: &str| -> Vec<String> {
+            let mut names: Vec<String> = filter["properties"][column]["properties"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect();
+            names.sort();
+            names
+        };
+        for op in [
+            "intersects",
+            "within",
+            "contains",
+            "withinDistance",
+            "intersectsBox",
+        ] {
+            assert!(ops("area").contains(&op.to_string()), "area: {op}");
+        }
+        for op in ["ancestorOf", "descendantOf", "matches", "matchesText"] {
+            assert!(ops("path").contains(&op.to_string()), "path: {op}");
+        }
+        assert!(ops("doc").contains(&"matches".to_string()));
+        for op in [
+            "containsRange",
+            "overlaps",
+            "containedBy",
+            "isEmpty",
+            "contains",
+        ] {
+            assert!(ops("spans").contains(&op.to_string()), "spans: {op}");
+        }
     }
 }

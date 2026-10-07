@@ -128,9 +128,11 @@ impl SchemaBuilder {
                             ""
                         };
                         let non_null = if args.is_empty() { non_null } else { "" };
-                        SdlField::new(name, format!("{args}: {}{}", catalog.column_type(col, false), non_null))
+                        let mut field = SdlField::new(name, format!("{args}: {}{}", catalog.column_type(col, false), non_null))
                             .with_doc(Self::format_docstring(catalog.column_description(table, col).as_deref(), "  "))
-                            .deprecated(col.deprecation.as_deref())
+                            .deprecated(col.deprecation.as_deref());
+                        field.directives.push_str(&Self::constraint_directive(table, col));
+                        field
                     }
                     FieldKind::Relation(rel) => {
                         let target = type_of(&rel.target_schema, &rel.target_table);
@@ -597,6 +599,44 @@ impl SchemaBuilder {
         Some(format!("\"\"\"Only the versions valid at this point: whose `{period}` contains it.\"\"\" asOf: {scalar}"))
     }
 
+    /// ` @constraint(minimum: 0, maxLength: 20, …)`: what the table's `CHECK` constraints and the
+    /// column's `varchar(n)` say of its values, as the same keywords the OpenAPI document uses
+    /// (JSON Schema). Empty when there are none.
+    fn constraint_directive(table: &TableMetadata, col: &ColumnMetadata) -> String {
+        const KEYWORDS: [&str; 10] = [
+            "minimum",
+            "maximum",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+            "multipleOf",
+            "minLength",
+            "maxLength",
+            "pattern",
+            "minItems",
+            "maxItems",
+        ];
+        let mut keywords = crate::openapi::constraints::keywords(table, col);
+        if let Some(limit) = col.limits.max_length {
+            // A `varchar(20)` limit and a `CHECK` on the length: the stricter one holds
+            let tighter = keywords
+                .get("maxLength")
+                .and_then(|v| v.as_u64())
+                .is_none_or(|check| u64::from(limit) < check);
+            if tighter {
+                keywords.insert("maxLength".to_string(), serde_json::json!(limit));
+            }
+        }
+        let args: Vec<String> = KEYWORDS
+            .iter()
+            .filter_map(|k| keywords.get(*k).map(|v| format!("{k}: {v}")))
+            .collect();
+        if args.is_empty() {
+            String::new()
+        } else {
+            format!(" @constraint({})", args.join(", "))
+        }
+    }
+
     /// Arguments of a connection field over rows of `table`.
     pub fn format_connection_args(table: &TableMetadata) -> String {
         let type_name = &table.type_name;
@@ -869,6 +909,14 @@ impl SchemaBuilder {
         sdl.push_str("  endCursor: String\n");
         sdl.push_str("}\n\n");
 
+        sdl.push_str(concat!(
+            "\"\"\"What the database enforces on a value, in the keywords of JSON Schema (and so of the OpenAPI document): ",
+            "a `CHECK` on the column, or its `varchar(n)` length. Documentation for clients and code generators; ",
+            "the database checks every write.\"\"\"\n",
+            "directive @constraint(minimum: Float, maximum: Float, exclusiveMinimum: Float, exclusiveMaximum: Float, ",
+            "multipleOf: Float, minLength: Int, maxLength: Int, pattern: String, minItems: Int, maxItems: Int) ",
+            "on FIELD_DEFINITION | INPUT_FIELD_DEFINITION\n\n"
+        ));
         sdl.push_str("directive @defer(label: String, if: Boolean = true) on FRAGMENT_SPREAD | INLINE_FRAGMENT\n\n");
         sdl.push_str("directive @stream(label: String, initialCount: Int = 0, if: Boolean = true) on FIELD\n\n");
 
@@ -1401,7 +1449,7 @@ impl SchemaBuilder {
             connection_types_sdl.push_str(&format!("  nodes: [{}!]!\n", type_name));
             connection_types_sdl.push_str("  pageInfo: PageInfo!\n");
             connection_types_sdl.push_str(
-                "  \"\"\"Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly).\"\"\"\n  totalCount(estimate: Boolean = false): Int!\n",
+                "  \"\"\"Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly). With `exactBelow` too, the rows are counted exactly when the estimate is at most that many (an exact total for a small result, an estimate for a large one).\"\"\"\n  totalCount(estimate: Boolean = false, exactBelow: Int): Int!\n",
             );
             if has_aggregates {
                 connection_types_sdl.push_str(&format!(
@@ -1607,10 +1655,11 @@ impl SchemaBuilder {
                         "  ",
                     ));
                     mutation_types_sdl.push_str(&format!(
-                        "  {}: {}{}\n",
+                        "  {}: {}{}{}\n",
                         col.field_name,
                         catalog.column_type(col, true),
-                        non_null
+                        non_null,
+                        Self::constraint_directive(table, col)
                     ));
                 }
                 for (name, rel) in &nested {
@@ -1676,9 +1725,10 @@ impl SchemaBuilder {
                         "  ",
                     ));
                     mutation_types_sdl.push_str(&format!(
-                        "  {}: {}\n",
+                        "  {}: {}{}\n",
                         col.field_name,
-                        catalog.column_type(col, true)
+                        catalog.column_type(col, true),
+                        Self::constraint_directive(table, col)
                     ));
                 }
                 // Nested writes of single-row updates, which read the row back by key
@@ -1786,14 +1836,14 @@ impl SchemaBuilder {
                     ),
                     MutationAction::UpdateMany => (
                         format!("Update every `{type_name}` matching `where`."),
-                        format!("where: {type_name}Filter!, set: Update{type_name}Input!"),
+                        format!("where: {type_name}Filter!, set: Update{type_name}Input!, \"\"\"Allow a `where` without conditions, which updates every row (see `limits.require_filter`).\"\"\" unfiltered: Boolean = false"),
                     ),
                     MutationAction::Delete => (
                         if unique_key.is_empty() { String::new() } else { format!("Delete the `{type_name}` with the given {key_names}.") },
                         format!("{}{expected_version}", key_args.unwrap_or_default()),
                     ),
                     MutationAction::DeleteMany => {
-                        (format!("Delete every `{type_name}` matching `where`."), format!("where: {type_name}Filter!"))
+                        (format!("Delete every `{type_name}` matching `where`."), format!("where: {type_name}Filter!, \"\"\"Allow a `where` without conditions, which deletes every row (see `limits.require_filter`).\"\"\" unfiltered: Boolean = false"))
                     }
                 };
                 mutation_fields.push(Self::format_docstring(

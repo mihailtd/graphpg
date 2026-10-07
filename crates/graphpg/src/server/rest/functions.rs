@@ -75,7 +75,7 @@ fn shape<'a>(
 }
 
 /// A query-string value as the JSON the argument takes.
-fn parse_argument_text(
+pub(super) fn parse_argument_text(
     text: &str,
     arg: &FunctionArgument,
 ) -> Result<serde_json::Value, ProblemDetails> {
@@ -327,13 +327,7 @@ pub async fn rest_rpc_handler(
                         Shape::Rows(table) => {
                             ctx.allow(table, Operation::Read)?;
                             let query = options.into_query(Some((table, QueryKind::Item)), &ctx)?;
-                            let children = select_fields(
-                                &ctx,
-                                table,
-                                query.fields.as_ref(),
-                                query.include.as_ref(),
-                                &query.embed,
-                            )?;
+                            let children = select_fields(&ctx, table, &query)?;
                             rows_query = Some(query);
                             (children, Some(*table))
                         }

@@ -58,6 +58,9 @@ type PageInfo {
   endCursor: String
 }
 
+"""What the database enforces on a value, in the keywords of JSON Schema (and so of the OpenAPI document): a `CHECK` on the column, or its `varchar(n)` length. Documentation for clients and code generators; the database checks every write."""
+directive @constraint(minimum: Float, maximum: Float, exclusiveMinimum: Float, exclusiveMaximum: Float, multipleOf: Float, minLength: Int, maxLength: Int, pattern: String, minItems: Int, maxItems: Int) on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
 directive @defer(label: String, if: Boolean = true) on FRAGMENT_SPREAD | INLINE_FRAGMENT
 
 directive @stream(label: String, initialCount: Int = 0, if: Boolean = true) on FIELD
@@ -758,8 +761,8 @@ type ForumConnection {
   edges: [ForumEdge!]!
   nodes: [Forum!]!
   pageInfo: PageInfo!
-  """Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly)."""
-  totalCount(estimate: Boolean = false): Int!
+  """Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly). With `exactBelow` too, the rows are counted exactly when the estimate is at most that many (an exact total for a small result, an estimate for a large one)."""
+  totalCount(estimate: Boolean = false, exactBelow: Int): Int!
   aggregates("""Only rows matching it are aggregated (the connection's own filter applies too).""" filter: ForumFilter): ForumAggregates
   """Aggregates of each group of the rows (before paging), ordered by its keys."""
   groupedAggregates(groupBy: [ForumGroupBy!]!, having: ForumHavingInput, """Time zone dates and times are truncated in (e.g. `Europe/Paris`); the session's by default.""" timeZone: String, """Width of `_BINNED` groups, e.g. `PT15M`.""" binWidth: Interval, """Where `_BINNED` groups start (2000-01-01 by default).""" binOrigin: Datetime, """Include the empty groups between the first and the last (one truncated or binned key).""" fillGaps: Boolean = false): [ForumAggregateGroup!]!
@@ -927,8 +930,8 @@ type MessageConnection {
   edges: [MessageEdge!]!
   nodes: [Message!]!
   pageInfo: PageInfo!
-  """Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly)."""
-  totalCount(estimate: Boolean = false): Int!
+  """Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly). With `exactBelow` too, the rows are counted exactly when the estimate is at most that many (an exact total for a small result, an estimate for a large one)."""
+  totalCount(estimate: Boolean = false, exactBelow: Int): Int!
   aggregates("""Only rows matching it are aggregated (the connection's own filter applies too).""" filter: MessageFilter): MessageAggregates
   """Aggregates of each group of the rows (before paging), ordered by its keys."""
   groupedAggregates(groupBy: [MessageGroupBy!]!, having: MessageHavingInput, """Time zone dates and times are truncated in (e.g. `Europe/Paris`); the session's by default.""" timeZone: String, """Width of `_BINNED` groups, e.g. `PT15M`.""" binWidth: Interval, """Where `_BINNED` groups start (2000-01-01 by default).""" binOrigin: Datetime, """Include the empty groups between the first and the last (one truncated or binned key).""" fillGaps: Boolean = false): [MessageAggregateGroup!]!
@@ -1046,8 +1049,8 @@ type UserConnection {
   edges: [UserEdge!]!
   nodes: [User!]!
   pageInfo: PageInfo!
-  """Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly)."""
-  totalCount(estimate: Boolean = false): Int!
+  """Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly). With `exactBelow` too, the rows are counted exactly when the estimate is at most that many (an exact total for a small result, an estimate for a large one)."""
+  totalCount(estimate: Boolean = false, exactBelow: Int): Int!
   aggregates("""Only rows matching it are aggregated (the connection's own filter applies too).""" filter: UserFilter): UserAggregates
   """Aggregates of each group of the rows (before paging), ordered by its keys."""
   groupedAggregates(groupBy: [UserGroupBy!]!, having: UserHavingInput, """Time zone dates and times are truncated in (e.g. `Europe/Paris`); the session's by default.""" timeZone: String, """Width of `_BINNED` groups, e.g. `PT15M`.""" binWidth: Interval, """Where `_BINNED` groups start (2000-01-01 by default).""" binOrigin: Datetime, """Include the empty groups between the first and the last (one truncated or binned key).""" fillGaps: Boolean = false): [UserAggregateGroup!]!
@@ -1535,19 +1538,19 @@ type Mutation {
   createForums(inputs: [CreateForumInput!]!, onConflict: ForumOnConflict): CreateForumsPayload!
   updateForum(id: ID!, input: UpdateForumInput!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): UpdateForumPayload!
   """Update every `Forum` matching `where`."""
-  updateForums(where: ForumFilter!, set: UpdateForumInput!): UpdateForumsPayload!
+  updateForums(where: ForumFilter!, set: UpdateForumInput!, """Allow a `where` without conditions, which updates every row (see `limits.require_filter`).""" unfiltered: Boolean = false): UpdateForumsPayload!
   deleteForum(id: ID!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): DeleteForumPayload!
   """Delete every `Forum` matching `where`."""
-  deleteForums(where: ForumFilter!): DeleteForumsPayload!
+  deleteForums(where: ForumFilter!, """Allow a `where` without conditions, which deletes every row (see `limits.require_filter`).""" unfiltered: Boolean = false): DeleteForumsPayload!
   createMessage(input: CreateMessageInput!, onConflict: MessageOnConflict): CreateMessagePayload!
   """Insert several `Message` rows; the payload lists them in input order."""
   createMessages(inputs: [CreateMessageInput!]!, onConflict: MessageOnConflict): CreateMessagesPayload!
   updateMessage(id: ID!, input: UpdateMessageInput!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): UpdateMessagePayload!
   """Update every `Message` matching `where`."""
-  updateMessages(where: MessageFilter!, set: UpdateMessageInput!): UpdateMessagesPayload!
+  updateMessages(where: MessageFilter!, set: UpdateMessageInput!, """Allow a `where` without conditions, which updates every row (see `limits.require_filter`).""" unfiltered: Boolean = false): UpdateMessagesPayload!
   deleteMessage(id: ID!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): DeleteMessagePayload!
   """Delete every `Message` matching `where`."""
-  deleteMessages(where: MessageFilter!): DeleteMessagesPayload!
+  deleteMessages(where: MessageFilter!, """Allow a `where` without conditions, which deletes every row (see `limits.require_filter`).""" unfiltered: Boolean = false): DeleteMessagesPayload!
   createUser(input: CreateUserInput!, onConflict: UserOnConflict): CreateUserPayload!
   """Insert several `User` rows; the payload lists them in input order."""
   createUsers(inputs: [CreateUserInput!]!, onConflict: UserOnConflict): CreateUsersPayload!
@@ -1555,10 +1558,10 @@ type Mutation {
   """Update the `User` with the given `username`."""
   updateUserByUsername(username: String!, input: UpdateUserInput!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): UpdateUserPayload!
   """Update every `User` matching `where`."""
-  updateUsers(where: UserFilter!, set: UpdateUserInput!): UpdateUsersPayload!
+  updateUsers(where: UserFilter!, set: UpdateUserInput!, """Allow a `where` without conditions, which updates every row (see `limits.require_filter`).""" unfiltered: Boolean = false): UpdateUsersPayload!
   deleteUser(id: ID!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): DeleteUserPayload!
   """Delete the `User` with the given `username`."""
   deleteUserByUsername(username: String!, """Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).""" expectedVersion: String): DeleteUserPayload!
   """Delete every `User` matching `where`."""
-  deleteUsers(where: UserFilter!): DeleteUsersPayload!
+  deleteUsers(where: UserFilter!, """Allow a `where` without conditions, which deletes every row (see `limits.require_filter`).""" unfiltered: Boolean = false): DeleteUsersPayload!
 }

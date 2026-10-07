@@ -10,9 +10,9 @@ use super::rest::{
     rest_aggregate_get_handler, rest_aggregate_post_handler, rest_bulk_upsert_handler,
     rest_collection_delete_handler, rest_collection_update_handler, rest_column_get_handler,
     rest_column_put_handler, rest_create_handler, rest_delete_handler, rest_global_search_handler,
-    rest_item_handler, rest_list_handler, rest_rpc_handler, rest_search_handler,
+    rest_item_handler, rest_list_handler, rest_node_handler, rest_rpc_handler, rest_search_handler,
     rest_search_method_handler, rest_update_handler, rest_upsert_handler, SchemaScope,
-    GLOBAL_SEARCH_RESOURCE, REST_PREFIX, RPC_RESOURCE,
+    GLOBAL_SEARCH_RESOURCE, NODE_RESOURCE, REST_PREFIX, RPC_RESOURCE,
 };
 use super::ServerState;
 use crate::config::models::{CorsConfig, HeaderPreset, HeadersConfig};
@@ -110,6 +110,10 @@ fn routes_under(prefix: &str, root: bool) -> Router<Arc<ServerState>> {
             .route(
                 prefix,
                 get(rest_handler).options(allowed("GET, HEAD, OPTIONS", &[])),
+            )
+            .route(
+                &format!("{prefix}/{NODE_RESOURCE}/{{id}}"),
+                get(rest_node_handler).options(allowed("GET, HEAD, OPTIONS", &[])),
             )
             .route(
                 &format!("{prefix}/{GLOBAL_SEARCH_RESOURCE}"),

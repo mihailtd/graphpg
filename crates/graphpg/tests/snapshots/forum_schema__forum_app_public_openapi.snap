@@ -40,6 +40,86 @@ expression: openapi
         }
       }
     },
+    "/rest/node/{id}": {
+      "get": {
+        "summary": "Row by global ID",
+        "description": "The row a Relay global ID (the `id` GraphQL gives every row) names: a redirect to the row's own URL, query string kept",
+        "operationId": "get_node",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "A Relay global ID: base64 of `<Type>:<key>`",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "See Other: the row's URL",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found: no table has that type, or the ID is malformed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/rest/forums": {
       "get": {
         "summary": "List forums",
@@ -61,12 +141,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount|natural|primary_key|messagesCount|uniqueAuthorCount)(:(asc|desc))?$"
               }
             }
           },
@@ -311,6 +391,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -335,6 +424,60 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
               }
             }
           },
@@ -392,6 +535,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -439,6 +588,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -477,7 +632,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -641,7 +796,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -671,7 +826,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -701,7 +856,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -818,7 +973,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -848,7 +1003,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -878,7 +1033,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -980,7 +1135,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -1010,7 +1165,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -1183,7 +1338,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -1213,7 +1368,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -1233,7 +1388,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -1270,12 +1425,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount|natural|primary_key|messagesCount|uniqueAuthorCount)(:(asc|desc))?$"
               }
             }
           },
@@ -1520,6 +1675,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -1544,6 +1708,60 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
               }
             }
           },
@@ -1635,7 +1853,7 @@ expression: openapi
             "description": "Forbidden: the operation is not permitted on this resource"
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`"
           },
           "416": {
             "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`"
@@ -1788,6 +2006,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -1826,7 +2050,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2044,6 +2268,15 @@ expression: openapi
                   "createdAt"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -2302,7 +2535,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -2342,7 +2575,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -2362,7 +2595,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -2464,7 +2697,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -2504,7 +2737,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -2524,7 +2757,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -2609,7 +2842,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -2649,7 +2882,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -2669,7 +2902,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/forumsProblem"
                 }
               }
             }
@@ -2881,6 +3114,15 @@ expression: openapi
                   "createdAt"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -3209,6 +3451,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/forumsAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -3297,6 +3544,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/forumsAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -3377,12 +3629,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt|natural|primary_key|author\\.id|author\\.username|author\\.gravatarUrl|author\\.createdAt|user\\.id|user\\.username|user\\.gravatarUrl|user\\.createdAt|forum\\.id|forum\\.name|forum\\.archivedAt)(:(asc|desc))?$"
               }
             }
           },
@@ -3538,6 +3790,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -3562,6 +3823,72 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
               }
             }
           },
@@ -3619,6 +3946,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -3666,6 +3999,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -3704,7 +4043,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3887,7 +4226,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -3917,7 +4256,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -3947,7 +4286,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -4064,7 +4403,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -4094,7 +4433,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -4124,7 +4463,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -4226,7 +4565,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -4256,7 +4595,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -4433,7 +4772,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -4463,7 +4802,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -4483,7 +4822,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -4520,12 +4859,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt|natural|primary_key|author\\.id|author\\.username|author\\.gravatarUrl|author\\.createdAt|user\\.id|user\\.username|user\\.gravatarUrl|user\\.createdAt|forum\\.id|forum\\.name|forum\\.archivedAt)(:(asc|desc))?$"
               }
             }
           },
@@ -4681,6 +5020,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -4705,6 +5053,72 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
               }
             }
           },
@@ -4796,7 +5210,7 @@ expression: openapi
             "description": "Forbidden: the operation is not permitted on this resource"
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`"
           },
           "416": {
             "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`"
@@ -4949,6 +5363,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -4987,7 +5407,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5116,6 +5536,15 @@ expression: openapi
                   "uniqueAuthorCount"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -5396,7 +5825,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -5436,7 +5865,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -5456,7 +5885,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -5558,7 +5987,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -5598,7 +6027,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -5618,7 +6047,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -5703,7 +6132,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -5743,7 +6172,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -5763,7 +6192,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/messagesProblem"
                 }
               }
             }
@@ -5886,6 +6315,15 @@ expression: openapi
                   "uniqueAuthorCount"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -6238,6 +6676,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/messagesAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -6326,6 +6769,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/messagesAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -6406,12 +6854,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt|natural|primary_key|messagesCount)(:(asc|desc))?$"
               }
             }
           },
@@ -6591,6 +7039,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -6615,6 +7072,61 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned"
+                ]
               }
             }
           },
@@ -6672,6 +7184,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -6719,6 +7237,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -6757,7 +7281,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6925,7 +7449,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -6955,7 +7479,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -6985,7 +7509,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -7102,7 +7626,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -7132,7 +7656,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -7162,7 +7686,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -7264,7 +7788,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -7294,7 +7818,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -7469,7 +7993,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -7499,7 +8023,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -7519,7 +8043,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -7556,12 +8080,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt|natural|primary_key|messagesCount)(:(asc|desc))?$"
               }
             }
           },
@@ -7741,6 +8265,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -7765,6 +8298,61 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned"
+                ]
               }
             }
           },
@@ -7856,7 +8444,7 @@ expression: openapi
             "description": "Forbidden: the operation is not permitted on this resource"
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`"
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`"
           },
           "416": {
             "description": "Range Not Satisfiable: past the end of the list, with its size in `Content-Range: items */N`"
@@ -8009,6 +8597,12 @@ expression: openapi
                   }
                 }
               },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "One row per line"
+                }
+              },
               "text/csv": {
                 "schema": {
                   "type": "string"
@@ -8047,7 +8641,7 @@ expression: openapi
             }
           },
           "406": {
-            "description": "Not Acceptable: the list is `application/json` or `text/csv`",
+            "description": "Not Acceptable: the list is `application/json`, `application/x-ndjson` or `text/csv`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -8083,6 +8677,17 @@ expression: openapi
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "username"
+              ]
             }
           },
           {
@@ -8203,6 +8808,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "If-None-Match",
             "in": "header",
             "description": "Row version: returns 304 without a body when it matches",
@@ -8319,6 +8933,17 @@ expression: openapi
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "username"
+              ]
             }
           },
           {
@@ -8462,7 +9087,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -8502,7 +9127,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -8522,7 +9147,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -8624,7 +9249,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -8664,7 +9289,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -8684,7 +9309,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -8714,6 +9339,17 @@ expression: openapi
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "username"
+              ]
             }
           },
           {
@@ -8769,7 +9405,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -8809,7 +9445,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -8829,7 +9465,7 @@ expression: openapi
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/usersProblem"
                 }
               }
             }
@@ -8859,6 +9495,17 @@ expression: openapi
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "description": "Address the row by this unique key instead of the primary key: the path then holds the key's values, comma-separated in this order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "username"
+              ]
             }
           },
           {
@@ -8976,6 +9623,15 @@ expression: openapi
                   "uniqueAuthorCount"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -9308,6 +9964,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/usersAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -9396,6 +10057,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/usersAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -9476,12 +10142,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt|natural|primary_key|author\\.id|author\\.username|author\\.gravatarUrl|author\\.createdAt|user\\.id|user\\.username|user\\.gravatarUrl|user\\.createdAt|forum\\.id|forum\\.name|forum\\.archivedAt)(:(asc|desc))?$"
               }
             }
           },
@@ -9637,6 +10303,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -9661,6 +10336,72 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
               }
             }
           },
@@ -10623,6 +11364,15 @@ expression: openapi
                 ]
               }
             }
+          },
+          {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -10821,12 +11571,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt|natural|primary_key|messagesCount)(:(asc|desc))?$"
               }
             }
           },
@@ -11006,6 +11756,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -11030,6 +11789,61 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned"
+                ]
               }
             }
           },
@@ -11559,6 +12373,233 @@ expression: openapi
           }
         }
       }
+    },
+    "/export": {
+      "post": {
+        "summary": "Export a connection",
+        "description": "Streams every row a GraphQL query's single connection field (its `nodes`) selects, read from a server-side portal in batches, so neither side holds the whole result: for tables of any size, where a list is bounded by `limits.page_size`.",
+        "operationId": "export_rows",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "query"
+                ],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "A GraphQL query whose only root field is a connection"
+                  },
+                  "operationName": {
+                    "type": "string"
+                  },
+                  "variables": {
+                    "type": "object"
+                  },
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "ndjson",
+                      "csv"
+                    ],
+                    "default": "ndjson"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rows, one JSON object per line (or CSV)",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable: the database is unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/import/{type}": {
+      "post": {
+        "summary": "Import rows",
+        "description": "Inserts the rows of the body, one `Create<Type>Input` JSON object per line, checked like any write and streamed into a staging table, then inserted in one statement: in one transaction, so every row is inserted or none.",
+        "operationId": "import_rows",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "required": true,
+            "description": "The GraphQL type of the rows",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "Forum",
+                "Message",
+                "User"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-ndjson": {
+              "schema": {
+                "type": "string",
+                "description": "One row per line, each a `CreateInput` of the type",
+                "examples": [
+                  [
+                    {
+                      "$ref": "#/components/schemas/forumsCreateInput"
+                    },
+                    {
+                      "$ref": "#/components/schemas/messagesCreateInput"
+                    },
+                    {
+                      "$ref": "#/components/schemas/usersCreateInput"
+                    }
+                  ]
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Every row was inserted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "inserted": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -11621,13 +12662,38 @@ expression: openapi
             ],
             "format": "date-time"
           },
+          "featuredMessages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/messages"
+            },
+            "description": "The related `messages` rows; present when embedded with `include=featuredMessages`"
+          },
           "id": {
             "type": "string",
             "format": "uuid",
             "default": "uuid_generate_v1mc()"
           },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/messages"
+            },
+            "description": "The related `messages` rows; present when embedded with `include=messages`"
+          },
           "name": {
             "type": "string"
+          },
+          "randomUser": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/users"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The related `users` row; present when embedded with `include=randomUser`"
           }
         },
         "required": [
@@ -12120,6 +13186,54 @@ expression: openapi
         },
         "additionalProperties": false
       },
+      "forumsErrorCode": {
+        "description": "Why a write of `forums` rows can be rejected: the `code` of the 409 and 422 problems",
+        "type": "string",
+        "oneOf": [
+          {
+            "const": "ID_REQUIRED",
+            "description": "`id` is required (it cannot be null)."
+          },
+          {
+            "const": "NAME_REQUIRED",
+            "description": "`name` is required (it cannot be null)."
+          },
+          {
+            "const": "STALE_VERSION",
+            "description": "`expectedVersion` is not the row's `rowVersion`: the row changed since that version was read."
+          },
+          {
+            "const": "ID_TAKEN",
+            "description": "A row with this primary key (`id`) already exists."
+          },
+          {
+            "const": "REFERENCED_BY_MESSAGES",
+            "description": "`Message` rows still refer to it (`messages_forum_id_fkey`)."
+          }
+        ]
+      },
+      "forumsProblem": {
+        "description": "A problem of a write to `forums`; its `code` is one of `forumsErrorCode` (or one of the general ones)",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ProblemDetails"
+          },
+          {
+            "properties": {
+              "code": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/forumsErrorCode"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
       "forumsAggregateRequest": {
         "type": "object",
         "description": "Aggregate request for `forums`; every member is optional, unknown members are a 400",
@@ -12251,6 +13365,144 @@ expression: openapi
           "fillGaps": {
             "type": "boolean",
             "description": "Include the empty groups between the first and the last"
+          },
+          "sets": {
+            "type": "object",
+            "description": "Aggregates side by side, by name: each set has the members above (an ungrouped set its own `filter`, a grouped one `group` and `having`), and the answer is an object of the same names. With `sets` only `filter` (for all of them) goes beside it",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "filter": {
+                  "$ref": "#/components/schemas/forumsFilter"
+                },
+                "group": {
+                  "type": "array",
+                  "maxItems": 4,
+                  "description": "What to group by: a column, `column:unit` (minute, hour, day, week, month, quarter, year) or `column:binned`",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "name",
+                      "archivedAt",
+                      "archivedAt:minute",
+                      "archivedAt:hour",
+                      "archivedAt:day",
+                      "archivedAt:week",
+                      "archivedAt:month",
+                      "archivedAt:quarter",
+                      "archivedAt:year",
+                      "archivedAt:binned"
+                    ]
+                  }
+                },
+                "min": {
+                  "type": "array",
+                  "description": "Columns to take the `min` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "name",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "max": {
+                  "type": "array",
+                  "description": "Columns to take the `max` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "name",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "distinctCount": {
+                  "type": "array",
+                  "description": "Columns to take the `distinctCount` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "name",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "having": {
+                  "type": "object",
+                  "description": "Conditions the groups must meet, all of them: `having[count][gt]=5`, `having[sum][total][gte]=100`",
+                  "properties": {
+                    "count": {
+                      "type": "object",
+                      "properties": {
+                        "equalTo": {
+                          "type": "integer"
+                        },
+                        "notEqualTo": {
+                          "type": "integer"
+                        },
+                        "greaterThan": {
+                          "type": "integer"
+                        },
+                        "greaterThanOrEqualTo": {
+                          "type": "integer"
+                        },
+                        "lessThan": {
+                          "type": "integer"
+                        },
+                        "lessThanOrEqualTo": {
+                          "type": "integer"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "sum": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "avg": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "min": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "max": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "timeZone": {
+                  "type": "string",
+                  "description": "Time zone dates are truncated in, such as `Europe/Paris`"
+                },
+                "binWidth": {
+                  "type": "string",
+                  "description": "Width of `:binned` groups, an ISO 8601 duration such as `PT15M`"
+                },
+                "binOrigin": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Where `:binned` groups start"
+                },
+                "fillGaps": {
+                  "type": "boolean",
+                  "description": "Include the empty groups between the first and the last"
+                }
+              },
+              "additionalProperties": false
+            }
           }
         },
         "additionalProperties": false
@@ -12321,6 +13573,17 @@ expression: openapi
             ],
             "format": "date-time"
           },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/users"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The related `users` row; present when embedded with `include=author`"
+          },
           "authorId": {
             "type": "string",
             "format": "uuid"
@@ -12337,6 +13600,17 @@ expression: openapi
             "type": "boolean",
             "default": "false"
           },
+          "forum": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/forums"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The related `forums` row; present when embedded with `include=forum`"
+          },
           "forumId": {
             "type": "string",
             "format": "uuid"
@@ -12345,6 +13619,17 @@ expression: openapi
             "type": "string",
             "format": "uuid",
             "default": "uuid_generate_v1mc()"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/users"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The related `users` row; present when embedded with `include=user`"
           }
         },
         "required": [
@@ -13050,6 +14335,74 @@ expression: openapi
         },
         "additionalProperties": false
       },
+      "messagesErrorCode": {
+        "description": "Why a write of `messages` rows can be rejected: the `code` of the 409 and 422 problems",
+        "type": "string",
+        "oneOf": [
+          {
+            "const": "ID_REQUIRED",
+            "description": "`id` is required (it cannot be null)."
+          },
+          {
+            "const": "FORUM_ID_REQUIRED",
+            "description": "`forumId` is required (it cannot be null)."
+          },
+          {
+            "const": "AUTHOR_ID_REQUIRED",
+            "description": "`authorId` is required (it cannot be null)."
+          },
+          {
+            "const": "BODY_REQUIRED",
+            "description": "`body` is required (it cannot be null)."
+          },
+          {
+            "const": "FEATURED_REQUIRED",
+            "description": "`featured` is required (it cannot be null)."
+          },
+          {
+            "const": "CREATED_AT_REQUIRED",
+            "description": "`createdAt` is required (it cannot be null)."
+          },
+          {
+            "const": "STALE_VERSION",
+            "description": "`expectedVersion` is not the row's `rowVersion`: the row changed since that version was read."
+          },
+          {
+            "const": "ID_TAKEN",
+            "description": "A row with this primary key (`id`) already exists."
+          },
+          {
+            "const": "AUTHOR_NOT_FOUND",
+            "description": "`authorId` refers to a `User` that does not exist (`messages_author_id_fkey`)."
+          },
+          {
+            "const": "FORUM_NOT_FOUND",
+            "description": "`forumId` refers to a `Forum` that does not exist (`messages_forum_id_fkey`)."
+          }
+        ]
+      },
+      "messagesProblem": {
+        "description": "A problem of a write to `messages`; its `code` is one of `messagesErrorCode` (or one of the general ones)",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ProblemDetails"
+          },
+          {
+            "properties": {
+              "code": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/messagesErrorCode"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
       "messagesAggregateRequest": {
         "type": "object",
         "description": "Aggregate request for `messages`; every member is optional, unknown members are a 400",
@@ -13205,6 +14558,168 @@ expression: openapi
           "fillGaps": {
             "type": "boolean",
             "description": "Include the empty groups between the first and the last"
+          },
+          "sets": {
+            "type": "object",
+            "description": "Aggregates side by side, by name: each set has the members above (an ungrouped set its own `filter`, a grouped one `group` and `having`), and the answer is an object of the same names. With `sets` only `filter` (for all of them) goes beside it",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "filter": {
+                  "$ref": "#/components/schemas/messagesFilter"
+                },
+                "group": {
+                  "type": "array",
+                  "maxItems": 4,
+                  "description": "What to group by: a column, `column:unit` (minute, hour, day, week, month, quarter, year) or `column:binned`",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "forumId",
+                      "authorId",
+                      "body",
+                      "featured",
+                      "createdAt",
+                      "createdAt:minute",
+                      "createdAt:hour",
+                      "createdAt:day",
+                      "createdAt:week",
+                      "createdAt:month",
+                      "createdAt:quarter",
+                      "createdAt:year",
+                      "createdAt:binned",
+                      "archivedAt",
+                      "archivedAt:minute",
+                      "archivedAt:hour",
+                      "archivedAt:day",
+                      "archivedAt:week",
+                      "archivedAt:month",
+                      "archivedAt:quarter",
+                      "archivedAt:year",
+                      "archivedAt:binned"
+                    ]
+                  }
+                },
+                "min": {
+                  "type": "array",
+                  "description": "Columns to take the `min` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "forumId",
+                      "authorId",
+                      "body",
+                      "featured",
+                      "createdAt",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "max": {
+                  "type": "array",
+                  "description": "Columns to take the `max` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "forumId",
+                      "authorId",
+                      "body",
+                      "featured",
+                      "createdAt",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "distinctCount": {
+                  "type": "array",
+                  "description": "Columns to take the `distinctCount` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "forumId",
+                      "authorId",
+                      "body",
+                      "featured",
+                      "createdAt",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "having": {
+                  "type": "object",
+                  "description": "Conditions the groups must meet, all of them: `having[count][gt]=5`, `having[sum][total][gte]=100`",
+                  "properties": {
+                    "count": {
+                      "type": "object",
+                      "properties": {
+                        "equalTo": {
+                          "type": "integer"
+                        },
+                        "notEqualTo": {
+                          "type": "integer"
+                        },
+                        "greaterThan": {
+                          "type": "integer"
+                        },
+                        "greaterThanOrEqualTo": {
+                          "type": "integer"
+                        },
+                        "lessThan": {
+                          "type": "integer"
+                        },
+                        "lessThanOrEqualTo": {
+                          "type": "integer"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "sum": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "avg": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "min": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "max": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "timeZone": {
+                  "type": "string",
+                  "description": "Time zone dates are truncated in, such as `Europe/Paris`"
+                },
+                "binWidth": {
+                  "type": "string",
+                  "description": "Width of `:binned` groups, an ISO 8601 duration such as `PT15M`"
+                },
+                "binOrigin": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Where `:binned` groups start"
+                },
+                "fillGaps": {
+                  "type": "boolean",
+                  "description": "Include the empty groups between the first and the last"
+                }
+              },
+              "additionalProperties": false
+            }
           }
         },
         "additionalProperties": false
@@ -13283,6 +14798,24 @@ expression: openapi
             "type": "string",
             "format": "uuid",
             "default": "uuid_generate_v1mc()"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/messages"
+            },
+            "description": "The related `messages` rows; present when embedded with `include=messages`"
+          },
+          "mostRecentForum": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/forums"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The related `forums` row; present when embedded with `include=mostRecentForum`"
           },
           "username": {
             "type": "string"
@@ -13899,6 +15432,62 @@ expression: openapi
         },
         "additionalProperties": false
       },
+      "usersErrorCode": {
+        "description": "Why a write of `users` rows can be rejected: the `code` of the 409 and 422 problems",
+        "type": "string",
+        "oneOf": [
+          {
+            "const": "ID_REQUIRED",
+            "description": "`id` is required (it cannot be null)."
+          },
+          {
+            "const": "USERNAME_REQUIRED",
+            "description": "`username` is required (it cannot be null)."
+          },
+          {
+            "const": "CREATED_AT_REQUIRED",
+            "description": "`createdAt` is required (it cannot be null)."
+          },
+          {
+            "const": "STALE_VERSION",
+            "description": "`expectedVersion` is not the row's `rowVersion`: the row changed since that version was read."
+          },
+          {
+            "const": "ID_TAKEN",
+            "description": "A row with this primary key (`id`) already exists."
+          },
+          {
+            "const": "USERNAME_TAKEN",
+            "description": "Another row already has this `username` (unique `users_username_key`)."
+          },
+          {
+            "const": "REFERENCED_BY_MESSAGES",
+            "description": "`Message` rows still refer to it (`messages_author_id_fkey`)."
+          }
+        ]
+      },
+      "usersProblem": {
+        "description": "A problem of a write to `users`; its `code` is one of `usersErrorCode` (or one of the general ones)",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ProblemDetails"
+          },
+          {
+            "properties": {
+              "code": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/usersErrorCode"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
       "usersAggregateRequest": {
         "type": "object",
         "description": "Aggregate request for `users`; every member is optional, unknown members are a 400",
@@ -14034,6 +15623,148 @@ expression: openapi
           "fillGaps": {
             "type": "boolean",
             "description": "Include the empty groups between the first and the last"
+          },
+          "sets": {
+            "type": "object",
+            "description": "Aggregates side by side, by name: each set has the members above (an ungrouped set its own `filter`, a grouped one `group` and `having`), and the answer is an object of the same names. With `sets` only `filter` (for all of them) goes beside it",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "filter": {
+                  "$ref": "#/components/schemas/usersFilter"
+                },
+                "group": {
+                  "type": "array",
+                  "maxItems": 4,
+                  "description": "What to group by: a column, `column:unit` (minute, hour, day, week, month, quarter, year) or `column:binned`",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "username",
+                      "gravatarUrl",
+                      "createdAt",
+                      "createdAt:minute",
+                      "createdAt:hour",
+                      "createdAt:day",
+                      "createdAt:week",
+                      "createdAt:month",
+                      "createdAt:quarter",
+                      "createdAt:year",
+                      "createdAt:binned"
+                    ]
+                  }
+                },
+                "min": {
+                  "type": "array",
+                  "description": "Columns to take the `min` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "username",
+                      "gravatarUrl",
+                      "createdAt"
+                    ]
+                  }
+                },
+                "max": {
+                  "type": "array",
+                  "description": "Columns to take the `max` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "username",
+                      "gravatarUrl",
+                      "createdAt"
+                    ]
+                  }
+                },
+                "distinctCount": {
+                  "type": "array",
+                  "description": "Columns to take the `distinctCount` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "username",
+                      "gravatarUrl",
+                      "createdAt"
+                    ]
+                  }
+                },
+                "having": {
+                  "type": "object",
+                  "description": "Conditions the groups must meet, all of them: `having[count][gt]=5`, `having[sum][total][gte]=100`",
+                  "properties": {
+                    "count": {
+                      "type": "object",
+                      "properties": {
+                        "equalTo": {
+                          "type": "integer"
+                        },
+                        "notEqualTo": {
+                          "type": "integer"
+                        },
+                        "greaterThan": {
+                          "type": "integer"
+                        },
+                        "greaterThanOrEqualTo": {
+                          "type": "integer"
+                        },
+                        "lessThan": {
+                          "type": "integer"
+                        },
+                        "lessThanOrEqualTo": {
+                          "type": "integer"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "sum": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "avg": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "min": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "max": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "timeZone": {
+                  "type": "string",
+                  "description": "Time zone dates are truncated in, such as `Europe/Paris`"
+                },
+                "binWidth": {
+                  "type": "string",
+                  "description": "Width of `:binned` groups, an ISO 8601 duration such as `PT15M`"
+                },
+                "binOrigin": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Where `:binned` groups start"
+                },
+                "fillGaps": {
+                  "type": "boolean",
+                  "description": "Include the empty groups between the first and the last"
+                }
+              },
+              "additionalProperties": false
+            }
           }
         },
         "additionalProperties": false

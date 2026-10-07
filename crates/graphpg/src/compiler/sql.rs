@@ -2779,6 +2779,7 @@ impl SqlCompiler {
             && selections.aggregates.is_empty()
             && selections.grouped.is_empty()
             && !totals.is_empty()
+            && selections.exact_below.is_empty()
             && totals.iter().all(|(_, estimate)| *estimate);
 
         // 1-2. Join condition with the parent, conditions and filter
@@ -2795,6 +2796,8 @@ impl SqlCompiler {
         };
         let unconditioned =
             where_conditions.is_empty() && filter_expr.is_none() && source.is_none();
+        // The conditions of the rows to count, before the cursor's join them
+        let count_where = where_clauses.clone();
 
         // 3. Keyset order and cursor conditions (after / before). Plans without a sort
         // order by the table's key.
@@ -3065,6 +3068,27 @@ impl SqlCompiler {
                     })
                 });
                 format!("${param}::text::int8")
+            };
+            // `exactBelow`: count the rows when the estimate says there are few
+            let estimate = match selections.exact_below.iter().find(|(k, _)| k == key) {
+                Some((_, limit)) => {
+                    let exact = if unconditioned {
+                        format!("SELECT count(*) FROM {target}")
+                    } else {
+                        let from = match source {
+                            Some(source) => Self::function_from(source, table_alias, params),
+                            None => Self::from_item(schema, table, table_alias, None),
+                        };
+                        format!(
+                            "SELECT count(*) FROM {from}{}",
+                            Self::where_sql(&count_where)
+                        )
+                    };
+                    format!(
+                        "CASE WHEN ({estimate}) <= {limit} THEN ({exact}) ELSE ({estimate}) END"
+                    )
+                }
+                None => estimate,
             };
             outer_pairs.push(Self::json_pair(key, &format!("({estimate})::int")));
         }

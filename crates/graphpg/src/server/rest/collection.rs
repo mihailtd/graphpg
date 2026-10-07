@@ -241,7 +241,12 @@ pub async fn rest_collection_update_handler(
         )?;
         ctx.validate(Root::Mutation, &m.name, "where", &filter, "filter")?;
         ctx.validate(Root::Mutation, &m.name, "set", &set, "body")?;
-        let args = HashMap::from([("where".to_string(), filter), ("set".to_string(), set)]);
+        // The request has its own guard (`FILTER_REQUIRED`): the planner's is for GraphQL
+        let args = HashMap::from([
+            ("where".to_string(), filter),
+            ("set".to_string(), set),
+            ("unfiltered".to_string(), serde_json::Value::Bool(true)),
+        ]);
         let (rows, count) = run_many(&ctx, table, &m, args, "PATCH").await?;
         Ok(rows_response(&ctx, rows, count))
     })
@@ -268,7 +273,10 @@ pub async fn rest_collection_delete_handler(
             "Deleting by filter",
         )?;
         ctx.validate(Root::Mutation, &m.name, "where", &filter, "filter")?;
-        let args = HashMap::from([("where".to_string(), filter)]);
+        let args = HashMap::from([
+            ("where".to_string(), filter),
+            ("unfiltered".to_string(), serde_json::Value::Bool(true)),
+        ]);
         let (rows, count) = run_many(&ctx, table, &m, args, "DELETE").await?;
         Ok(rows_response(&ctx, rows, count))
     })
@@ -445,16 +453,16 @@ pub async fn rest_bulk_upsert_handler(
 pub(super) async fn json_patch_row(
     ctx: &Ctx,
     table: &TableMetadata,
-    key: &str,
+    address: &RowAddress,
     body: &[u8],
     if_match: Option<String>,
 ) -> RestResult {
     ctx.allow(table, Operation::Update)?;
-    let parsed_key = parse_primary_key(key, table).map_err(ProblemDetails::bad_request)?;
     let patch = parse_json_body(body)?;
 
-    let request = RequestField::new(&table.single_field)
-        .with_arguments(key_args(table, &parsed_key))
+    let root = address.read_root(table);
+    let request = RequestField::new(&root)
+        .with_arguments(address.args.clone())
         .with_children(column_fields(&ctx.catalog, table));
     let data = ctx
         .execute(
@@ -464,12 +472,12 @@ pub(super) async fn json_patch_row(
             false,
         )
         .await?;
-    let current = ResponseShaper::unwrap_single(&data, &table.single_field)
-        .map_err(|e| shaping_error(e, ctx.is_prod))?;
+    let current =
+        ResponseShaper::unwrap_single(&data, &root).map_err(|e| shaping_error(e, ctx.is_prod))?;
     let Some(row) = current.as_object() else {
         return Err(ProblemDetails::not_found(format!(
-            "No `{}` row found with key `{key}`",
-            table.name
+            "No `{}` row found with key `{}`",
+            table.name, address.label
         )));
     };
 
@@ -500,5 +508,5 @@ pub(super) async fn json_patch_row(
     }
     let changes =
         serde_json::to_vec(&changes).map_err(|e| ProblemDetails::bad_request(e.to_string()))?;
-    update_row(ctx, table, key, &changes, if_match, "PATCH").await
+    update_row(ctx, table, address, &changes, if_match, "PATCH").await
 }

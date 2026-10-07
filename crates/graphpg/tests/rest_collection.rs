@@ -36,6 +36,10 @@ impl Reply {
 }
 
 async fn env(bulk_rows: Option<usize>) -> Env {
+    env_with(bulk_rows, false).await
+}
+
+async fn env_with(bulk_rows: Option<usize>, require_filter: bool) -> Env {
     let guard = LOCK.lock().await;
     let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
         .await
@@ -78,6 +82,7 @@ async fn env(bulk_rows: Option<usize>) -> Env {
     if bulk_rows.is_some() {
         state.limits.bulk_rows = bulk_rows;
     }
+    state.limits.require_filter = require_filter;
     Env {
         app: create_router(Arc::new(state)),
         client,
@@ -530,4 +535,55 @@ async fn graphql_writes_by_filter_have_the_same_bound() {
         "{}",
         r.body
     );
+}
+
+#[tokio::test]
+async fn graphql_can_require_a_condition_for_writes_by_where() {
+    let env = env_with(None, true).await;
+    let graphql = |query: &str| {
+        let query = query.to_string();
+        let env = &env;
+        async move {
+            env.json("POST", "/graphql", Some(json!({ "query": query })))
+                .await
+        }
+    };
+    for query in [
+        "mutation { deleteItems(where: {}) { affectedCount } }",
+        "mutation { updateItems(where: {}, set: { qty: 0 }) { affectedCount } }",
+    ] {
+        let r = graphql(query).await;
+        assert!(
+            r.body["errors"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("unfiltered"),
+            "{}",
+            r.body
+        );
+    }
+    assert_eq!(env.rows().await.len(), 4);
+    // With a condition, or when meant
+    let r = graphql("mutation { updateItems(where: { sku: { startsWith: \"T-\" } }, set: { qty: 7 }) { affectedCount } }").await;
+    assert_eq!(
+        r.body["data"]["updateItems"]["affectedCount"], 3,
+        "{}",
+        r.body
+    );
+    let r = graphql(
+        "mutation { updateItems(where: {}, set: { qty: 8 }, unfiltered: true) { affectedCount } }",
+    )
+    .await;
+    assert_eq!(
+        r.body["data"]["updateItems"]["affectedCount"], 4,
+        "{}",
+        r.body
+    );
+    // REST has its own guard, and says so with `unfiltered=true`
+    let r = env.json("DELETE", "/rest/items", None).await;
+    assert_eq!(r.body["code"], "FILTER_REQUIRED");
+    let r = env
+        .json("DELETE", "/rest/items?unfiltered=true", None)
+        .await;
+    assert_eq!((r.status, r.count()), (StatusCode::OK, "4"));
 }

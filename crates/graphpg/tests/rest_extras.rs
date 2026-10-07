@@ -1662,3 +1662,257 @@ async fn test_custom_sql_problem_responses() {
     assert_eq!(gql_body["errors"][0]["extensions"]["code"], "CHECK_FAILED");
     assert_eq!(gql_body["errors"][0]["message"], "Check Constraint Failed");
 }
+
+#[tokio::test]
+async fn full_text_search_can_mark_the_words_that_matched() {
+    let app = app().await;
+    let plain = post(
+        &app,
+        "/rest/articles/search/full-text",
+        json!({ "query": "ranking" }),
+    )
+    .await;
+    assert!(plain.ok()["hits"][0].get("highlight").is_none());
+
+    let marked = post(
+        &app,
+        "/rest/articles/search/full-text",
+        json!({ "query": "ranking", "highlight": true }),
+    )
+    .await;
+    assert_eq!(marked.status, StatusCode::OK, "{}", marked.body);
+    let highlight = marked.ok()["hits"][0]["highlight"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(highlight.contains("<b>ranking</b>"), "{highlight}");
+
+    let custom = post(
+        &app,
+        "/rest/articles/search/full-text",
+        json!({ "query": "ranking", "highlight": { "startSel": "[", "stopSel": "]" } }),
+    )
+    .await;
+    assert!(custom.ok()["hits"][0]["highlight"]
+        .as_str()
+        .unwrap()
+        .contains("[ranking]"));
+
+    // Only full-text searches mark words; the options are checked
+    for (uri, body) in [
+        (
+            "/rest/articles/search/fuzzy",
+            json!({ "query": "x", "highlight": true }),
+        ),
+        (
+            "/rest/articles/search/full-text",
+            json!({ "query": "x", "highlight": "yes" }),
+        ),
+        (
+            "/rest/articles/search/full-text",
+            json!({ "query": "x", "highlight": { "nope": 1 } }),
+        ),
+    ] {
+        let r = post(&app, uri, body).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{uri}: {}", r.body);
+    }
+}
+
+#[tokio::test]
+async fn a_json_column_can_be_read_through_a_path() {
+    let app = app().await;
+    let whole = get(&app, "/rest/typed/1?fields=id,doc").await;
+    assert_eq!(whole.ok()["doc"], json!({ "a": { "b": [1, 2] } }));
+    let part = get(&app, "/rest/typed/1?fields=id,doc&path[doc]=$.a.b").await;
+    assert_eq!(part.status, StatusCode::OK, "{}", part.body);
+    assert_eq!(part.ok()["doc"], json!([1, 2]));
+    let list = get(&app, "/rest/typed?fields=id,doc&path[doc]=$.a.b&order=id").await;
+    assert_eq!(list.ok()[0]["doc"], json!([1, 2]));
+    assert_eq!(list.ok()[1]["doc"], Value::Null);
+    for uri in [
+        "/rest/typed/1?path[id]=$.a",
+        "/rest/typed/1?path[nope]=$.a",
+        "/rest/typed/1?path[doc]=a.b",
+        "/rest/typed/1?path[doc][x]=$.a",
+    ] {
+        assert_eq!(
+            get(&app, uri).await.status,
+            StatusCode::BAD_REQUEST,
+            "{uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn rows_can_carry_their_cursor_and_window_values() {
+    let app = app().await;
+    let r = get(
+        &app,
+        "/rest/orders?fields=id,customer&order=id&window=rowNumber,rank&cursors=true",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let rows = r.ok().as_array().unwrap();
+    assert_eq!(rows.len(), 6);
+    assert_eq!(rows[0]["_window"]["rowNumber"], 1);
+    assert_eq!(rows[5]["_window"]["rowNumber"], 6);
+    assert_eq!(rows[2]["_window"]["rank"], 3);
+    let cursor = rows[1]["_cursor"].as_str().unwrap().to_string();
+    assert!(!cursor.is_empty());
+
+    // The cursor of a row is a page boundary: `after` it, the rows that follow
+    let next = get(
+        &app,
+        &format!("/rest/orders?fields=id&order=id&first=2&after={cursor}"),
+    )
+    .await;
+    assert_eq!(ids(&next), [3, 4]);
+
+    // Within groups, and running sums (a ledger's balance)
+    let r = get(
+        &app,
+        "/rest/orders?fields=id,customer&order=id&window=rowNumber&partition=customer&running=total",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let rows = r.ok().as_array().unwrap();
+    let numbers: Vec<i64> = rows
+        .iter()
+        .map(|r| r["_window"]["rowNumber"].as_i64().unwrap())
+        .collect();
+    assert_eq!(numbers, [1, 2, 1, 2, 1, 2]);
+    assert_eq!(number(&rows[1]["_window"]["runningSum"]["total"]), 150.5);
+    assert_eq!(number(&rows[5]["_window"]["runningSum"]["total"]), 210.0);
+
+    // Rows have neither unless asked
+    let plain = get(&app, "/rest/orders?fields=id&order=id").await;
+    assert!(plain.ok()[0].get("_window").is_none() && plain.ok()[0].get("_cursor").is_none());
+
+    for uri in [
+        "/rest/orders?window=median",
+        "/rest/orders?running=customer",
+        "/rest/orders?partition=customer",
+        "/rest/orders?window=rank&partition=nope",
+        "/rest/orders?cursors=sometimes",
+        "/rest/orders/1?window=rank",
+    ] {
+        assert_eq!(
+            get(&app, uri).await.status,
+            StatusCode::BAD_REQUEST,
+            "{uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn aggregates_can_be_side_by_side_with_filters_of_their_own() {
+    let app = app().await;
+    let r = post(
+        &app,
+        "/rest/orders/aggregate",
+        json!({
+            "filter": { "id": { "lessThan": 100 } },
+            "sets": {
+                "paid": { "filter": { "status": { "equalTo": "PAID" } }, "sum": ["total"], "max": ["createdAt"] },
+                "everything": { "sum": ["total"] },
+                "byCustomer": { "group": ["customer"], "sum": ["total"], "having": { "count": { "greaterThan": 1 } } }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let out = r.ok();
+    assert_eq!(number(&out["paid"]["sum"]["total"]), 425.75);
+    assert_eq!(number(&out["everything"]["sum"]["total"]), 455.75);
+    let groups = out["byCustomer"].as_array().unwrap();
+    assert_eq!(groups.len(), 3);
+    assert_eq!(groups[0]["keys"], json!({ "customer": "ada" }));
+    assert_eq!(number(&groups[0]["sum"]["total"]), 150.5);
+
+    for body in [
+        // members belong in a set
+        json!({ "sum": ["total"], "sets": { "a": { "sum": ["total"] } } }),
+        json!({ "sets": {} }),
+        json!({ "sets": { "a": {} } }),
+        json!({ "sets": { "1bad name": { "sum": ["total"] } } }),
+        json!({ "sets": { "a": { "sets": { "b": { "sum": ["total"] } }, "sum": ["total"] } } }),
+        json!({ "sets": { "a": { "group": ["customer"], "filter": {}, "sum": ["total"] } } }),
+        json!({ "sets": { "a": { "having": { "count": { "greaterThan": 1 } }, "sum": ["total"] } } }),
+        json!({ "sets": { "a": { "sum": ["customer"] } } }),
+    ] {
+        let r = post(&app, "/rest/orders/aggregate", body.clone()).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{body}: {}", r.body);
+    }
+}
+
+#[tokio::test]
+async fn graphql_states_the_constraints_the_document_states() {
+    common::ensure_rest_extras_fixture().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema("rest_extras")
+        .await
+        .unwrap();
+    let sdl = SchemaBuilder::generate_sdl(&catalog);
+    // The directive, and on the type and on both inputs, the same keywords as JSON Schema
+    assert!(sdl.contains("directive @constraint("), "no directive");
+    for field in [
+        "score: Int @constraint(minimum: 0, maximum: 100)",
+        "step: Int @constraint(multipleOf: 5)",
+        "rating: Float @constraint(exclusiveMinimum: 0, exclusiveMaximum: 5)",
+        "code: String @constraint(pattern: \"^[A-Z]{3}$\")",
+        "title: String @constraint(minLength: 3, maxLength: 20)",
+        "tags: [String] @constraint(maxItems: 5)",
+    ] {
+        let count = sdl.matches(field).count();
+        assert!(count >= 3, "{field}: {count} times (type and two inputs)");
+    }
+    // A check that is not a simple bound says nothing
+    assert!(sdl.contains("other: Int\n"));
+    // The schema is valid with them
+    SchemaBuilder::build(&catalog).unwrap();
+}
+
+#[tokio::test]
+async fn an_estimated_total_can_be_exact_when_the_estimate_is_small() {
+    let app = app().await;
+    let count = |args: &'static str| {
+        let app = app.clone();
+        async move {
+            let query = format!(
+                "{{ ordersConnection(filter: {{ status: {{ equalTo: PAID }}, total: {{ greaterThan: 60 }} }}) {{ totalCount{args} }} }}"
+            );
+            let r = post(&app, "/graphql", json!({ "query": query })).await;
+            assert!(r.body.get("errors").is_none(), "{}", r.body);
+            r.body["data"]["ordersConnection"]["totalCount"]
+                .as_i64()
+                .unwrap()
+        }
+    };
+    // Few rows: the count is exact; the estimate can be off, and may be anything
+    assert_eq!(count("(estimate: true, exactBelow: 1000)").await, 3);
+    assert_eq!(count("").await, 3);
+    assert!((0..=6).contains(&count("(estimate: true)").await));
+    // Above the threshold the estimate is the answer, as without `exactBelow`
+    assert_eq!(
+        count("(estimate: true, exactBelow: 0)").await,
+        count("(estimate: true)").await
+    );
+    // Without a filter too, and beside rows
+    let r = post(
+        &app,
+        "/graphql",
+        json!({ "query": "{ ordersConnection(first: 2) { totalCount(estimate: true, exactBelow: 100) nodes { id } } }" }),
+    )
+    .await;
+    assert_eq!(
+        r.body["data"]["ordersConnection"]["totalCount"], 6,
+        "{}",
+        r.body
+    );
+}

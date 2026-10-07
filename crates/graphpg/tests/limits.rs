@@ -51,6 +51,7 @@ fn limits() -> LimitsConfig {
         request_body_bytes: Some(2048),
         statement_timeout: None,
         count_threshold: Some(10_000),
+        require_filter: false,
     }
 }
 
