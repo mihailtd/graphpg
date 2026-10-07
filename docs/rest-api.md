@@ -16,7 +16,7 @@ Anything the API does not understand is a **400**, never ignored: an unknown que
 | `POST /rest/{resource}/search` | The same, with the options in a JSON body |
 | `GET /rest/{resource}/{key}` | One row, with an `ETag` if the table has a row version; conditional `GET` or `HEAD` with `If-None-Match` answers `304 Not Modified` with no body |
 
-The key is the primary key (composite keys: the values separated by commas). The Relay global ID of the row is accepted for uuid and numeric keys.
+The key is the primary key (composite keys: the values separated by commas). The Relay global ID of the row is accepted for uuid and numeric keys. A row can be addressed by one of its other unique keys instead, as GraphQL's `userByUsername`: `GET /rest/users/alice?by=username` (the path holds the key's values in the order `by` names them, comma-separated for a composite key), and `PATCH` and `DELETE` likewise; the unique key's columns can then be changed, the primary key's cannot. `GET /rest/node/{id}` takes a Relay global ID (the `id` GraphQL gives every row) and answers `303 See Other` with the row's URL.
 
 ### Query parameters
 
@@ -72,6 +72,31 @@ Lists carry RFC 8288 `Link` headers (`rel="next"` / `rel="prev"`) that keep ever
 
 A column of the row a to-one relation leads to orders the list: `order=author.username`.
 
+`order` takes, besides the table's columns: a to-one relation's column (`author.username`), the number of rows of a to-many relation (`messagesCount`, `messages_count` and `MESSAGES_COUNT` are the same), a computed column that returns an orderable value (`uniqueAuthorCount`), and `natural` / `primary_key`. The OpenAPI document lists them in the `order` parameter.
+
+What GraphQL walks beyond foreign keys can be embedded as well, with the controls that fit it:
+
+| `include=` | What | Controls |
+| :--- | :--- | :--- |
+| `ancestors`, `descendants` (and `pathAncestors`, `pathDescendants` for an `ltree` column) | A hierarchy: a foreign key that references its own table, or a path. The walk is recursive and ends at a cycle | `fields`, `filter`, `order`, `depth[ancestors]=2` (how many levels); no page |
+| `target` | The row an exclusive arc (`CHECK (num_nonnulls(post_id, comment_id) = 1)`) points at: one row of one of several tables | `fields[target]=title`: the columns each table has. The row says which table with `__typename` |
+| `history` | The versions of a row of a temporal table | as a relation |
+| a function mounted on the table | A computed relationship (above) | its own arguments, `args[reports][minId]=3`, and a relation's controls |
+
+**Computed fields with arguments.** A function of a row that takes arguments is selected like the ones that do not, and the arguments go in `args[<field>][<argument>]=<value>`: `fields=name,doubleId&args[doubleId][factor]=3`, `include=reports&args[reports][minId]=3`; for a field of an embedded relation its path, `args[manager.doubleId][factor]=10`. Arguments are typed from the function (arrays as `1,2,3`), unknown ones are a 400, and one without a default is required.
+
+**Time.** A table with a temporal key (`PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)`) is read as it was with `asOf=2024-03-01T00:00:00Z`, and embedded rows of one with `asOf[account]=…`; without it you get what the table gives without a point in time. `asOf` on a table that has no temporal key is a 400.
+
+**JSON columns.** `path[doc]=$.address.city` returns the first item a JSON path selects from a `json` / `jsonb` column instead of the whole value, `path[posts.meta]=…` in an embedded relation.
+
+**Rows with their cursor and window values.** On a list that is a connection, `cursors=true` puts each row's own cursor in `_cursor` (send it back as `after` or `before` to continue from that row), and `window=rowNumber,rank,denseRank,percentRank` puts the row's position among *all* the matching rows, in the list's order and pages before this one included, in `_window`; `partition=status,createdAt:month` numbers within the groups of rows that share these values. `running=total` adds a running sum (a ledger's balance) of number columns: `_window.runningSum.total`.
+
+```
+GET /rest/orders?order=createdAt&window=rowNumber,rank&running=total&partition=customer&cursors=true
+→ [ { "id": 1, "customer": "ada", …, "_cursor": "…",
+      "_window": { "rowNumber": 1, "rank": 1, "runningSum": { "total": 100.0 } } }, … ]
+```
+
 Functions mounted on a table that need no argument of their own are selectable too (the ones with arguments stay GraphQL fields): a function returning rows of a table is a relation to `include` (a set of rows takes all the controls above: `include=featuredMessages&first[featuredMessages]=3`), and one returning a value or a record is a column to name in `fields` (`fields=name,uniqueAuthorCount`). Parents cannot be filtered by them with `inner` or `anti`.
 
 ```
@@ -123,6 +148,8 @@ The method arguments are those of the GraphQL search field (see [Search fields](
 { "hits": [{ "score": 0.875, "row": { "id": 1, "title": "PostgreSQL full text search" } }], "hasMore": false }
 ```
 
+A `full-text` search can mark the words that matched (`ts_headline`): `"highlight": true`, or `{"startSel": "<mark>", "stopSel": "</mark>", "maxWords": 35, "minWords": 15, "maxFragments": 2}`; each hit then has a `highlight` string. A `nearest` search puts the `distance` from `near` in each hit.
+
 `GET` or `POST /rest/search` (`?query=…&first=…`) searches every searchable resource at once; each hit names the resource its row is from:
 
 ```json
@@ -150,11 +177,24 @@ GET /rest/orders/aggregate?group=customer,createdAt:month&sum=total&having[count
 → [ { "keys": { "customer": "ada", "createdAt:month": "2026-01-01T00:00:00+00:00" }, "count": 2, "sum": { "total": 150.5 } }, … ]
 ```
 
+**Aggregates side by side.** A body can ask for several aggregates in one scan, each with its own filter or grouping, with `sets`: the sum of paid orders next to the sum of all of them, and a grouping.
+
+```json
+{ "filter": { "createdAt": { "greaterThan": "2026-01-01T00:00:00Z" } },
+  "sets": {
+    "paid":       { "filter": { "status": { "equalTo": "PAID" } }, "sum": ["total"] },
+    "everything": { "sum": ["total"], "max": ["createdAt"] },
+    "byCustomer": { "group": ["customer"], "sum": ["total"], "having": { "count": { "greaterThan": 1 } } }
+  } }
+```
+
+The answer is an object of the same names (`{"paid": {"sum": {"total": 425.75}}, "byCustomer": [ … ]}`). The request's `filter` applies to every set; an ungrouped set can have a `filter` of its own (`FILTER (WHERE …)`), a grouped one has `group`, `having` and the time options. Nothing else goes beside `sets`.
+
 Which aggregates and columns exist is what the GraphQL schema offers for the table; anything else is a 400. A response holds at most `limits.groups` groups (10 000 by default; 422 `TOO_MANY_GROUPS`: narrow the filter or group more coarsely). Aggregates need the table's connection, so a resource whose list is not permitted has none.
 
 ## Media types
 
-Lists (`GET /rest/<table>` and `POST …/search`) are `application/json` unless `Accept` prefers `text/csv` (RFC 4180, a header of the selected fields; `null` is empty, objects and lists are JSON text, 64-bit integers are text as in JSON). An `Accept` that allows neither is `406`. CSV is the page of rows the request asks for, bounded by `limits.page_size`: for a table of any size, use `/export`, which streams.
+Lists (`GET /rest/<table>` and `POST …/search`) are `application/json` unless `Accept` prefers `application/x-ndjson` (one row per line) or `text/csv` (RFC 4180, a header of the selected fields; `null` is empty, objects and lists are JSON text, 64-bit integers are text as in JSON). An `Accept` that allows neither is `406`. CSV is the page of rows the request asks for, bounded by `limits.page_size`: for a table of any size, use `/export`, which streams.
 
 Writes take three request media types, the wrong one is `415`:
 
@@ -184,6 +224,10 @@ POST /rest/rpc/search_orders  {"args": {"q": "ada"}, "order": "-total", "first":
 POST /rest/rpc/bump_counter   {"args": {"counterId": 1, "by": 5}}   → {"id": 1, "value": 5}
 ```
 
+## Debugging
+
+With `debug.sql` and `debug.explain` on (dev only, see [configuration](configuration.md)) every response, errors included, carries the statements it ran in `X-Debug-SQL` and, with `explain`, the `EXPLAIN ANALYZE` plans in `X-Debug-Explain`: JSON, percent-encoded. The counterpart of GraphQL's `extensions.sql` and `extensions.explain`.
+
 ## Several schemas
 
 With several `database.schemas`, `/rest/{resource}` is a shortcut: the default schema's table (the first schema listed), else the table of that name in another schema. Every schema also has a path of its own, with every route below it: `/rest/{schema}/{resource}`, `/rest/{schema}/{resource}/{key}`, `/rest/{schema}/{resource}/search`, `/rest/{schema}/rpc/{function}` and so on (`/rest/auth/users`, `/rest/app/audit_logs`, `/rest/auth/rpc/login`). Two schemas with an `audit_logs` table are both reachable, unambiguously, at `/rest/auth/audit_logs` and `/rest/app/audit_logs`; the same goes for functions. A schema's path serves that schema's tables and functions only (another schema's is a `404`), `Location` and `Link` headers and the `instance` of an error keep the path the request used, and `include` can still embed a row of another schema through a foreign key. `/rest/search` (global search) spans all of them.
@@ -192,7 +236,7 @@ The schema is part of the path, never a header or a parameter, and it is a fixed
 
 ## Reserved names
 
-`rpc` and `search` are paths of their own, so tables and schemas with these names are not served (the OpenAPI document leaves them out too). `search` and `aggregate` are also the last segments of `/rest/{resource}/search` and `/rest/{resource}/aggregate`: a row whose key is literally `aggregate` or `search` cannot be read with `GET /rest/{resource}/{key}`.
+`rpc`, `search` and `node` are paths of their own, so tables and schemas with these names are not served (the OpenAPI document leaves them out too). `search` and `aggregate` are also the last segments of `/rest/{resource}/search` and `/rest/{resource}/aggregate`: a row whose key is literally `aggregate` or `search` cannot be read with `GET /rest/{resource}/{key}`.
 
 ## Writing
 

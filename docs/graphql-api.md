@@ -45,6 +45,10 @@ Connections page by **keyset**. The `orderBy` columns are followed by the primar
 - `first` and `last` together return the last `last` rows of the first `first` (Relay). `offset` skips rows past the cursor, or past the start, in the direction being read; it is an `OFFSET` scan, so deep offsets cost what they skip.
 - A cursor is only valid for the `orderBy` it was issued under; a cursor of the wrong shape is rejected.
 
+### Totals: exact, estimated, or both
+
+`totalCount` is exact by default. `totalCount(estimate: true)` is the planner's estimate (table statistics, or `EXPLAIN` for filtered rows): cheap on a large table. `totalCount(estimate: true, exactBelow: 10000)` counts exactly when the estimate is at most that many rows and answers the estimate above, so a small result has its exact total and a huge one costs no scan (the REST `Prefer: count=estimated`, with `limits.count_threshold`).
+
 ### Aggregates and grouped aggregates
 
 Every connection has `aggregates` (`min`/`max` of orderable columns, `sum`/`avg` of numeric ones) and `groupedAggregates`, over the rows its `condition` and `filter` select (before paging):
@@ -76,6 +80,21 @@ Page sizes and the cost of an operation are bounded by the deployment's [`limits
 ```
 
 Plain list fields (`forums: [Forum!]!`) and to-many relations (`messages: [Message!]!`) have no page size: they return at most `limits.page_size.max` rows. Page through the `…Connection` fields to read more. `createForums(inputs:)` accepts at most `limits.bulk_rows` rows, nested ones included. A statement running longer than `limits.statement_timeout` is cancelled (`STATEMENT_TIMEOUT`). `/export` streams a whole connection and is not limited.
+
+## Constraints as `@constraint`
+
+What the database enforces on a value is stated on the field, in the keywords of JSON Schema, the same ones the [OpenAPI document](configuration.md#the-openapi-document-and-uis) uses: a single-column `CHECK` and a `varchar(n)` length.
+
+```graphql
+directive @constraint(minimum: Float, maximum: Float, exclusiveMinimum: Float, exclusiveMaximum: Float,
+                      multipleOf: Float, minLength: Int, maxLength: Int, pattern: String,
+                      minItems: Int, maxItems: Int) on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+type Bounded { score: Int @constraint(minimum: 0, maximum: 100)  title: String @constraint(minLength: 3, maxLength: 20) }
+input CreateBoundedInput { score: Int @constraint(minimum: 0, maximum: 100) … }
+```
+
+It is documentation for clients and code generators (a form can check before it sends); the database checks every write and the typed errors (`SCORE_INVALID`, `TITLE_TOO_LONG`) are unchanged. Only the simple forms of `CHECK` are read, as in the document.
 
 ## Global object identification (Relay)
 
@@ -115,6 +134,10 @@ Root mutation fields run **in order**, each as its own statement, inside one tra
 - Inserts and updates return the row's key; the payload is then read by key in a separate statement, so nested relations reflect the write (`createBook { book { author { books { title } } } }` includes the new book).
 - If any field fails, the whole operation is rolled back and the error names the failing field.
 - Rows are addressed by their key: `id: ID!` (Relay ID or raw value) for a single-column key, one argument per column for a composite key. Relations without a key get no update/delete mutations.
+
+### Writes by filter
+
+`update<Types>(where:, set:)` and `delete<Types>(where:)` affect at most `limits.bulk_rows` rows (1000 by default): if more match, the operation is rolled back with `BULK_LIMIT_EXCEEDED`, whatever the payload selects. With `limits.require_filter: true` a `where` without a condition (`where: {}`, every row) is refused unless the field also says `unfiltered: true`.
 
 ### Nested writes
 

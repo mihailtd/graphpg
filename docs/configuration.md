@@ -152,8 +152,8 @@ openapi:
 
 dev:                            # settings that differ in dev mode
   debug:
-    sql: true                   # dev-only: generated SQL in response extensions
-    explain: true               # dev-only: EXPLAIN ANALYZE in response extensions
+    sql: true                   # dev-only: generated SQL in response extensions (GraphQL), X-Debug-SQL header (REST)
+    explain: true               # dev-only: EXPLAIN ANALYZE in response extensions (GraphQL), X-Debug-Explain header (REST)
 prod: {}                        # ... and in prod mode
 ```
 
@@ -171,6 +171,7 @@ The document states what the database already says, with no configuration:
 - **Single Table Inheritance as a discriminated union.** A table whose discriminator is closed by a `CHECK` (or an enum) is described as `oneOf` its variants with a `discriminator` (`propertyName` and a `mapping` of each value to `<table>.<Variant>`, each the plain row `<table>.Base` with the discriminator fixed to that value).
 - **Table-per-type (CTI) hierarchies as a discriminated union.** The parent table of a table-per-type hierarchy is described as `oneOf` one schema per subtype (`<table>.<Child>`: the parent's row plus the subtype's own columns) and a fallback for parent rows without a subtype (`<table>.<Fallback>`), with a `discriminator` on `__typename`.
 - **Hypermedia `links` from foreign keys.** The `200` of `GET /rest/<table>/{key}` links to the row each single-column foreign key points at (`get_<table>_by_key`, the key read from the response) and to the rows that point at this one (`search_<table>`, filtered by this row's key), for the resources the API serves and the role may read. A link name is the target table, with the constraint name added when two foreign keys lead to the same table.
+- **What the API accepts.** Besides the paths of the tables, the document describes: the filter operators of every column type (spatial, `ltree`, full-text, multirange); everything `order` takes (relation counts, a to-one relation's columns, computed columns); the codes a write of each table can be rejected with, as `<table>ErrorCode` and the `<table>Problem` of its 400, 409 and 422 answers (the GraphQL `<Type>ErrorCode`); the relations a row can carry when embedded, hierarchies and arcs included; the grammar of embedding (`fields[…]`, `depth[…]`, `asOf[…]`, `args[…]`); unique-key access (`by`); `/rest/node/{id}`; and the streaming `/export` and `/import/{type}` of the GraphQL router.
 - **Change events as `webhooks`.** A table with `events:` in `entities` (`operations`: `insert`, `update`, `delete`; all three by default) gets one OpenAPI 3.1 webhook per change, `<table>.<operation>` (`orders.insert`), whose payload is `{id, createdAt, table, op, old, new}` with `old` and `new` the table's own row schema (`old` is `null` for an insert, `new` for a delete). This declares what a consumer of the table's events receives, so SDKs can type the incoming payloads; delivering the events (change capture, retries) belongs to the event-trigger work, and nothing is sent by declaring them.
 
 The Scalar reference shows that document: it loads it from `openapi.path`, and `openapi.ui: true` serves the document even when `openapi.spec` is off, so the page always has something to show. With `openapi.enabled: false` there is no REST API to describe, so neither the document nor the reference is served (404).
@@ -304,6 +305,7 @@ In dev mode the watcher rewrites the files on every schema change (`watch.export
 | `bulk_rows` | 1000 | Rows one write inserts, nested writes included (GraphQL `create<Types>`, REST bulk creates and upserts), and rows an update or delete by filter may affect (GraphQL `update<Types>(where:)`, `delete<Types>(where:)`, REST `PATCH` / `DELETE` on a collection): above it the write is rolled back (`BULK_LIMIT_EXCEEDED`, HTTP 413) |
 | `groups` | 10 000 | Groups an aggregate request may return (`TOO_MANY_GROUPS`) |
 | `request_body_bytes` | 1 MiB | Largest request body of `/graphql` and `/rest` (413). `/import` streams and is not limited |
+| `require_filter` | `false` | GraphQL `update<Types>(where:)` and `delete<Types>(where:)` with no condition (`where: {}`, every row) need `unfiltered: true`. REST always asks for it (`unfiltered=true`) |
 | `count_threshold` | 10 000 | Threshold for `Prefer: count=estimated`: exact count below it, planner estimate above |
 | `statement_timeout` | `30s` | `statement_timeout` of every connection: a statement running longer is cancelled and the request fails with `STATEMENT_TIMEOUT` (HTTP 503), without the database's message. A role's own lower `statement_timeout` applies first. Use a unit: `500ms`, `30s`, `2m`, `1h` |
 
