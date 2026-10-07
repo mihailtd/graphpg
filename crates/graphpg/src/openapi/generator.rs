@@ -147,6 +147,33 @@ pub(super) fn alternation(names: &[String]) -> String {
     format!("({})", escaped.join("|"))
 }
 
+/// Replaces the `$ref`s to components that do not exist with a plain object schema.
+fn fix_dangling_refs(
+    paths: &mut serde_json::Map<String, Value>,
+    schemas: &serde_json::Map<String, Value>,
+) {
+    fn fix(value: &mut Value, schemas: &serde_json::Map<String, Value>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(name) = map
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|r| r.strip_prefix("#/components/schemas/"))
+                {
+                    if !schemas.contains_key(name) {
+                        *value = json!({ "type": "object" });
+                        return;
+                    }
+                }
+                map.values_mut().for_each(|v| fix(v, schemas));
+            }
+            Value::Array(items) => items.iter_mut().for_each(|v| fix(v, schemas)),
+            _ => {}
+        }
+    }
+    paths.values_mut().for_each(|v| fix(v, schemas));
+}
+
 fn regex_escape(s: &str) -> String {
     s.chars()
         .flat_map(|c| {
@@ -339,6 +366,9 @@ impl OpenApiGenerator {
             schemas.extend(inputs.into_components());
         }
         Self::generate_rpc_paths(catalog, config, default_schema, &tables, &mut paths);
+
+        // The filter of a relation whose table the API does not serve has nothing to refer to
+        fix_dangling_refs(&mut paths, &schemas);
 
         json!({
             "openapi": "3.1.0",
@@ -556,6 +586,12 @@ impl OpenApiGenerator {
                 Self::fields_param(table, catalog),
                 Self::include_param(table, catalog),
             ];
+            params.extend(Self::embed_parameters(
+                table,
+                catalog,
+                &config.limits,
+                false,
+            ));
             params.retain(|p| !p.is_null());
             if table.has_row_version() {
                 params.push(json!({
@@ -879,6 +915,14 @@ impl OpenApiGenerator {
             .visible_columns()
             .map(|c| c.field_name.clone())
             .chain(catalog.cti_columns(table).into_iter().map(|(name, _)| name))
+            .chain(
+                catalog
+                    .object_fields(&table.schema, &table.name)
+                    .iter()
+                    .filter(|f| matches!(f.kind, FieldKind::Function(_)))
+                    .filter(|f| crate::server::rest::computed_value_exists(catalog, table, &f.name))
+                    .map(|f| f.name.clone()),
+            )
             .collect()
     }
 
@@ -890,14 +934,88 @@ impl OpenApiGenerator {
         })
     }
 
-    /// The to-one and to-many relations (not their connections) that can be embedded.
+    /// The to-one and to-many relations (not their connections) and the computed relationships
+    /// (functions mounted on the table that return rows) that can be embedded.
     pub(super) fn relation_names(table: &TableMetadata, catalog: &DatabaseCatalog) -> Vec<String> {
+        Self::embeddables(table, catalog)
+            .into_iter()
+            .map(|e| e.name)
+            .collect()
+    }
+
+    pub(super) fn embeddables<'a>(
+        table: &TableMetadata,
+        catalog: &'a DatabaseCatalog,
+    ) -> Vec<crate::server::rest::Embeddable<'a>> {
         catalog
             .object_fields(&table.schema, &table.name)
             .iter()
-            .filter(|f| matches!(f.kind, FieldKind::Relation(_)))
-            .map(|f| f.name.clone())
+            .filter(|f| matches!(f.kind, FieldKind::Relation(_) | FieldKind::Function(_)))
+            .filter_map(|f| crate::server::rest::find_embeddable(catalog, table, &f.name))
             .collect()
+    }
+
+    /// The controls of every embedded relation of `table`, one set of parameters each:
+    /// `fields[rel]` and, for a list of rows, `filter[rel]`, `order[rel]`, `first[rel]` and
+    /// `offset[rel]`; and, on a collection, `inner` and `anti`.
+    pub(super) fn embed_parameters(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+        limits: &LimitsConfig,
+        collection: bool,
+    ) -> Vec<Value> {
+        let mut params = Vec::new();
+        let embeddables = Self::embeddables(table, catalog);
+        for e in &embeddables {
+            let name = &e.name;
+            let columns = Self::visible_fields(e.target, catalog);
+            params.push(json!({
+                "name": format!("fields[{name}]"), "in": "query", "style": "form", "explode": false,
+                "description": format!("Columns of the embedded `{name}` (default: all); `include={name}` first"),
+                "schema": { "type": "array", "items": { "type": "string", "enum": columns } }
+            }));
+            if !e.many {
+                continue;
+            }
+            params.push(json!({
+                "name": format!("filter[{name}]"), "in": "query", "style": "deepObject", "explode": true,
+                "description": format!("Keeps only the embedded `{name}` rows that match, as `filter` does for a list: `filter[{name}][column][operator]=value`. The parents stay; `inner={name}` keeps those with a match"),
+                "schema": schema_ref(&format!("{}Filter", e.target.name))
+            }));
+            params.push(json!({
+                "name": format!("order[{name}]"), "in": "query", "style": "form", "explode": false,
+                "description": format!("Order of the embedded `{name}` rows: `column`, `-column` or `column:desc`"),
+                "schema": { "type": "array", "items": { "type": "string", "pattern": format!("^[+-]?{}(:(asc|desc))?$", alternation(&columns)) } }
+            }));
+            params.push(json!({
+                "name": format!("first[{name}]"), "in": "query",
+                "description": format!("Number of embedded `{name}` rows (at most `limits.page_size.max`)"),
+                "schema": Self::page_schema(limits)
+            }));
+            params.push(json!({
+                "name": format!("offset[{name}]"), "in": "query",
+                "description": format!("Embedded `{name}` rows to skip"),
+                "schema": { "type": "integer", "minimum": 0 }
+            }));
+        }
+        let relations: Vec<String> = embeddables
+            .iter()
+            .filter(|e| e.relation)
+            .map(|e| e.name.clone())
+            .collect();
+        if collection && !relations.is_empty() {
+            for (name, text) in [
+                ("inner", "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join"),
+                ("anti", "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`)"),
+            ] {
+                params.push(json!({
+                    "name": name, "in": "query", "style": "form", "explode": false,
+                    "description": format!("{text}. Relations: {}", relations.join(", ")),
+                    "schema": { "type": "array", "items": { "type": "string", "pattern": format!("^{}(\\.[A-Za-z_][A-Za-z0-9_]*)*$", alternation(&relations)) } }
+                }));
+            }
+        }
+        params
     }
 
     /// A page size: at least 1, at most `limits.page_size.max`.
@@ -988,6 +1106,7 @@ impl OpenApiGenerator {
             Self::include_param(table, catalog),
             prefer_param(false),
         ];
+        params.extend(Self::embed_parameters(table, catalog, limits, true));
         params.retain(|p| !p.is_null());
         Value::Array(params)
     }
@@ -1035,6 +1154,41 @@ impl OpenApiGenerator {
                 "type": "array",
                 "items": { "type": "string", "pattern": format!("^{}(\\.[A-Za-z_][A-Za-z0-9_]*)*$", alternation(&relations)) }
             });
+            let path = format!("^{}(\\.[A-Za-z_][A-Za-z0-9_]*)*$", alternation(&relations));
+            properties["embed"] = json!({
+                "type": "object",
+                "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+                "propertyNames": { "pattern": path },
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                        "fields": { "type": "array", "items": { "type": "string" } },
+                        "filter": { "type": "object" },
+                        "order": {
+                            "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
+                        },
+                        "first": Self::page_schema(limits),
+                        "offset": { "type": "integer", "minimum": 0 }
+                    },
+                    "additionalProperties": false
+                }
+            });
+            for (name, what) in [
+                (
+                    "inner",
+                    "Relations the rows must have a (matching) row through",
+                ),
+                (
+                    "anti",
+                    "Relations the rows must have no (matching) row through",
+                ),
+            ] {
+                properties[name] = json!({
+                    "type": "array",
+                    "description": what,
+                    "items": { "type": "string", "pattern": path }
+                });
+            }
         }
         properties
     }

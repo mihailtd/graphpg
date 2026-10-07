@@ -786,8 +786,30 @@ async fn openapi_matches_the_behaviour() {
     assert_eq!(
         documented,
         [
-            "Prefer", "Range", "after", "before", "fields", "filter", "first", "include", "last",
-            "offset", "order"
+            "Prefer",
+            "Range",
+            "after",
+            "anti",
+            "before",
+            "fields",
+            "fields[featuredMessages]",
+            "fields[messages]",
+            "fields[randomUser]",
+            "filter",
+            "filter[featuredMessages]",
+            "filter[messages]",
+            "first",
+            "first[featuredMessages]",
+            "first[messages]",
+            "include",
+            "inner",
+            "last",
+            "offset",
+            "offset[featuredMessages]",
+            "offset[messages]",
+            "order",
+            "order[featuredMessages]",
+            "order[messages]"
         ]
     );
     let first = params.iter().find(|p| p["name"] == "first").unwrap();
@@ -795,11 +817,13 @@ async fn openapi_matches_the_behaviour() {
     let fields = params.iter().find(|p| p["name"] == "fields").unwrap();
     assert_eq!(
         fields["schema"]["items"]["enum"],
-        json!(["id", "name", "archivedAt"])
+        json!(["id", "name", "archivedAt", "uniqueAuthorCount"])
     );
     // every documented parameter really is accepted
     for uri in [
         "/rest/forums?filter[name][eq]=Cats&order=-name&first=1&offset=0&fields=name&include=messages&last=1",
+        "/rest/forums?include=messages&fields[messages]=body&filter[messages][body][startsWith]=Cats&order[messages]=-body&first[messages]=1&offset[messages]=0&inner=messages&anti=messages",
+        "/rest/forums?include=featuredMessages,randomUser&fields[randomUser]=username&first[featuredMessages]=1",
     ] {
         let status = get(&app, uri).await.status;
         assert_ne!(status, StatusCode::NOT_FOUND, "{uri}");
@@ -832,6 +856,7 @@ async fn openapi_matches_the_behaviour() {
     assert_eq!(request["additionalProperties"], false);
     for member in [
         "filter", "order", "first", "last", "after", "before", "offset", "fields", "include",
+        "embed", "inner", "anti",
     ] {
         assert!(request["properties"].get(member).is_some(), "{member}");
     }
@@ -1043,4 +1068,56 @@ async fn request_id_and_operational_probes() {
         .header("x-request-id")
         .expect("generated request id");
     assert!(!gen_id.is_empty());
+}
+
+#[tokio::test]
+async fn computed_relationships_are_selected_through_include_and_fields() {
+    let app = app().await;
+
+    // A function returning a set of rows is embedded like a relation, with the same controls
+    let reply = get(
+        &app,
+        "/rest/forums?filter[name][eq]=Dogs&fields=name&include=featuredMessages&fields[featuredMessages]=body&order[featuredMessages]=-body&first[featuredMessages]=1",
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(
+        reply.body,
+        json!([{ "name": "Dogs", "featuredMessages": [{ "body": "Dogs = awesome -- Cecilia" }] }])
+    );
+    let reply = get(
+        &app,
+        "/rest/forums?filter[name][eq]=Cats&fields=name&include=featuredMessages",
+    )
+    .await;
+    assert_eq!(
+        reply.body,
+        json!([{ "name": "Cats", "featuredMessages": [] }])
+    );
+
+    // A function returning one row
+    let reply = get(
+        &app,
+        "/rest/forums?filter[name][eq]=Cats&fields=name&include=randomUser&fields[randomUser]=username",
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(reply.body[0]["randomUser"], json!({ "username": "Bob" }));
+
+    // A computed column returning a value, by name
+    let reply = get(
+        &app,
+        "/rest/forums?filter[name][eq]=Cats&fields=name,uniqueAuthorCount",
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(reply.body[0]["uniqueAuthorCount"], 3);
+
+    // Parents are filtered by relations, not by what a function computes
+    let reply = get(
+        &app,
+        "/rest/forums?include=featuredMessages&inner=featuredMessages",
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.body);
 }

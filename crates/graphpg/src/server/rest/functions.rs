@@ -322,19 +322,20 @@ pub async fn rest_rpc_handler(
                     ))
                 }
                 other => {
+                    let mut rows_query = None;
                     let (children, table) = match &other {
                         Shape::Rows(table) => {
                             ctx.allow(table, Operation::Read)?;
                             let query = options.into_query(Some((table, QueryKind::Item)), &ctx)?;
-                            (
-                                select_fields(
-                                    &ctx.catalog,
-                                    table,
-                                    query.fields.as_ref(),
-                                    query.include.as_ref(),
-                                )?,
-                                Some(*table),
-                            )
+                            let children = select_fields(
+                                &ctx,
+                                table,
+                                query.fields.as_ref(),
+                                query.include.as_ref(),
+                                &query.embed,
+                            )?;
+                            rows_query = Some(query);
+                            (children, Some(*table))
                         }
                         Shape::Value => {
                             options.into_query(None, &ctx)?;
@@ -377,8 +378,18 @@ pub async fn rest_rpc_handler(
                     if matches!(other, Shape::Void) {
                         return Ok(StatusCode::NO_CONTENT.into_response());
                     }
-                    let value = ResponseShaper::unwrap_single(&data, &f.field_name)
+                    let mut value = ResponseShaper::unwrap_single(&data, &f.field_name)
                         .map_err(|e| shaping_error(e, ctx.is_prod))?;
+                    if let (Some(query), Some(table)) = (&rows_query, table) {
+                        match &mut value {
+                            serde_json::Value::Array(rows) => {
+                                finish_rows(&ctx.catalog, table, query, rows)
+                            }
+                            other => {
+                                finish_rows(&ctx.catalog, table, query, std::slice::from_mut(other))
+                            }
+                        }
+                    }
                     Ok((StatusCode::OK, Json(value)).into_response())
                 }
             }

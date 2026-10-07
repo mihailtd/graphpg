@@ -19,9 +19,10 @@ mod validate;
 pub use aggregates::{rest_aggregate_get_handler, rest_aggregate_post_handler};
 pub use functions::{rest_rpc_handler, rpc_functions, RPC_RESOURCE};
 pub use problem::ProblemDetails;
+pub(crate) use query::{find_embeddable, Embeddable};
 pub use query::{
     merge_json, normalize_filter_json, normalize_operator, parse_order_string, parse_prefer_header,
-    parse_query_params, Preferences, QueryKind, RestQuery,
+    parse_query_params, EmbedControls, Preferences, QueryKind, RestQuery,
 };
 pub use search::{
     method_segment, rest_global_search_handler, rest_search_method_handler, GLOBAL_SEARCH_RESOURCE,
@@ -414,50 +415,271 @@ fn build_include_tree(include: &[String]) -> Result<IncludeTree, ProblemDetails>
     Ok(root)
 }
 
+/// Embedded relation `name` of `table`: its field, the relation, the table it leads to and the
+/// controls the request gave it (`path` is the dotted `include` path).
+struct Embed<'a> {
+    field: String,
+    target: &'a TableMetadata,
+    controls: Option<&'a EmbedControls>,
+    /// Read as a connection (`postsConnection { nodes }`), whose rows are filtered, ordered
+    /// or paged; the answer is unwrapped to the plain list.
+    connection: bool,
+    /// A function mounted on the table, not a relation.
+    mounted: bool,
+}
+
+fn resolve_embed<'a>(
+    catalog: &'a DatabaseCatalog,
+    table: &TableMetadata,
+    name: &str,
+    path: &str,
+    embed: &'a BTreeMap<String, EmbedControls>,
+) -> Result<Embed<'a>, ProblemDetails> {
+    let found = query::find_embeddable(catalog, table, name).ok_or_else(|| {
+        ProblemDetails::invalid(
+            format!("Unknown relation `{name}` for resource `{}`", table.name),
+            "include",
+        )
+    })?;
+    let controls = embed.get(path);
+    let paged = found.many && controls.is_some_and(EmbedControls::paged);
+    // A relation is read as its connection when its rows are filtered, ordered or paged; a
+    // function returning a set is a connection field already
+    let connection = if found.relation { paged } else { found.many };
+    if found.relation
+        && paged
+        && !catalog
+            .object_fields(&table.schema, &table.name)
+            .iter()
+            .any(|f| f.name == format!("{}Connection", found.name))
+    {
+        return Err(ProblemDetails::invalid(
+            format!("`{path}` cannot be filtered, ordered or paged: it has no connection"),
+            "include",
+        ));
+    }
+    Ok(Embed {
+        field: found.name,
+        target: found.target,
+        controls,
+        connection,
+        mounted: !found.relation,
+    })
+}
+
+/// The columns of an embedded relation: `fields[path]`, else all.
+fn embedded_columns(
+    catalog: &DatabaseCatalog,
+    target: &TableMetadata,
+    path: &str,
+    fields: Option<&Vec<String>>,
+) -> Result<Vec<RequestField>, ProblemDetails> {
+    let Some(requested) = fields.filter(|f| !f.is_empty()) else {
+        return Ok(column_fields(catalog, target));
+    };
+    let mut out: Vec<RequestField> = Vec::new();
+    for name in requested {
+        let col = target
+            .visible_columns()
+            .find(|c| &c.field_name == name || &c.name == name)
+            .ok_or_else(|| {
+                ProblemDetails::invalid(
+                    format!("Unknown field `{name}` for `{path}` ({})", target.name),
+                    format!("fields[{path}]"),
+                )
+            })?;
+        if !out.iter().any(|f| f.response_key() == col.field_name) {
+            out.push(column_field(catalog, target, col));
+        }
+    }
+    Ok(out)
+}
+
 fn include_fields(
+    ctx: &Ctx,
+    table: &TableMetadata,
+    tree: &IncludeTree,
+    embed: &BTreeMap<String, EmbedControls>,
+    prefix: &str,
+) -> Result<Vec<RequestField>, ProblemDetails> {
+    let catalog = &ctx.catalog;
+    let mut out = Vec::new();
+    for (name, sub) in &tree.0 {
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        let embedded = resolve_embed(catalog, table, name, &path, embed)?;
+        let mut children = embedded_columns(
+            catalog,
+            embedded.target,
+            &path,
+            embedded.controls.and_then(|c| c.fields.as_ref()),
+        )?;
+        children.extend(include_fields(ctx, embedded.target, sub, embed, &path)?);
+        if !embedded.connection {
+            out.push(RequestField::new(&embedded.field).with_children(children));
+            continue;
+        }
+        // Filtered, ordered or paged rows: the relation's connection, under the relation's name
+        let controls = embedded.controls.cloned().unwrap_or_default();
+        let connection = if embedded.mounted {
+            embedded.field.clone()
+        } else {
+            format!("{}Connection", embedded.field)
+        };
+        let mut arguments = HashMap::new();
+        let schema = ctx.state.current_schema();
+        let source = &table.type_name;
+        for (arg, value, label) in [
+            ("filter", controls.filter.clone(), "filter"),
+            ("orderBy", controls.order_by.clone(), "order"),
+            (
+                "first",
+                controls.first.map(|n| serde_json::json!(n)),
+                "first",
+            ),
+            (
+                "offset",
+                controls.offset.map(|n| serde_json::json!(n)),
+                "offset",
+            ),
+        ] {
+            if let Some(value) = value {
+                validate::validate_field_argument(
+                    &schema,
+                    source,
+                    &connection,
+                    arg,
+                    &value,
+                    &format!("{label}[{path}]"),
+                )?;
+                arguments.insert(arg.to_string(), value);
+            }
+        }
+        out.push(
+            RequestField::new(connection)
+                .with_alias(&embedded.field)
+                .with_arguments(arguments)
+                .with_children(vec![RequestField::new("nodes").with_children(children)]),
+        );
+    }
+    Ok(out)
+}
+
+/// Turns the `{"nodes": […]}` of the relations read as connections back into plain lists.
+fn unwrap_embeds(
     catalog: &DatabaseCatalog,
     table: &TableMetadata,
     tree: &IncludeTree,
-) -> Result<Vec<RequestField>, ProblemDetails> {
-    let mut out = Vec::new();
+    embed: &BTreeMap<String, EmbedControls>,
+    prefix: &str,
+    row: &mut serde_json::Value,
+) {
+    let Some(object) = row.as_object_mut() else {
+        return;
+    };
     for (name, sub) in &tree.0 {
-        let (field, rel) = catalog
-            .object_fields(&table.schema, &table.name)
-            .iter()
-            .find(|f| f.name == *name || f.name.eq_ignore_ascii_case(name))
-            .and_then(|f| match &f.kind {
-                FieldKind::Relation(rel) => Some((f.name.as_str(), rel)),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                ProblemDetails::invalid(
-                    format!("Unknown relation `{name}` for resource `{}`", table.name),
-                    "include",
-                )
-            })?;
-        let target = catalog
-            .find_table(&rel.target_schema, &rel.target_table)
-            .ok_or_else(|| {
-                ProblemDetails::invalid(
-                    format!("Relation `{name}` points at a resource that is not available"),
-                    "include",
-                )
-            })?;
-        let mut children = column_fields(catalog, target);
-        children.extend(include_fields(catalog, target, sub)?);
-        out.push(RequestField::new(field).with_children(children));
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        let Ok(embedded) = resolve_embed(catalog, table, name, &path, embed) else {
+            continue;
+        };
+        let Some(value) = object.get_mut(&embedded.field) else {
+            continue;
+        };
+        if embedded.connection {
+            if let Some(nodes) = value.get_mut("nodes").map(serde_json::Value::take) {
+                *value = nodes;
+            }
+        }
+        match value {
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    unwrap_embeds(catalog, embedded.target, sub, embed, &path, item);
+                }
+            }
+            other => unwrap_embeds(catalog, embedded.target, sub, embed, &path, other),
+        }
     }
-    Ok(out)
+}
+
+/// [`unwrap_embeds`] for the rows of a read.
+fn finish_rows(
+    catalog: &DatabaseCatalog,
+    table: &TableMetadata,
+    query: &RestQuery,
+    rows: &mut [serde_json::Value],
+) {
+    if query.include.as_ref().is_none_or(Vec::is_empty) {
+        return;
+    }
+    let Ok(tree) = build_include_tree(query.include.as_deref().unwrap_or(&[])) else {
+        return;
+    };
+    for row in rows {
+        unwrap_embeds(catalog, table, &tree, &query.embed, "", row);
+    }
+}
+
+/// A function mounted on `table` that returns a value (a computed column): selected by name in
+/// `fields` when it needs no argument of the request's own. Functions returning rows of a table
+/// are embedded with `include`.
+fn computed_field(
+    catalog: &DatabaseCatalog,
+    table: &TableMetadata,
+    name: &str,
+) -> Option<RequestField> {
+    use crate::catalog::FunctionReturn;
+    let field = catalog
+        .object_fields(&table.schema, &table.name)
+        .iter()
+        .find(|f| f.name == name)?;
+    let FieldKind::Function(i) = &field.kind else {
+        return None;
+    };
+    let func = &catalog.functions[*i];
+    if !catalog.function_is_exposed(func) || !query::needs_no_arguments(func) {
+        return None;
+    }
+    let children = match &func.returns {
+        FunctionReturn::Value(pg_type) => value_selection(catalog, pg_type, 0),
+        FunctionReturn::Record => func
+            .return_columns
+            .iter()
+            .map(|c| {
+                RequestField::new(crate::catalog::models::to_camel_case(&c.name))
+                    .with_children(value_selection(catalog, &c.pg_type, 0))
+            })
+            .collect(),
+        _ => return None,
+    };
+    Some(RequestField::new(&field.name).with_children(children))
+}
+
+/// Whether `name` is a computed column of `table` that `fields` can select.
+pub(crate) fn computed_value_exists(
+    catalog: &DatabaseCatalog,
+    table: &TableMetadata,
+    name: &str,
+) -> bool {
+    computed_field(catalog, table, name).is_some()
 }
 
 /// The fields of one row: the requested `fields` (default: all visible columns) and the
 /// embedded `include` relations.
 fn select_fields(
-    catalog: &DatabaseCatalog,
+    ctx: &Ctx,
     table: &TableMetadata,
     fields: Option<&Vec<String>>,
     include: Option<&Vec<String>>,
+    embed: &BTreeMap<String, EmbedControls>,
 ) -> Result<Vec<RequestField>, ProblemDetails> {
+    let catalog = &*ctx.catalog;
     let cti = catalog.find_cti(&table.schema, &table.name);
     let mut out = match fields.filter(|f| !f.is_empty()) {
         None => {
@@ -527,6 +749,13 @@ fn select_fields(
                             "fields",
                         ));
                     }
+                } else if let Some(field) = computed_field(catalog, table, name) {
+                    if !selected
+                        .iter()
+                        .any(|f: &RequestField| f.response_key() == field.name)
+                    {
+                        selected.push(field);
+                    }
                 } else {
                     return Err(ProblemDetails::invalid(
                         format!("Unknown field `{name}` for resource `{}`", table.name),
@@ -539,9 +768,11 @@ fn select_fields(
     };
     if let Some(include) = include {
         out.extend(include_fields(
-            catalog,
+            ctx,
             table,
             &build_include_tree(include)?,
+            embed,
+            "",
         )?);
     }
     Ok(out)
@@ -1065,10 +1296,11 @@ async fn list_rows(
     } = target;
     let mut args = initial_args.clone();
     let row_fields = select_fields(
-        &ctx.catalog,
+        ctx,
         table,
         query.fields.as_ref(),
         query.include.as_ref(),
+        &query.embed,
     )?;
 
     if let Some(filter) = &query.filter {
@@ -1121,8 +1353,9 @@ async fn list_rows(
             false,
         )
         .await?;
-    let shaped =
+    let mut shaped =
         ResponseShaper::unwrap_list(&data, root).map_err(|e| shaping_error(e, ctx.is_prod))?;
+    finish_rows(&ctx.catalog, table, query, &mut shaped.rows);
 
     let mut total = shaped.total_count;
     let mut is_estimate = false;
@@ -1429,6 +1662,24 @@ struct SearchBody {
     offset: Option<usize>,
     fields: Option<Vec<String>>,
     include: Option<Vec<String>>,
+    /// Controls of the embedded relations, by `include` path.
+    #[serde(default)]
+    embed: BTreeMap<String, EmbedBody>,
+    #[serde(default)]
+    inner: Vec<String>,
+    #[serde(default)]
+    anti: Vec<String>,
+}
+
+/// The controls of one embedded relation in a search body.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmbedBody {
+    fields: Option<Vec<String>>,
+    filter: Option<serde_json::Value>,
+    order: Option<OrderSpec>,
+    first: Option<usize>,
+    offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1484,6 +1735,49 @@ impl SearchBody {
             }
             query.order_by = Some(serde_json::Value::Array(parsed));
         }
+        query.inner = self.inner;
+        query.anti = self.anti;
+        for (path, controls) in self.embed {
+            let target = query::walk_relation(catalog, table, &path)
+                .map_err(|e| ProblemDetails::invalid(e, format!("embed.{path}")))?
+                .target;
+            let mut embedded = EmbedControls {
+                fields: controls.fields,
+                first: controls.first,
+                offset: controls.offset,
+                ..Default::default()
+            };
+            if let Some(n) = embedded.first {
+                query::check_page_size("first", n).map_err(ProblemDetails::bad_request)?;
+            }
+            if let Some(filter) = controls.filter {
+                if !filter.is_object() {
+                    return Err(ProblemDetails::invalid(
+                        "`filter` must be an object",
+                        format!("embed.{path}.filter"),
+                    ));
+                }
+                embedded.filter = Some(normalize_filter_json(filter));
+            }
+            if let Some(order) = controls.order {
+                let items = match order {
+                    OrderSpec::One(s) => vec![s],
+                    OrderSpec::Many(v) => v,
+                };
+                let mut parsed = Vec::new();
+                for item in items {
+                    if let serde_json::Value::Array(values) =
+                        parse_order_string(&item, target, catalog)
+                            .map_err(ProblemDetails::bad_request)?
+                    {
+                        parsed.extend(values);
+                    }
+                }
+                embedded.order_by = Some(serde_json::Value::Array(parsed));
+            }
+            query.embed.insert(path, embedded);
+        }
+        query::finish_embeds(&mut query, table, catalog).map_err(ProblemDetails::bad_request)?;
         Ok(query)
     }
 }
@@ -1541,10 +1835,11 @@ pub async fn rest_item_handler(
         .map_err(ProblemDetails::bad_request)?;
 
         let mut fields = select_fields(
-            &ctx.catalog,
+            &ctx,
             table,
             query.fields.as_ref(),
             query.include.as_ref(),
+            &query.embed,
         )?;
         if table.has_row_version() {
             fields.push(RequestField::new("rowVersion"));
@@ -1562,6 +1857,7 @@ pub async fn rest_item_handler(
             .await?;
         let mut row = ResponseShaper::unwrap_single(&data, &table.single_field)
             .map_err(|e| shaping_error(e, ctx.is_prod))?;
+        finish_rows(&ctx.catalog, table, &query, std::slice::from_mut(&mut row));
         if row.is_null() {
             return Err(ProblemDetails::not_found(format!(
                 "No `{}` found with key `{key}`",

@@ -153,7 +153,13 @@ pub async fn rest_search_method_handler(
                 }
             }
 
-            let row_fields = select_fields(&ctx.catalog, table, fields.as_ref(), include.as_ref())?;
+            let row_fields = select_fields(
+                &ctx,
+                table,
+                fields.as_ref(),
+                include.as_ref(),
+                &BTreeMap::new(),
+            )?;
             let request = RequestField::new(root)
                 .with_arguments(args)
                 .with_children(vec![

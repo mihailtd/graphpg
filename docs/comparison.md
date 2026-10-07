@@ -82,9 +82,9 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | `NULLS FIRST` / `LAST` | PostgreSQL's default (last ascending, first descending) | Yes |
 | Column selection | `fields=a,b` | `select=a,b`, with renaming and casts (`total:amount::text`) |
 | Embedding relations | `include=posts,posts.author` (to-one, to-many, many-to-many); all columns of the embedded rows | `select=*,posts(*)`, nested, with column lists, hints (`!fk`), `!inner` joins |
-| Filter, order and limit *inside* an embedding | No in REST (yes in GraphQL, per field) | Yes (`posts.order=…`, `posts.limit=…`, `posts.status=eq.x`) |
+| Filter, order and limit *inside* an embedding | Yes, to-many relations (`filter[posts][status][eq]=x`, `order[posts]=-createdAt`, `first[posts]=5`, `offset[posts]=10`); sparse fieldsets per relation (`fields[posts]=id,title`); `inner=posts` / `anti=posts` for inner joins and anti-joins | Yes (`posts.order=…`, `posts.limit=…`, `posts.status=eq.x`, `!inner`) |
 | Spread (`...author(name)`) | No | Yes |
-| Computed relationships | Functions mounted on tables (GraphQL fields); not selectable through REST | Yes (set-returning functions) |
+| Computed relationships | Functions mounted on tables that need no argument: rows through `include`, values through `fields`; with the embedding controls | Yes (set-returning functions) |
 | Pagination | `first` / `after` / `last` / `before` (keyset, stable under writes), `offset`, `Range: items=A-B` (`206`, `Content-Range`, `416`); `Link` headers | `limit` / `offset`, `Range` header; keyset not supported |
 | Total count | `Prefer: count=exact` (`X-Total-Count`, and the total in `Content-Range`); opt-in; no `planned` / `estimated` | `Prefer: count=exact`, `planned`, `estimated` (`Content-Range`) |
 | Server-side maximum | `limits.page_size.max` (rejects), default page size | `db-max-rows` (silently truncates) |

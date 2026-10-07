@@ -66,7 +66,7 @@ expression: openapi
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|name|archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount)(:(asc|desc))?$"
               }
             }
           },
@@ -128,7 +128,8 @@ expression: openapi
                 "enum": [
                   "id",
                   "name",
-                  "archivedAt"
+                  "archivedAt",
+                  "uniqueAuthorCount"
                 ]
               }
             }
@@ -138,12 +139,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, featuredMessages, randomUser",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -158,6 +159,183 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `featuredMessages` (default: all); `include=featuredMessages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[featuredMessages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `featuredMessages` rows that match, as `filter` does for a list: `filter[featuredMessages][column][operator]=value`. The parents stay; `inner=featuredMessages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `featuredMessages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[featuredMessages]",
+            "in": "query",
+            "description": "Number of embedded `featuredMessages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[featuredMessages]",
+            "in": "query",
+            "description": "Embedded `featuredMessages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[randomUser]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `randomUser` (default: all); `include=randomUser` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -552,7 +730,7 @@ expression: openapi
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|name|archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount)(:(asc|desc))?$"
               }
             }
           },
@@ -614,7 +792,8 @@ expression: openapi
                 "enum": [
                   "id",
                   "name",
-                  "archivedAt"
+                  "archivedAt",
+                  "uniqueAuthorCount"
                 ]
               }
             }
@@ -624,12 +803,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, featuredMessages, randomUser",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -644,6 +823,183 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `featuredMessages` (default: all); `include=featuredMessages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[featuredMessages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `featuredMessages` rows that match, as `filter` does for a list: `filter[featuredMessages][column][operator]=value`. The parents stay; `inner=featuredMessages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `featuredMessages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[featuredMessages]",
+            "in": "query",
+            "description": "Number of embedded `featuredMessages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[featuredMessages]",
+            "in": "query",
+            "description": "Embedded `featuredMessages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[randomUser]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `randomUser` (default: all); `include=randomUser` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -970,7 +1326,8 @@ expression: openapi
                 "enum": [
                   "id",
                   "name",
-                  "archivedAt"
+                  "archivedAt",
+                  "uniqueAuthorCount"
                 ]
               }
             }
@@ -980,12 +1337,161 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, featuredMessages, randomUser",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `featuredMessages` (default: all); `include=featuredMessages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[featuredMessages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `featuredMessages` rows that match, as `filter` does for a list: `filter[featuredMessages][column][operator]=value`. The parents stay; `inner=featuredMessages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `featuredMessages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[featuredMessages]",
+            "in": "query",
+            "description": "Number of embedded `featuredMessages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[featuredMessages]",
+            "in": "query",
+            "description": "Embedded `featuredMessages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[randomUser]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `randomUser` (default: all); `include=randomUser` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
               }
             }
           },
@@ -1617,7 +2123,8 @@ expression: openapi
                 "enum": [
                   "id",
                   "name",
-                  "archivedAt"
+                  "archivedAt",
+                  "uniqueAuthorCount"
                 ]
               }
             }
@@ -1627,12 +2134,161 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, featuredMessages, randomUser",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `featuredMessages` (default: all); `include=featuredMessages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[featuredMessages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `featuredMessages` rows that match, as `filter` does for a list: `filter[featuredMessages][column][operator]=value`. The parents stay; `inner=featuredMessages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `featuredMessages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[featuredMessages]",
+            "in": "query",
+            "description": "Number of embedded `featuredMessages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[featuredMessages]",
+            "in": "query",
+            "description": "Embedded `featuredMessages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[randomUser]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `randomUser` (default: all); `include=randomUser` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
               }
             }
           },
@@ -2234,6 +2890,91 @@ expression: openapi
             }
           },
           {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
             "name": "Range",
             "in": "header",
             "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
@@ -2743,6 +3484,91 @@ expression: openapi
             }
           },
           {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
             "name": "Range",
             "in": "header",
             "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
@@ -3086,6 +3912,63 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
               }
             }
           },
@@ -3763,6 +4646,63 @@ expression: openapi
             }
           },
           {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
             "name": "If-None-Match",
             "in": "header",
             "description": "Row version: returns 304 without a body when it matches",
@@ -4358,12 +5298,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -4378,6 +5318,118 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -4849,12 +5901,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -4869,6 +5921,118 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -5206,12 +6370,96 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
               }
             }
           },
@@ -5858,12 +7106,96 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
               }
             }
           },
@@ -6469,6 +7801,91 @@ expression: openapi
             }
           },
           {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
             "name": "Prefer",
             "in": "header",
             "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
@@ -6652,6 +8069,66 @@ expression: openapi
                   },
                   "include": {
                     "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    }
+                  },
+                  "embed": {
+                    "type": "object",
+                    "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+                    "propertyNames": {
+                      "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    },
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "fields": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filter": {
+                          "type": "object"
+                        },
+                        "order": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "first": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        },
+                        "offset": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "inner": {
+                    "type": "array",
+                    "description": "Relations the rows must have a (matching) row through",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    }
+                  },
+                  "anti": {
+                    "type": "array",
+                    "description": "Relations the rows must have no (matching) row through",
                     "items": {
                       "type": "string",
                       "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
@@ -7275,12 +8752,96 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
               }
             }
           }
@@ -7559,12 +9120,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -7579,6 +9140,118 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -7764,7 +9437,67 @@ expression: openapi
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                      "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    }
+                  },
+                  "embed": {
+                    "type": "object",
+                    "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+                    "propertyNames": {
+                      "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    },
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "fields": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filter": {
+                          "type": "object"
+                        },
+                        "order": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "first": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        },
+                        "offset": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "inner": {
+                    "type": "array",
+                    "description": "Relations the rows must have a (matching) row through",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    }
+                  },
+                  "anti": {
+                    "type": "array",
+                    "description": "Relations the rows must have no (matching) row through",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
                     }
                   }
                 },
@@ -8533,7 +10266,8 @@ expression: openapi
               "enum": [
                 "id",
                 "name",
-                "archivedAt"
+                "archivedAt",
+                "uniqueAuthorCount"
               ]
             }
           },
@@ -8541,7 +10275,67 @@ expression: openapi
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "embed": {
+            "type": "object",
+            "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+            "propertyNames": {
+              "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "filter": {
+                  "type": "object"
+                },
+                "order": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "first": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "inner": {
+            "type": "array",
+            "description": "Relations the rows must have a (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "anti": {
+            "type": "array",
+            "description": "Relations the rows must have no (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
             }
           }
         },
@@ -9413,6 +11207,66 @@ expression: openapi
               "type": "string",
               "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
             }
+          },
+          "embed": {
+            "type": "object",
+            "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+            "propertyNames": {
+              "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "filter": {
+                  "type": "object"
+                },
+                "order": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "first": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "inner": {
+            "type": "array",
+            "description": "Relations the rows must have a (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "anti": {
+            "type": "array",
+            "description": "Relations the rows must have no (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
           }
         },
         "additionalProperties": false
@@ -10200,7 +12054,67 @@ expression: openapi
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "embed": {
+            "type": "object",
+            "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+            "propertyNames": {
+              "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "filter": {
+                  "type": "object"
+                },
+                "order": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "first": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "inner": {
+            "type": "array",
+            "description": "Relations the rows must have a (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "anti": {
+            "type": "array",
+            "description": "Relations the rows must have no (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
             }
           }
         },

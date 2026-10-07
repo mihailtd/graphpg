@@ -55,6 +55,30 @@ Lists carry RFC 8288 `Link` headers (`rel="next"` / `rel="prev"`) that keep ever
 - `Prefer: count=planned`: Uses the PostgreSQL planner's row estimate (from `reltuples` or `EXPLAIN`), answering with `Preference-Applied: count=planned`, `X-Total-Count`, and `X-Total-Count-Estimate: true`.
 - `Prefer: count=estimated`: Computes an exact count when the estimate is below `limits.count_threshold` (default 10,000), falling back to the planner estimate above it. Sets `X-Total-Count-Estimate: true` whenever the estimate was used. Above the threshold the answer is one query; below it a second, exact count follows the page, so the two are not one snapshot. A `Range` past the end is a `416` with the exact size whichever count was asked for.
 
+### Controls inside an embedding
+
+`include=posts` embeds every column of every related row. Each embedded relation takes controls of its own, named by its `include` path (`posts`, `posts.comments`) and listed per relation in the OpenAPI document:
+
+| Parameter | Does |
+| :--- | :--- |
+| `fields[posts]=id,title` | Columns of the embedded rows (any relation: to-one, to-many, many-to-many) |
+| `filter[posts][status][eq]=PUBLISHED` | Keeps only the embedded rows that match; the parents stay (an empty list for those without a match). Same grammar and operators as `filter`, with the relation's columns |
+| `order[posts]=-createdAt` | Order of the embedded rows |
+| `first[posts]=5`, `offset[posts]=10` | A page of them (at most `limits.page_size.max`) |
+| `inner=posts` | Only parents that have such a row (with its `filter[posts]`), like an inner join |
+| `anti=posts` | Only parents that have no such row |
+
+`filter`, `order`, `first` and `offset` are for to-many relations (a to-one has one row: `fields` only); `filter[posts][some][…]` (also `every`, `none`, `count`, `sum`…) still filters the *parents* by their related rows, as before. A relation read with a filter, order or page is its GraphQL connection, so rows are paged by `limits.page_size` (default 100) when you give no `first[posts]`. A single row (`GET /rest/{resource}/{key}`) and a `POST …/search` body take the same controls (`"embed": {"posts": {"filter": …, "order": "-createdAt", "first": 5, "fields": [...]}}`, `"inner"`, `"anti"`).
+
+A column of the row a to-one relation leads to orders the list: `order=author.username`.
+
+Functions mounted on a table that need no argument of their own are selectable too (the ones with arguments stay GraphQL fields): a function returning rows of a table is a relation to `include` (a set of rows takes all the controls above: `include=featuredMessages&first[featuredMessages]=3`), and one returning a value or a record is a column to name in `fields` (`fields=name,uniqueAuthorCount`). Parents cannot be filtered by them with `inner` or `anti`.
+
+```
+GET /rest/forums?include=messages&fields[messages]=id,body&filter[messages][featured][eq]=true&order[messages]=-createdAt&first[messages]=3
+GET /rest/forums?include=messages&inner=messages&filter[messages][body][startsWith]=Hello
+```
+
 ### Ranges
 
 A list takes `Range: items=A-B` (`items=0-24`, or `items=25-` to the end): rows `A` to `B`, counting from 0. The answer is `206 Partial Content` with `Content-Range: items A-B/N`, where `N` is `*` unless `Prefer: count=...` asked for the count (it costs a scan, so it is not done unasked), and a `200` when the range covers a list whose size is known to fit it. A range past the end is `416` with `Content-Range: items */N`, as is one that ends before it starts. A page larger than `limits.page_size.max` is cut at the maximum, and the `Content-Range` says which rows came. Another unit, a suffix (`items=-5`) or several ranges are ignored and the whole list is sent. A range does not combine with `first`, `last`, `after`, `before` or `offset` (`400`). Every list answers with `Accept-Ranges: items`, and `HEAD` carries the same headers. Keyset cursors and `Link` headers stay the way to page through a list that changes.
