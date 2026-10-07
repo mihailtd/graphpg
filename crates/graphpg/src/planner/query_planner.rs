@@ -1503,6 +1503,29 @@ impl<'a> PlanningContext<'a> {
             }
             _ => None,
         };
+        // An update or delete by filter may affect at most `limits.bulk_rows` rows: its
+        // transaction checks the count the payload reports, adding the field when not selected
+        let affected_limit = match (action, self.planner.limits.bulk_rows) {
+            (MutationAction::UpdateMany | MutationAction::DeleteMany, Some(max)) => {
+                let existing = payload.iter().find_map(|f| match f {
+                    PayloadField::AffectedCount { field_alias } => Some(field_alias.clone()),
+                    _ => None,
+                });
+                let hidden = existing.is_none();
+                let alias = existing.unwrap_or_else(|| "__affectedCount".to_string());
+                if hidden {
+                    payload.push(PayloadField::AffectedCount {
+                        field_alias: alias.clone(),
+                    });
+                }
+                Some(crate::plan::AffectedLimit {
+                    max: max as u64,
+                    alias,
+                    hidden,
+                })
+            }
+            _ => None,
+        };
         let step = Step::PgMutation {
             schema: schema.clone(),
             table: table_name.to_string(),
@@ -1516,6 +1539,7 @@ impl<'a> PlanningContext<'a> {
                 .map(|pk| (pk.clone(), column_cast(table_meta, pk)))
                 .collect(),
             version_guard,
+            affected_limit,
         };
         Ok(plan.add_step(step))
     }

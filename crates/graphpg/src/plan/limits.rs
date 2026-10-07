@@ -588,6 +588,7 @@ mod tests {
                 payload: vec![],
                 key_columns: vec![],
                 version_guard: None,
+                affected_limit: None,
             });
             plan.add_root_field("createT", step);
             plan

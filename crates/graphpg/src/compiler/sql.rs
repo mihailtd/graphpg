@@ -114,6 +114,8 @@ pub struct CompiledMutation {
     /// Payload parameter (0-based) the executor fills with the number of top-level rows the
     /// writes affected.
     pub count_param: Option<usize>,
+    /// The most rows an update or delete by filter may affect, checked on the payload.
+    pub affected_limit: Option<crate::plan::AffectedLimit>,
     /// Input path of each write node (`inputs[0].author.create`), for error messages.
     pub node_paths: Vec<String>,
 }
@@ -1258,6 +1260,7 @@ impl SqlCompiler {
             payload,
             key_columns,
             version_guard,
+            affected_limit,
         } = step
         else {
             unreachable!("compile_mutation called on non-mutation step");
@@ -1276,6 +1279,7 @@ impl SqlCompiler {
                 writes,
                 payload,
                 count_param,
+                affected_limit: affected_limit.clone(),
                 node_paths,
             }
         };
@@ -1675,8 +1679,21 @@ impl SqlCompiler {
         );
         // Keys of rows that were not written (e.g. skipped by a trigger) read as NULL: the
         // payload leaves them out
+        // Without the rows in the payload nothing reads the keys back, and PostgreSQL rejects
+        // parameters a statement never mentions
+        let uses_keys = if payload
+            .iter()
+            .any(|f| matches!(f, PayloadField::Rows { .. }))
+        {
+            String::new()
+        } else {
+            let conditions: Vec<String> = (1..=locate.len())
+                .map(|i| format!("${i}::text::text[] IS NOT NULL"))
+                .collect();
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
         let statement = CompiledStatement {
-            query: CompiledQuery::new(format!("SELECT {data} AS data"), params),
+            query: CompiledQuery::new(format!("SELECT {data} AS data{uses_keys}"), params),
             deferred,
             strict: false,
             context: None,
@@ -4444,6 +4461,7 @@ impl SqlCompiler {
             writes,
             payload,
             count_param: None,
+            affected_limit: None,
             node_paths: Vec::new(),
         };
         let write = |sql: String, params, returning: Vec<String>| CompiledWrite {

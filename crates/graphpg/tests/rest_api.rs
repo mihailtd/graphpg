@@ -786,8 +786,30 @@ async fn openapi_matches_the_behaviour() {
     assert_eq!(
         documented,
         [
-            "Prefer", "Range", "after", "before", "fields", "filter", "first", "include", "last",
-            "offset", "order"
+            "Prefer",
+            "Range",
+            "after",
+            "anti",
+            "before",
+            "fields",
+            "fields[featuredMessages]",
+            "fields[messages]",
+            "fields[randomUser]",
+            "filter",
+            "filter[featuredMessages]",
+            "filter[messages]",
+            "first",
+            "first[featuredMessages]",
+            "first[messages]",
+            "include",
+            "inner",
+            "last",
+            "offset",
+            "offset[featuredMessages]",
+            "offset[messages]",
+            "order",
+            "order[featuredMessages]",
+            "order[messages]"
         ]
     );
     let first = params.iter().find(|p| p["name"] == "first").unwrap();
@@ -795,11 +817,13 @@ async fn openapi_matches_the_behaviour() {
     let fields = params.iter().find(|p| p["name"] == "fields").unwrap();
     assert_eq!(
         fields["schema"]["items"]["enum"],
-        json!(["id", "name", "archivedAt"])
+        json!(["id", "name", "archivedAt", "uniqueAuthorCount"])
     );
     // every documented parameter really is accepted
     for uri in [
         "/rest/forums?filter[name][eq]=Cats&order=-name&first=1&offset=0&fields=name&include=messages&last=1",
+        "/rest/forums?include=messages&fields[messages]=body&filter[messages][body][startsWith]=Cats&order[messages]=-body&first[messages]=1&offset[messages]=0&inner=messages&anti=messages",
+        "/rest/forums?include=featuredMessages,randomUser&fields[randomUser]=username&first[featuredMessages]=1",
     ] {
         let status = get(&app, uri).await.status;
         assert_ne!(status, StatusCode::NOT_FOUND, "{uri}");
@@ -832,6 +856,7 @@ async fn openapi_matches_the_behaviour() {
     assert_eq!(request["additionalProperties"], false);
     for member in [
         "filter", "order", "first", "last", "after", "before", "offset", "fields", "include",
+        "embed", "inner", "anti",
     ] {
         assert!(request["properties"].get(member).is_some(), "{member}");
     }
@@ -1043,4 +1068,144 @@ async fn request_id_and_operational_probes() {
         .header("x-request-id")
         .expect("generated request id");
     assert!(!gen_id.is_empty());
+}
+
+#[tokio::test]
+async fn computed_relationships_are_selected_through_include_and_fields() {
+    let app = app().await;
+
+    // A function returning a set of rows is embedded like a relation, with the same controls
+    let reply = get(
+        &app,
+        "/rest/forums?filter[name][eq]=Dogs&fields=name&include=featuredMessages&fields[featuredMessages]=body&order[featuredMessages]=-body&first[featuredMessages]=1",
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(
+        reply.body,
+        json!([{ "name": "Dogs", "featuredMessages": [{ "body": "Dogs = awesome -- Cecilia" }] }])
+    );
+    let reply = get(
+        &app,
+        "/rest/forums?filter[name][eq]=Cats&fields=name&include=featuredMessages",
+    )
+    .await;
+    assert_eq!(
+        reply.body,
+        json!([{ "name": "Cats", "featuredMessages": [] }])
+    );
+
+    // A function returning one row
+    let reply = get(
+        &app,
+        "/rest/forums?filter[name][eq]=Cats&fields=name&include=randomUser&fields[randomUser]=username",
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(reply.body[0]["randomUser"], json!({ "username": "Bob" }));
+
+    // A computed column returning a value, by name
+    let reply = get(
+        &app,
+        "/rest/forums?filter[name][eq]=Cats&fields=name,uniqueAuthorCount",
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(reply.body[0]["uniqueAuthorCount"], 3);
+
+    // Parents are filtered by relations, not by what a function computes
+    let reply = get(
+        &app,
+        "/rest/forums?include=featuredMessages&inner=featuredMessages",
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.body);
+}
+
+#[tokio::test]
+async fn openapi_describes_the_change_events_of_a_table_as_webhooks() {
+    use graphpg::config::models::{EntityConfig, EventOperation, EventsConfig};
+    common::ensure_forum_fixture().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema("app_public")
+        .await
+        .unwrap();
+    let mut config = graphpg::config::Config::default();
+    config.entities.insert(
+        "forums".to_string(),
+        EntityConfig {
+            events: Some(EventsConfig {
+                operations: vec![EventOperation::Delete, EventOperation::Insert],
+                description: Some("Fired by the moderation tools".to_string()),
+            }),
+            ..Default::default()
+        },
+    );
+    config.entities.insert(
+        "messages".to_string(),
+        EntityConfig {
+            events: Some(EventsConfig {
+                operations: EventOperation::all(),
+                description: None,
+            }),
+            ..Default::default()
+        },
+    );
+    let doc = graphpg::openapi::OpenApiGenerator::generate_with_schema(
+        &catalog,
+        &config,
+        "app_public",
+        None,
+    );
+
+    // One webhook per declared change, in OpenAPI 3.1's `webhooks`; none for a table without events
+    let webhooks = doc["webhooks"].as_object().unwrap();
+    let mut names: Vec<&str> = webhooks.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "forums.delete",
+            "forums.insert",
+            "messages.delete",
+            "messages.insert",
+            "messages.update"
+        ]
+    );
+    let post = &webhooks["forums.insert"]["post"];
+    assert!(post["description"]
+        .as_str()
+        .unwrap()
+        .contains("Fired by the moderation tools"));
+    assert_eq!(
+        post["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/forumsInsertEvent"
+    );
+
+    // The payload wraps the row as it was and as it is, with the table's own schema
+    let schemas = &doc["components"]["schemas"];
+    let insert = &schemas["forumsInsertEvent"]["properties"];
+    assert_eq!(insert["op"]["const"], "insert");
+    assert_eq!(insert["old"], json!({ "type": "null" }));
+    assert_eq!(insert["new"]["$ref"], "#/components/schemas/forums");
+    let update = &schemas["messagesUpdateEvent"]["properties"];
+    assert_eq!(update["old"]["$ref"], "#/components/schemas/messages");
+    assert_eq!(update["new"]["$ref"], "#/components/schemas/messages");
+    let delete = &schemas["forumsDeleteEvent"]["properties"];
+    assert_eq!(delete["new"], json!({ "type": "null" }));
+
+    // No events declared, no `webhooks`
+    let plain = graphpg::openapi::OpenApiGenerator::generate_with_schema(
+        &catalog,
+        &graphpg::config::Config::default(),
+        "app_public",
+        None,
+    );
+    assert!(plain.get("webhooks").is_none());
 }

@@ -892,6 +892,17 @@ pub struct TreeSource {
     pub max_depth: Option<usize>,
 }
 
+/// A bound on the rows an update or delete by filter affects, checked in its transaction from
+/// the payload's `affectedCount`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AffectedLimit {
+    pub max: u64,
+    /// Response key of the payload's `affectedCount`.
+    pub alias: String,
+    /// The field was added for the check: it is dropped from the answer.
+    pub hidden: bool,
+}
+
 /// Optimistic concurrency: the row a mutation writes is locked, and the write fails unless
 /// its version is still `expected`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1036,6 +1047,9 @@ pub enum Step {
         /// `expectedVersion` of a single-row update or delete.
         #[serde(default)]
         version_guard: Option<VersionGuard>,
+        /// The most rows a write by filter may affect: the write is rolled back above it.
+        #[serde(default)]
+        affected_limit: Option<AffectedLimit>,
     },
 
     /// A root field backed by a function: a query, or a mutation for a `VOLATILE` one

@@ -4,6 +4,10 @@
 //! - Order: `?order=col:desc,col2:asc` or `?order=-col,col2`
 //! - Keyset pagination: `?first=n&after=<cursor>` / `?last=n&before=<cursor>`; `?offset=n`
 //! - Field selection: `?fields=a,b`; relation embedding: `?include=rel1,rel2.nested`
+//! - Controls of an embedded relation, by its `include` path: `fields[posts]=id,title`,
+//!   `filter[posts][status][eq]=x`, `order[posts]=-createdAt`, `first[posts]=5`,
+//!   `offset[posts]=10`; `inner=posts` keeps the parents that have such an embedded row and
+//!   `anti=posts` those that have none
 //!
 //! The parser is strict: an unknown parameter, operator, column or malformed value is a 400
 //! instead of being ignored, so a typo can never turn into an unfiltered read.
@@ -11,6 +15,7 @@
 use axum::http::HeaderMap;
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::catalog::{ColumnMetadata, DatabaseCatalog, PgType, TableMetadata};
 
@@ -26,6 +31,36 @@ pub struct RestQuery {
     pub offset: Option<usize>,
     pub fields: Option<Vec<String>>,
     pub include: Option<Vec<String>>,
+    /// Controls of the embedded relations, by `include` path (`posts`, `posts.comments`).
+    #[serde(default)]
+    pub embed: BTreeMap<String, EmbedControls>,
+    /// `include` paths whose parents must have a matching embedded row.
+    #[serde(default)]
+    pub inner: Vec<String>,
+    /// Relation paths whose parents must have no matching row.
+    #[serde(default)]
+    pub anti: Vec<String>,
+}
+
+/// What an embedded relation is read with: its columns and, for a to-many relation, the rows
+/// it keeps, their order and the page of them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EmbedControls {
+    pub fields: Option<Vec<String>>,
+    pub filter: Option<serde_json::Value>,
+    pub order_by: Option<serde_json::Value>,
+    pub first: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+impl EmbedControls {
+    /// The relation is read as a connection: it is filtered, ordered or paged.
+    pub fn paged(&self) -> bool {
+        self.filter.is_some()
+            || self.order_by.is_some()
+            || self.first.is_some()
+            || self.offset.is_some()
+    }
 }
 
 /// Which endpoint the parameters belong to: a collection accepts all of them, a single item
@@ -624,6 +659,22 @@ pub fn parse_order_string(
         {
             // A column of a subtype of a table-per-type hierarchy
             items.push(format!("{opt_name}_{dir}"));
+        } else if let Some(opt_name) = name.split_once('.').and_then(|(relation, column)| {
+            // A column of the row a to-one relation leads to: `author.username`
+            let wanted = format!(
+                "{}_{}",
+                crate::catalog::models::enum_value_name(relation),
+                crate::catalog::models::enum_value_name(column)
+            );
+            options
+                .iter()
+                .find(|(n, target)| {
+                    matches!(target, crate::catalog::OrderTarget::Related { .. })
+                        && n.eq_ignore_ascii_case(&wanted)
+                })
+                .map(|(n, _)| n.clone())
+        }) {
+            items.push(format!("{opt_name}_{dir}"));
         } else if let Some((opt_name, _)) = options
             .into_iter()
             .find(|(n, _)| n.eq_ignore_ascii_case(name))
@@ -664,6 +715,184 @@ fn page_size(key: &str, val: &str) -> Result<usize, String> {
     check_page_size(key, n)
 }
 
+/// Keys of a relation filter that filter the parent (`filter[posts][some][…]`), not the rows
+/// embedded through the relation.
+const PARENT_RELATION_FILTERS: [&str; 8] =
+    ["some", "every", "none", "count", "sum", "avg", "min", "max"];
+
+/// What `include` can embed: a relation, or a function mounted on the table that returns rows
+/// of a table and needs no argument of its own (a computed relationship).
+pub(crate) struct Embeddable<'a> {
+    /// The field of the table's type.
+    pub name: String,
+    /// A list of rows (a to-many relation, a function returning a set).
+    pub many: bool,
+    pub target: &'a TableMetadata,
+    /// A foreign-key relation, which `inner`, `anti` and the parent filters can follow.
+    pub relation: bool,
+}
+
+/// Whether a mounted function can be selected without arguments of the request's own.
+pub(super) fn needs_no_arguments(f: &crate::catalog::FunctionMetadata) -> bool {
+    !f.volatile
+        && f.arguments
+            .iter()
+            .skip(usize::from(f.row_argument))
+            .all(|a| a.has_default || f.parent_column_for(&a.name).is_some())
+}
+
+/// The relation or computed relationship `name` of `table`, matched case-insensitively.
+pub(crate) fn find_embeddable<'a>(
+    catalog: &'a DatabaseCatalog,
+    table: &TableMetadata,
+    name: &str,
+) -> Option<Embeddable<'a>> {
+    catalog
+        .object_fields(&table.schema, &table.name)
+        .iter()
+        .filter(|f| f.name == name || f.name.eq_ignore_ascii_case(name))
+        .find_map(|f| match &f.kind {
+            crate::catalog::FieldKind::Relation(rel) => Some(Embeddable {
+                name: f.name.clone(),
+                many: rel.is_many,
+                target: catalog.find_table(&rel.target_schema, &rel.target_table)?,
+                relation: true,
+            }),
+            crate::catalog::FieldKind::Function(i) => {
+                let func = &catalog.functions[*i];
+                let crate::catalog::FunctionReturn::Table { schema, table } = &func.returns else {
+                    return None;
+                };
+                (catalog.function_is_exposed(func) && needs_no_arguments(func)).then_some(())?;
+                Some(Embeddable {
+                    name: f.name.clone(),
+                    many: func.returns_set,
+                    target: catalog.find_table(schema, table)?,
+                    relation: false,
+                })
+            }
+            _ => None,
+        })
+}
+
+/// What a dotted path (`posts.comments`) leads to: the embeddable at its end.
+pub(super) fn walk_relation<'a>(
+    catalog: &'a DatabaseCatalog,
+    table: &'a TableMetadata,
+    path: &str,
+) -> Result<Embeddable<'a>, String> {
+    let mut current = table;
+    let mut found = None;
+    for part in path.split('.') {
+        let embeddable = find_embeddable(catalog, current, part)
+            .ok_or_else(|| format!("Unknown relation `{part}` for resource `{}`", current.name))?;
+        current = embeddable.target;
+        found = Some(embeddable);
+    }
+    found.ok_or_else(|| "An empty relation path".to_string())
+}
+
+/// Every `include` path and the paths leading to it (`posts.comments` includes `posts`).
+fn included_paths(include: &[String]) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for path in include {
+        let mut prefix = String::new();
+        for part in path.split('.') {
+            if !prefix.is_empty() {
+                prefix.push('.');
+            }
+            prefix.push_str(part);
+            out.insert(prefix.clone());
+        }
+    }
+    out
+}
+
+/// Checks the embedded controls against `include`, and turns `inner` / `anti` into conditions
+/// on the parent's filter.
+pub(super) fn finish_embeds(
+    query: &mut RestQuery,
+    table: &TableMetadata,
+    catalog: &DatabaseCatalog,
+) -> Result<(), String> {
+    let included = included_paths(query.include.as_deref().unwrap_or(&[]));
+    for (path, controls) in query.embed.iter_mut() {
+        if !included.contains(path) {
+            return Err(format!(
+                "`{path}` has controls but is not in `include`: add `include={path}`"
+            ));
+        }
+        let rel = walk_relation(catalog, table, path)?;
+        if controls.paged() && !rel.many {
+            return Err(format!(
+                "`{path}` is a to-one relation: it has no rows to filter, order or page, only `fields`"
+            ));
+        }
+        controls.filter = controls.filter.take().map(arrayify_groups);
+    }
+    let mut conditions = Vec::new();
+    for (param, paths) in [("inner", &query.inner), ("anti", &query.anti)] {
+        for path in paths {
+            let segments: Vec<&str> = path.split('.').collect();
+            let present = presence_filter(query, catalog, table, &segments, "")
+                .map_err(|e| format!("`{param}={path}`: {e}"))?;
+            conditions.push(if param == "anti" {
+                serde_json::json!({ "not": present })
+            } else {
+                present
+            });
+        }
+    }
+    if !conditions.is_empty() {
+        if let Some(existing) = query.filter.take() {
+            conditions.insert(0, existing);
+        }
+        query.filter = Some(serde_json::json!({ "and": conditions }));
+    }
+    Ok(())
+}
+
+/// The filter of the parents that have a row at the end of `segments`, matching the embedded
+/// filters of the relations on the way.
+fn presence_filter(
+    query: &RestQuery,
+    catalog: &DatabaseCatalog,
+    table: &TableMetadata,
+    segments: &[&str],
+    prefix: &str,
+) -> Result<serde_json::Value, String> {
+    let (first, rest) = segments.split_first().ok_or("an empty relation path")?;
+    let path = if prefix.is_empty() {
+        first.to_string()
+    } else {
+        format!("{prefix}.{first}")
+    };
+    let found = walk_relation(catalog, table, first)?;
+    if !found.relation {
+        return Err(format!(
+            "`{first}` is a computed relationship: parents can only be filtered by foreign-key relations"
+        ));
+    }
+    let (name, many, target) = (found.name, found.many, found.target);
+    let mut conditions = Vec::new();
+    if let Some(filter) = query.embed.get(&path).and_then(|c| c.filter.clone()) {
+        conditions.push(filter);
+    }
+    if !rest.is_empty() {
+        conditions.push(presence_filter(query, catalog, target, rest, &path)?);
+    }
+    let inner = match conditions.len() {
+        0 => serde_json::json!({}),
+        1 => conditions.remove(0),
+        _ => serde_json::json!({ "and": conditions }),
+    };
+    Ok(if many {
+        serde_json::json!({ name: { "some": inner } })
+    } else {
+        serde_json::json!({ name: inner })
+    })
+}
+
 /// Parses raw query string parameters into [`RestQuery`].
 pub fn parse_query_params(
     raw_query: &str,
@@ -678,6 +907,14 @@ pub fn parse_query_params(
             .map(|c| c.to_string())
             .map_err(|_| format!("Invalid UTF-8 in query string: {s}"))
     };
+    // The paths `include` leads through, which controls such as `filter[posts][…]` refer to
+    let mut included = BTreeSet::new();
+    for pair in raw_query.split('&').filter(|p| !p.is_empty()) {
+        let (raw_key, raw_val) = pair.split_once('=').unwrap_or((pair, ""));
+        if decode(raw_key)? == "include" {
+            included.extend(included_paths(&split_list(&decode(raw_val)?)));
+        }
+    }
 
     for pair in raw_query.split('&').filter(|p| !p.is_empty()) {
         let (raw_key, raw_val) = pair.split_once('=').unwrap_or((pair, ""));
@@ -739,7 +976,55 @@ pub fn parse_query_params(
                     None => query.filter = Some(norm),
                 }
             }
+            "inner" | "anti" => {
+                collection_only(&key)?;
+                let paths = split_list(&val);
+                if key == "inner" {
+                    query.inner = paths;
+                } else {
+                    query.anti = paths;
+                }
+            }
             other => match parse_bracket_path(other) {
+                // `filter[posts][status][eq]=x` filters the rows embedded through a to-many
+                // relation in `include`; `filter[posts][some][…]` filters the parents
+                Some((root, segments))
+                    if root == "filter"
+                        && segments.len() >= 2
+                        && included.contains(&segments[0])
+                        && !PARENT_RELATION_FILTERS.contains(&segments[1].as_str())
+                        && walk_relation(catalog, table_meta, &segments[0])
+                            .is_ok_and(|found| found.many) =>
+                {
+                    let target = walk_relation(catalog, table_meta, &segments[0])?.target;
+                    let filt = segments_to_filter(&segments[1..], &val, target, catalog)?;
+                    let controls = query.embed.entry(segments[0].clone()).or_default();
+                    match &mut controls.filter {
+                        Some(existing) => merge_json(existing, filt),
+                        None => controls.filter = Some(filt),
+                    }
+                }
+                Some((root, segments))
+                    if segments.len() == 1
+                        && matches!(root.as_str(), "fields" | "order" | "first" | "offset") =>
+                {
+                    let path = segments[0].clone();
+                    let target = walk_relation(catalog, table_meta, &path)?.target;
+                    let controls = query.embed.entry(path).or_default();
+                    match root.as_str() {
+                        "fields" => controls.fields = Some(split_list(&val)),
+                        "order" => {
+                            controls.order_by = Some(parse_order_string(&val, target, catalog)?)
+                        }
+                        "first" => controls.first = Some(page_size("first", &val)?),
+                        _ => {
+                            controls.offset = Some(
+                                val.parse::<usize>()
+                                    .map_err(|_| format!("Invalid integer for `offset`: {val}"))?,
+                            )
+                        }
+                    }
+                }
                 Some((root, segments)) if root == "filter" => {
                     collection_only("filter")?;
                     let filt = segments_to_filter(&segments, &val, table_meta, catalog)?;
@@ -754,6 +1039,7 @@ pub fn parse_query_params(
     }
 
     query.filter = query.filter.take().map(arrayify_groups);
+    finish_embeds(&mut query, table_meta, catalog)?;
     Ok(query)
 }
 

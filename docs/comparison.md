@@ -82,9 +82,9 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | `NULLS FIRST` / `LAST` | PostgreSQL's default (last ascending, first descending) | Yes |
 | Column selection | `fields=a,b` | `select=a,b`, with renaming and casts (`total:amount::text`) |
 | Embedding relations | `include=posts,posts.author` (to-one, to-many, many-to-many); all columns of the embedded rows | `select=*,posts(*)`, nested, with column lists, hints (`!fk`), `!inner` joins |
-| Filter, order and limit *inside* an embedding | No in REST (yes in GraphQL, per field) | Yes (`posts.order=…`, `posts.limit=…`, `posts.status=eq.x`) |
+| Filter, order and limit *inside* an embedding | Yes, to-many relations (`filter[posts][status][eq]=x`, `order[posts]=-createdAt`, `first[posts]=5`, `offset[posts]=10`); sparse fieldsets per relation (`fields[posts]=id,title`); `inner=posts` / `anti=posts` for inner joins and anti-joins | Yes (`posts.order=…`, `posts.limit=…`, `posts.status=eq.x`, `!inner`) |
 | Spread (`...author(name)`) | No | Yes |
-| Computed relationships | Functions mounted on tables (GraphQL fields); not selectable through REST | Yes (set-returning functions) |
+| Computed relationships | Functions mounted on tables that need no argument: rows through `include`, values through `fields`; with the embedding controls | Yes (set-returning functions) |
 | Pagination | `first` / `after` / `last` / `before` (keyset, stable under writes), `offset`, `Range: items=A-B` (`206`, `Content-Range`, `416`); `Link` headers | `limit` / `offset`, `Range` header; keyset not supported |
 | Total count | `Prefer: count=exact` (`X-Total-Count`, and the total in `Content-Range`); opt-in; no `planned` / `estimated` | `Prefer: count=exact`, `planned`, `estimated` (`Content-Range`) |
 | Server-side maximum | `limits.page_size.max` (rejects), default page size | `db-max-rows` (silently truncates) |
@@ -100,18 +100,36 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Feature | graphpg REST | PostgREST |
 | :--- | :--- | :--- |
 | Create one row | `POST` JSON | `POST` JSON |
-| Bulk create | `POST` JSON array or **CSV**, one statement, bounded by `limits.bulk_rows` | `POST` JSON array or **CSV**; `?columns=` to pick keys; form-encoded bodies |
+| Bulk create | `POST` JSON array or **CSV**, one statement, bounded by `limits.bulk_rows`; `missing=default|null` | `POST` JSON array or **CSV**; `?columns=` to pick keys; form-encoded bodies |
 | **Nested writes** (create / connect / update / sync children in one request) | **Yes**: the GraphQL input shape, validated to any depth, atomic | **No** (multi-table writes need an RPC function) |
-| Update | `PATCH /rest/<table>/<key>` | `PATCH /<table>?<filters>` (any filter; many rows) |
-| Delete | `DELETE /rest/<table>/<key>` | `DELETE /<table>?<filters>` (any filter; many rows) |
-| Update or delete many rows by filter | Not over REST (GraphQL `update<Types>(where:)`) | Yes; `Prefer: max-affected=N` guards the count |
-| Upsert | `PUT /rest/<table>/<key>` (primary key) | `POST` with `resolution=merge-duplicates` / `ignore-duplicates` and `on_conflict=<unique columns>`; `PUT` by primary key |
-| Missing columns | The column default (or null) | `Prefer: missing=default` chooses the default over null |
+| Update | `PATCH /rest/<table>/<key>`, or `PATCH /rest/<table>?<filters>` (many rows); JSON, `merge-patch+json` or, for a row, `json-patch+json` | `PATCH /<table>?<filters>` (any filter; many rows) |
+| Delete | `DELETE /rest/<table>/<key>` or `DELETE /rest/<table>?<filters>` | `DELETE /<table>?<filters>` (any filter; many rows) |
+| Update or delete many rows by filter | Yes, with the list's `filter`; refused without one (`unfiltered=true` to mean it); at most `limits.bulk_rows` rows, else rolled back (`413`); `X-Affected-Count` | Yes; `Prefer: max-affected=N` guards the count |
+| Upsert | `PUT /rest/<table>/<key>` (primary key); `PUT /rest/<table>` with an array, `conflict=<unique columns>`, `resolution=merge|ignore`, `update=<columns>` (query parameters, no vendor header) | `POST` with `resolution=merge-duplicates` / `ignore-duplicates` and `on_conflict=<unique columns>`; `PUT` by primary key |
+| Missing columns | `missing=default|null` (query parameter, bulk writes) | `Prefer: missing=default` chooses the default over null |
 | Response shape | `Prefer: return=minimal` (204) or the row (default); `Location` and `ETag` | `return=minimal` (default), `headers-only`, `representation`; `Preference-Applied` |
 | Row as it was before the write | `Prefer: previous` (`RETURNING OLD`, PostgreSQL 18) | No |
 | Optimistic concurrency | Row version as `ETag` / `If-Match` (412 `STALE_VERSION`); conditional `GET` / `HEAD` with `If-None-Match` (304 `Not Modified`) | No row versions |
 | Transactions | One per request; automatic retry on serialization failures and deadlocks | One per request; `Prefer: tx=rollback` (with `db-tx-end`) for dry runs |
 | Unknown input members | **400**: validated against the GraphQL input types, at any depth | Unknown columns are an error from PostgreSQL |
+
+### Throughput against PostgREST
+
+[`benchmarks/rest`](../benchmarks/rest) runs the same requests against both on one PostgreSQL (18.6), with the same schema, data (100 000 posts, 300 000 comments) and a pool of 10 connections each: graphpg 1.0.1 and PostgREST 16.4, 20 virtual users, 10 s per scenario, one run on one machine (AMD Ryzen 9 9900X) that also runs the databases and the load generator.
+
+| Scenario | graphpg req/s | PostgREST req/s | graphpg p50 / p95 ms | PostgREST p50 / p95 ms |
+| :--- | ---: | ---: | ---: | ---: |
+| List of 20 rows, 3 columns, ordered by key | 33426 | 21282 | 0.49 / 0.80 | 0.71 / 1.86 |
+| List filtered on an enum, newest first (indexed) | 32501 | 19894 | 0.52 / 0.80 | 0.74 / 2.21 |
+| One row by primary key | 74031 | 24606 | 0.22 / 0.35 | 0.60 / 2.05 |
+| 20 posts with author and comments embedded | 17227 | 11995 | 0.97 / 1.67 | 1.22 / 3.51 |
+| Pagination: `offset` deep into 100 000 rows | 3100 | 2884 | 6.34 / 9.09 | 6.36 / 12.65 |
+| Pagination: rows after a key, deep into 100 000 rows | 35040 | 22077 | 0.48 / 0.74 | 0.70 / 1.82 |
+| Insert one row | 5328 | 4948 | 3.49 / 4.30 | 3.70 / 5.85 |
+| Update one row by key | 5400 | 3970 | 3.49 / 4.25 | 3.93 / 11.14 |
+| Update 10 rows by filter | 4191 | 4292 | 4.11 / 7.59 | 4.10 / 7.80 |
+
+What it shows: both are limited by PostgreSQL where a query is expensive (`offset` deep into a table takes about 6 ms in both, and is the slowest read: keyset pagination is what makes it fast in both), and the difference is in the cost around the query, where graphpg's lower latency and higher throughput on reads come from. What it does not: it is a small indexed schema on loopback, with the load generator on the same machine, and the two connect as the same database user (PostgREST then switches role per request, which is how it enforces roles). Treat the ratios as indicative, rerun it on your hardware and on your own queries ([how](../benchmarks/rest/README.md)), and read the [feature comparison](#compared-with-postgrest) as the more important part of the choice.
 
 ### Functions
 

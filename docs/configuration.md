@@ -171,6 +171,7 @@ The document states what the database already says, with no configuration:
 - **Single Table Inheritance as a discriminated union.** A table whose discriminator is closed by a `CHECK` (or an enum) is described as `oneOf` its variants with a `discriminator` (`propertyName` and a `mapping` of each value to `<table>.<Variant>`, each the plain row `<table>.Base` with the discriminator fixed to that value).
 - **Table-per-type (CTI) hierarchies as a discriminated union.** The parent table of a table-per-type hierarchy is described as `oneOf` one schema per subtype (`<table>.<Child>`: the parent's row plus the subtype's own columns) and a fallback for parent rows without a subtype (`<table>.<Fallback>`), with a `discriminator` on `__typename`.
 - **Hypermedia `links` from foreign keys.** The `200` of `GET /rest/<table>/{key}` links to the row each single-column foreign key points at (`get_<table>_by_key`, the key read from the response) and to the rows that point at this one (`search_<table>`, filtered by this row's key), for the resources the API serves and the role may read. A link name is the target table, with the constraint name added when two foreign keys lead to the same table.
+- **Change events as `webhooks`.** A table with `events:` in `entities` (`operations`: `insert`, `update`, `delete`; all three by default) gets one OpenAPI 3.1 webhook per change, `<table>.<operation>` (`orders.insert`), whose payload is `{id, createdAt, table, op, old, new}` with `old` and `new` the table's own row schema (`old` is `null` for an insert, `new` for a delete). This declares what a consumer of the table's events receives, so SDKs can type the incoming payloads; delivering the events (change capture, retries) belongs to the event-trigger work, and nothing is sent by declaring them.
 
 The Scalar reference shows that document: it loads it from `openapi.path`, and `openapi.ui: true` serves the document even when `openapi.spec` is off, so the page always has something to show. With `openapi.enabled: false` there is no REST API to describe, so neither the document nor the reference is served (404).
 
@@ -189,6 +190,9 @@ entities:                      # tables, views, materialized views, foreign tabl
     description: People who write
     omit: false                # true removes the type and every relation to it
     omit_operations: [delete]  # read, list, connection, create, update, delete
+    events:                    # change events: described as OpenAPI webhooks
+      operations: [insert, update, delete]   # default: all three
+      description: Fired when a writer changes
     list_field: writers        # root field names
     single_field: writer
     connection_field: writersConnection
@@ -297,7 +301,7 @@ In dev mode the watcher rewrites the files on every schema change (`watch.export
 | `page_size.max` | 1000 | Largest `first` / `last` (`PAGE_SIZE_EXCEEDED`). Lists that have no page size (plain list fields, to-many relations) are **cut at this many rows**: page through a connection to read more |
 | `depth` | 10 | How many levels of rows an operation nests: a root list is 1, the rows of a relation under it 2, … (`DEPTH_LIMIT_EXCEEDED`). A REST `include` path counts too |
 | `cost` | 10 000 000 | An estimate of the rows an operation reads: each step's rows (its page size, 1 for a single row) times the rows it hangs from, summed. 100 forums with their last 100 messages and each message's author cost `100 + 100 × 100 + 100 × 100` (`COST_LIMIT_EXCEEDED`) |
-| `bulk_rows` | 1000 | Rows one write inserts, nested writes included: GraphQL `create<Types>`, REST bulk creates (`BULK_LIMIT_EXCEEDED`, HTTP 413) |
+| `bulk_rows` | 1000 | Rows one write inserts, nested writes included (GraphQL `create<Types>`, REST bulk creates and upserts), and rows an update or delete by filter may affect (GraphQL `update<Types>(where:)`, `delete<Types>(where:)`, REST `PATCH` / `DELETE` on a collection): above it the write is rolled back (`BULK_LIMIT_EXCEEDED`, HTTP 413) |
 | `groups` | 10 000 | Groups an aggregate request may return (`TOO_MANY_GROUPS`) |
 | `request_body_bytes` | 1 MiB | Largest request body of `/graphql` and `/rest` (413). `/import` streams and is not limited |
 | `count_threshold` | 10 000 | Threshold for `Prefer: count=estimated`: exact count below it, planner estimate above |

@@ -78,6 +78,15 @@ pub(crate) fn planner_errors(err: &PlannerError) -> Vec<GraphQLError> {
     }
 }
 
+/// The error under the mutation fields that wrapped it.
+fn root_error(err: &ExecutionError) -> Option<&ExecutionError> {
+    let mut root = err;
+    while let ExecutionError::Mutation { source, .. } = root {
+        root = source;
+    }
+    Some(root)
+}
+
 /// The error of a failed execution: a constraint violation with its code and input fields,
 /// or the database's message.
 pub(crate) fn execution_error(
@@ -106,6 +115,21 @@ pub(crate) fn execution_error(
                 message: custom.detail,
                 path,
                 extensions: Some(extensions),
+            },
+        );
+    }
+
+    if let Some(ExecutionError::TooManyRows { max, actual }) = root_error(err) {
+        return (
+            StatusCode::OK,
+            GraphQLError {
+                message: err.to_string(),
+                path,
+                extensions: Some(serde_json::json!({
+                    "code": "BULK_LIMIT_EXCEEDED",
+                    "limit": max,
+                    "actual": actual,
+                })),
             },
         );
     }

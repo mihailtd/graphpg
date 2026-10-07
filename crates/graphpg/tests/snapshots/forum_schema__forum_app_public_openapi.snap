@@ -66,7 +66,7 @@ expression: openapi
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|name|archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount)(:(asc|desc))?$"
               }
             }
           },
@@ -128,7 +128,8 @@ expression: openapi
                 "enum": [
                   "id",
                   "name",
-                  "archivedAt"
+                  "archivedAt",
+                  "uniqueAuthorCount"
                 ]
               }
             }
@@ -138,12 +139,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, featuredMessages, randomUser",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -158,6 +159,183 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `featuredMessages` (default: all); `include=featuredMessages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[featuredMessages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `featuredMessages` rows that match, as `filter` does for a list: `filter[featuredMessages][column][operator]=value`. The parents stay; `inner=featuredMessages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `featuredMessages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[featuredMessages]",
+            "in": "query",
+            "description": "Number of embedded `featuredMessages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[featuredMessages]",
+            "in": "query",
+            "description": "Embedded `featuredMessages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[randomUser]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `randomUser` (default: all); `include=randomUser` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -346,6 +524,19 @@ expression: openapi
                 "return=minimal"
               ]
             }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
           }
         ],
         "requestBody": {
@@ -527,6 +718,538 @@ expression: openapi
           }
         }
       },
+      "patch": {
+        "summary": "Update forums by filter",
+        "description": "Set the given columns in every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`. A JSON Patch applies to one row (`PATCH …/{key}`).",
+        "operationId": "update_many_forums",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/forumsFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/forumsUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/forumsUpdateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/forums"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Updated (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type: send JSON or a merge patch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete forums by filter",
+        "description": "Delete every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`.",
+        "operationId": "delete_many_forums",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/forumsFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/forums"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a foreign key still refers to a row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Upsert many forums",
+        "description": "Insert the rows of the array (at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413)), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.",
+        "operationId": "upsert_many_forums",
+        "parameters": [
+          {
+            "name": "conflict",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "The unique key rows are matched by: its columns, comma-separated (default: the primary key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "examples": [
+                "id"
+              ]
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "description": "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "merge",
+                "ignore"
+              ],
+              "default": "merge"
+            }
+          },
+          {
+            "name": "update",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns a merge updates (default: those the rows set, but the key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1000,
+                "items": {
+                  "$ref": "#/components/schemas/forumsCreateInput"
+                }
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rows as they are now (those `ignore` left are the existing ones)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/forums"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Upserted (`Prefer: return=minimal`)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint other than the `conflict` key",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
       "head": {
         "summary": "List forums (headers only)",
         "description": "Retrieve rows from `forums`",
@@ -552,7 +1275,7 @@ expression: openapi
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|name|archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount)(:(asc|desc))?$"
               }
             }
           },
@@ -614,7 +1337,8 @@ expression: openapi
                 "enum": [
                   "id",
                   "name",
-                  "archivedAt"
+                  "archivedAt",
+                  "uniqueAuthorCount"
                 ]
               }
             }
@@ -624,12 +1348,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, featuredMessages, randomUser",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -644,6 +1368,183 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `featuredMessages` (default: all); `include=featuredMessages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[featuredMessages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `featuredMessages` rows that match, as `filter` does for a list: `filter[featuredMessages][column][operator]=value`. The parents stay; `inner=featuredMessages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `featuredMessages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[featuredMessages]",
+            "in": "query",
+            "description": "Number of embedded `featuredMessages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[featuredMessages]",
+            "in": "query",
+            "description": "Embedded `featuredMessages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[randomUser]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `randomUser` (default: all); `include=randomUser` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -759,6 +1660,12 @@ expression: openapi
               },
               "Accept-Post": {
                 "description": "The request media types of a create",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Patch": {
+                "description": "`application/json`, `application/merge-patch+json`",
                 "schema": {
                   "type": "string"
                 }
@@ -970,7 +1877,8 @@ expression: openapi
                 "enum": [
                   "id",
                   "name",
-                  "archivedAt"
+                  "archivedAt",
+                  "uniqueAuthorCount"
                 ]
               }
             }
@@ -980,12 +1888,161 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, featuredMessages, randomUser",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `featuredMessages` (default: all); `include=featuredMessages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[featuredMessages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `featuredMessages` rows that match, as `filter` does for a list: `filter[featuredMessages][column][operator]=value`. The parents stay; `inner=featuredMessages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `featuredMessages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[featuredMessages]",
+            "in": "query",
+            "description": "Number of embedded `featuredMessages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[featuredMessages]",
+            "in": "query",
+            "description": "Embedded `featuredMessages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[randomUser]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `randomUser` (default: all); `include=randomUser` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
               }
             }
           },
@@ -1095,7 +2152,7 @@ expression: openapi
       },
       "patch": {
         "summary": "Update forums by key",
-        "description": "Update the given fields. The key cannot be changed: a key in the body must match the URL.",
+        "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
         "operationId": "update_forums_by_key",
         "parameters": [
           {
@@ -1135,6 +2192,46 @@ expression: openapi
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/forumsUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/forumsUpdateInput"
+              }
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "op",
+                    "path"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "add",
+                        "remove",
+                        "replace",
+                        "move",
+                        "copy",
+                        "test"
+                      ]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "JSON Pointer into the row: `/title`, `/settings/theme`"
+                    },
+                    "from": {
+                      "type": "string",
+                      "description": "JSON Pointer to move or copy from"
+                    },
+                    "value": {}
+                  },
+                  "additionalProperties": false
+                }
               }
             },
             "multipart/form-data": {
@@ -1617,7 +2714,8 @@ expression: openapi
                 "enum": [
                   "id",
                   "name",
-                  "archivedAt"
+                  "archivedAt",
+                  "uniqueAuthorCount"
                 ]
               }
             }
@@ -1627,12 +2725,161 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, featuredMessages, randomUser",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `featuredMessages` (default: all); `include=featuredMessages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[featuredMessages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `featuredMessages` rows that match, as `filter` does for a list: `filter[featuredMessages][column][operator]=value`. The parents stay; `inner=featuredMessages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[featuredMessages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `featuredMessages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[featuredMessages]",
+            "in": "query",
+            "description": "Number of embedded `featuredMessages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[featuredMessages]",
+            "in": "query",
+            "description": "Embedded `featuredMessages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[randomUser]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `randomUser` (default: all); `include=randomUser` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
               }
             }
           },
@@ -2234,6 +3481,91 @@ expression: openapi
             }
           },
           {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
             "name": "Range",
             "in": "header",
             "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
@@ -2418,6 +3750,19 @@ expression: openapi
                 "return=representation",
                 "return=minimal"
               ]
+            }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
             }
           }
         ],
@@ -2619,6 +3964,542 @@ expression: openapi
           }
         }
       },
+      "patch": {
+        "summary": "Update messages by filter",
+        "description": "Set the given columns in every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`. A JSON Patch applies to one row (`PATCH …/{key}`).",
+        "operationId": "update_many_messages",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/messagesUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/messagesUpdateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/messages"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Updated (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type: send JSON or a merge patch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete messages by filter",
+        "description": "Delete every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`.",
+        "operationId": "delete_many_messages",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/messages"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a foreign key still refers to a row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Upsert many messages",
+        "description": "Insert the rows of the array (at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413)), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.",
+        "operationId": "upsert_many_messages",
+        "parameters": [
+          {
+            "name": "conflict",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "The unique key rows are matched by: its columns, comma-separated (default: the primary key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "examples": [
+                "id"
+              ]
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "description": "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "merge",
+                "ignore"
+              ],
+              "default": "merge"
+            }
+          },
+          {
+            "name": "update",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns a merge updates (default: those the rows set, but the key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1000,
+                "items": {
+                  "$ref": "#/components/schemas/messagesCreateInput"
+                }
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rows as they are now (those `ignore` left are the existing ones)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/messages"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Upserted (`Prefer: return=minimal`)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint other than the `conflict` key",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
       "head": {
         "summary": "List messages (headers only)",
         "description": "Retrieve rows from `messages`",
@@ -2743,6 +4624,91 @@ expression: openapi
             }
           },
           {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
             "name": "Range",
             "in": "header",
             "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
@@ -2855,6 +4821,12 @@ expression: openapi
               },
               "Accept-Post": {
                 "description": "The request media types of a create",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Patch": {
+                "description": "`application/json`, `application/merge-patch+json`",
                 "schema": {
                   "type": "string"
                 }
@@ -3090,6 +5062,63 @@ expression: openapi
             }
           },
           {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
             "name": "If-None-Match",
             "in": "header",
             "description": "Row version: returns 304 without a body when it matches",
@@ -3198,7 +5227,7 @@ expression: openapi
       },
       "patch": {
         "summary": "Update messages by key",
-        "description": "Update the given fields. The key cannot be changed: a key in the body must match the URL.",
+        "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
         "operationId": "update_messages_by_key",
         "parameters": [
           {
@@ -3238,6 +5267,46 @@ expression: openapi
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/messagesUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/messagesUpdateInput"
+              }
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "op",
+                    "path"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "add",
+                        "remove",
+                        "replace",
+                        "move",
+                        "copy",
+                        "test"
+                      ]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "JSON Pointer into the row: `/title`, `/settings/theme`"
+                    },
+                    "from": {
+                      "type": "string",
+                      "description": "JSON Pointer to move or copy from"
+                    },
+                    "value": {}
+                  },
+                  "additionalProperties": false
+                }
               }
             },
             "multipart/form-data": {
@@ -3759,6 +5828,63 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
               }
             }
           },
@@ -4358,12 +6484,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -4378,6 +6504,118 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -4566,6 +6804,19 @@ expression: openapi
                 "return=minimal"
               ]
             }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
           }
         ],
         "requestBody": {
@@ -4751,6 +7002,540 @@ expression: openapi
           }
         }
       },
+      "patch": {
+        "summary": "Update users by filter",
+        "description": "Set the given columns in every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`. A JSON Patch applies to one row (`PATCH …/{key}`).",
+        "operationId": "update_many_users",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/usersFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/usersUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/usersUpdateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/users"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Updated (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type: send JSON or a merge patch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete users by filter",
+        "description": "Delete every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`.",
+        "operationId": "delete_many_users",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/usersFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/users"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a foreign key still refers to a row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Upsert many users",
+        "description": "Insert the rows of the array (at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413)), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.",
+        "operationId": "upsert_many_users",
+        "parameters": [
+          {
+            "name": "conflict",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "The unique key rows are matched by: its columns, comma-separated (default: the primary key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "examples": [
+                "id",
+                "username"
+              ]
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "description": "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "merge",
+                "ignore"
+              ],
+              "default": "merge"
+            }
+          },
+          {
+            "name": "update",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns a merge updates (default: those the rows set, but the key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1000,
+                "items": {
+                  "$ref": "#/components/schemas/usersCreateInput"
+                }
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rows as they are now (those `ignore` left are the existing ones)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/users"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Upserted (`Prefer: return=minimal`)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint other than the `conflict` key",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
       "head": {
         "summary": "List users (headers only)",
         "description": "Retrieve rows from `users`",
@@ -4849,12 +7634,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -4869,6 +7654,118 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -4984,6 +7881,12 @@ expression: openapi
               },
               "Accept-Post": {
                 "description": "The request media types of a create",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Patch": {
+                "description": "`application/json`, `application/merge-patch+json`",
                 "schema": {
                   "type": "string"
                 }
@@ -5206,12 +8109,96 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
               }
             }
           },
@@ -5321,7 +8308,7 @@ expression: openapi
       },
       "patch": {
         "summary": "Update users by key",
-        "description": "Update the given fields. The key cannot be changed: a key in the body must match the URL.",
+        "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
         "operationId": "update_users_by_key",
         "parameters": [
           {
@@ -5361,6 +8348,46 @@ expression: openapi
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/usersUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/usersUpdateInput"
+              }
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "op",
+                    "path"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "add",
+                        "remove",
+                        "replace",
+                        "move",
+                        "copy",
+                        "test"
+                      ]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "JSON Pointer into the row: `/title`, `/settings/theme`"
+                    },
+                    "from": {
+                      "type": "string",
+                      "description": "JSON Pointer to move or copy from"
+                    },
+                    "value": {}
+                  },
+                  "additionalProperties": false
+                }
               }
             },
             "multipart/form-data": {
@@ -5858,12 +8885,96 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
               }
             }
           },
@@ -6469,6 +9580,91 @@ expression: openapi
             }
           },
           {
+            "name": "fields[author]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `author` (default: all); `include=author` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[user]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `user` (default: all); `include=user` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "fields[forum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `forum` (default: all); `include=forum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: author, user, forum",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
             "name": "Prefer",
             "in": "header",
             "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
@@ -6652,6 +9848,66 @@ expression: openapi
                   },
                   "include": {
                     "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    }
+                  },
+                  "embed": {
+                    "type": "object",
+                    "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+                    "propertyNames": {
+                      "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    },
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "fields": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filter": {
+                          "type": "object"
+                        },
+                        "order": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "first": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        },
+                        "offset": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "inner": {
+                    "type": "array",
+                    "description": "Relations the rows must have a (matching) row through",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    }
+                  },
+                  "anti": {
+                    "type": "array",
+                    "description": "Relations the rows must have no (matching) row through",
                     "items": {
                       "type": "string",
                       "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
@@ -7275,12 +10531,96 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
               }
             }
           }
@@ -7559,12 +10899,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages",
+            "description": "Relations to embed, with nested ones as dotted paths (`posts.author`), as deep as the depth and cost limits allow. Relations: messages, mostRecentForum",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
               }
             }
           },
@@ -7579,6 +10919,118 @@ expression: openapi
                 "count=planned",
                 "count=estimated"
               ]
+            }
+          },
+          {
+            "name": "fields[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `messages` (default: all); `include=messages` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "filter[messages]",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "Keeps only the embedded `messages` rows that match, as `filter` does for a list: `filter[messages][column][operator]=value`. The parents stay; `inner=messages` keeps those with a match",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "order[messages]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Order of the embedded `messages` rows: `column`, `-column` or `column:desc`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt)(:(asc|desc))?$"
+              }
+            }
+          },
+          {
+            "name": "first[messages]",
+            "in": "query",
+            "description": "Number of embedded `messages` rows (at most `limits.page_size.max`)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset[messages]",
+            "in": "query",
+            "description": "Embedded `messages` rows to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "fields[mostRecentForum]",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns of the embedded `mostRecentForum` (default: all); `include=mostRecentForum` first",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "uniqueAuthorCount"
+                ]
+              }
+            }
+          },
+          {
+            "name": "inner",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join. Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "anti",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`). Relations: messages",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
             }
           },
           {
@@ -7764,7 +11216,67 @@ expression: openapi
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                      "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    }
+                  },
+                  "embed": {
+                    "type": "object",
+                    "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+                    "propertyNames": {
+                      "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    },
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "fields": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filter": {
+                          "type": "object"
+                        },
+                        "order": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "first": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        },
+                        "offset": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "inner": {
+                    "type": "array",
+                    "description": "Relations the rows must have a (matching) row through",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    }
+                  },
+                  "anti": {
+                    "type": "array",
+                    "description": "Relations the rows must have no (matching) row through",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
                     }
                   }
                 },
@@ -8533,7 +12045,8 @@ expression: openapi
               "enum": [
                 "id",
                 "name",
-                "archivedAt"
+                "archivedAt",
+                "uniqueAuthorCount"
               ]
             }
           },
@@ -8541,7 +12054,67 @@ expression: openapi
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "embed": {
+            "type": "object",
+            "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+            "propertyNames": {
+              "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "filter": {
+                  "type": "object"
+                },
+                "order": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "first": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "inner": {
+            "type": "array",
+            "description": "Relations the rows must have a (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "anti": {
+            "type": "array",
+            "description": "Relations the rows must have no (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(messages|featuredMessages|randomUser)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
             }
           }
         },
@@ -9413,6 +12986,66 @@ expression: openapi
               "type": "string",
               "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
             }
+          },
+          "embed": {
+            "type": "object",
+            "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+            "propertyNames": {
+              "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "filter": {
+                  "type": "object"
+                },
+                "order": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "first": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "inner": {
+            "type": "array",
+            "description": "Relations the rows must have a (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "anti": {
+            "type": "array",
+            "description": "Relations the rows must have no (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
           }
         },
         "additionalProperties": false
@@ -10200,7 +13833,67 @@ expression: openapi
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "embed": {
+            "type": "object",
+            "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+            "propertyNames": {
+              "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "filter": {
+                  "type": "object"
+                },
+                "order": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "first": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "inner": {
+            "type": "array",
+            "description": "Relations the rows must have a (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            }
+          },
+          "anti": {
+            "type": "array",
+            "description": "Relations the rows must have no (matching) row through",
+            "items": {
+              "type": "string",
+              "pattern": "^(messages|mostRecentForum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
             }
           }
         },

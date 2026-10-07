@@ -671,6 +671,7 @@ impl OpenApiGenerator {
             } else if single_row {
                 query_params.push(Self::fields_param(table, catalog));
                 query_params.push(Self::include_param(table, catalog));
+                query_params.extend(Self::embed_parameters(table, catalog, limits, false));
                 body_properties.insert("fields".into(), json!({ "type": "array", "items": { "type": "string", "enum": Self::visible_fields(table, catalog) } }));
             }
         }

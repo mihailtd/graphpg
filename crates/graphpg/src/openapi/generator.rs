@@ -147,6 +147,77 @@ pub(super) fn alternation(names: &[String]) -> String {
     format!("({})", escaped.join("|"))
 }
 
+/// The `filter` of a write by filter.
+fn collection_filter_param(name: &str) -> Value {
+    json!({
+        "name": "filter", "in": "query", "style": "deepObject", "explode": true,
+        "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+        "schema": schema_ref(&format!("{name}Filter"))
+    })
+}
+
+fn unfiltered_param() -> Value {
+    json!({
+        "name": "unfiltered", "in": "query",
+        "description": "Allow the write without a `filter`, which writes every row",
+        "schema": { "type": "boolean", "default": false }
+    })
+}
+
+/// What a column the rows of a bulk write do not set becomes.
+fn missing_param() -> Value {
+    json!({
+        "name": "missing", "in": "query",
+        "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+        "schema": { "type": "string", "enum": ["default", "null"], "default": "default" }
+    })
+}
+
+/// RFC 6902 JSON Patch: an array of operations.
+fn json_patch_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "required": ["op", "path"],
+            "properties": {
+                "op": { "type": "string", "enum": ["add", "remove", "replace", "move", "copy", "test"] },
+                "path": { "type": "string", "description": "JSON Pointer into the row: `/title`, `/settings/theme`" },
+                "from": { "type": "string", "description": "JSON Pointer to move or copy from" },
+                "value": {}
+            },
+            "additionalProperties": false
+        }
+    })
+}
+
+/// Replaces the `$ref`s to components that do not exist with a plain object schema.
+fn fix_dangling_refs(
+    paths: &mut serde_json::Map<String, Value>,
+    schemas: &serde_json::Map<String, Value>,
+) {
+    fn fix(value: &mut Value, schemas: &serde_json::Map<String, Value>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(name) = map
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|r| r.strip_prefix("#/components/schemas/"))
+                {
+                    if !schemas.contains_key(name) {
+                        *value = json!({ "type": "object" });
+                        return;
+                    }
+                }
+                map.values_mut().for_each(|v| fix(v, schemas));
+            }
+            Value::Array(items) => items.iter_mut().for_each(|v| fix(v, schemas)),
+            _ => {}
+        }
+    }
+    paths.values_mut().for_each(|v| fix(v, schemas));
+}
+
 fn regex_escape(s: &str) -> String {
     s.chars()
         .flat_map(|c| {
@@ -339,8 +410,12 @@ impl OpenApiGenerator {
             schemas.extend(inputs.into_components());
         }
         Self::generate_rpc_paths(catalog, config, default_schema, &tables, &mut paths);
+        let webhooks = Self::generate_webhooks(&tables, config, &mut schemas);
 
-        json!({
+        // The filter of a relation whose table the API does not serve has nothing to refer to
+        fix_dangling_refs(&mut paths, &schemas);
+
+        let mut doc = json!({
             "openapi": "3.1.0",
             "info": {
                 "title": "graphpg REST API",
@@ -361,7 +436,98 @@ impl OpenApiGenerator {
                     }
                 }
             }
-        })
+        });
+        if !webhooks.is_empty() {
+            doc["webhooks"] = Value::Object(webhooks);
+        }
+        doc
+    }
+
+    /// OpenAPI 3.1 `webhooks`: the change events the configuration declares for the tables the
+    /// API serves (`entities.<table>.events`), one `<table>.<operation>` each, with a payload
+    /// holding the row as it was (`old`) and as it is (`new`). Adds the payload components.
+    fn generate_webhooks(
+        tables: &[&TableMetadata],
+        config: &Config,
+        schemas: &mut serde_json::Map<String, Value>,
+    ) -> serde_json::Map<String, Value> {
+        use crate::config::models::EventOperation;
+        let mut webhooks = serde_json::Map::new();
+        for table in tables {
+            let Some(events) = config
+                .entities
+                .get(&table.name)
+                .and_then(|e| e.events.as_ref())
+            else {
+                continue;
+            };
+            let name = &table.name;
+            let mut operations = events.operations.clone();
+            operations.sort();
+            operations.dedup();
+            for op in operations {
+                let (old, new, what) = match op {
+                    EventOperation::Insert => (
+                        json!({ "type": "null" }),
+                        schema_ref(name),
+                        "A row was inserted",
+                    ),
+                    EventOperation::Update => {
+                        (schema_ref(name), schema_ref(name), "A row was updated")
+                    }
+                    EventOperation::Delete => (
+                        schema_ref(name),
+                        json!({ "type": "null" }),
+                        "A row was deleted",
+                    ),
+                };
+                let event = format!("{name}.{}", op.as_str());
+                let mut capitalized = op.as_str().to_string();
+                capitalized[..1].make_ascii_uppercase();
+                let component = format!("{name}{capitalized}Event");
+                schemas.insert(
+                    component.clone(),
+                    json!({
+                        "type": "object",
+                        "description": format!("{what} in `{name}`: the row as it was (`old`) and as it is (`new`)"),
+                        "properties": {
+                            "id": { "type": "string", "format": "uuid", "description": "Identifies the event, the same on every delivery attempt" },
+                            "createdAt": { "type": "string", "format": "date-time", "description": "When the change was committed" },
+                            "table": {
+                                "type": "object",
+                                "properties": { "schema": { "type": "string" }, "name": { "type": "string", "const": name } },
+                                "required": ["schema", "name"]
+                            },
+                            "op": { "type": "string", "const": op.as_str() },
+                            "old": old,
+                            "new": new
+                        },
+                        "required": ["id", "createdAt", "table", "op", "old", "new"]
+                    }),
+                );
+                let description = match &events.description {
+                    Some(text) => format!("{what} in `{name}`. {text}"),
+                    None => format!("{what} in `{name}`."),
+                };
+                webhooks.insert(
+                    event.clone(),
+                    json!({
+                        "post": {
+                            "summary": format!("{event} event"),
+                            "description": description,
+                            "operationId": format!("webhook_{name}_{}", op.as_str()),
+                            "requestBody": { "required": true, "content": {
+                                "application/json": { "schema": schema_ref(&component) }
+                            } },
+                            "responses": {
+                                "2XX": { "description": "The event was received: any 2xx acknowledges it" }
+                            }
+                        }
+                    }),
+                );
+            }
+        }
+        webhooks
     }
 
     fn generate_table_paths(
@@ -376,6 +542,7 @@ impl OpenApiGenerator {
         let read = allowed(Operation::Read);
         let create = allowed(Operation::Create);
         let create_many = create && allowed(Operation::CreateMany);
+        let upsert_ops = allowed(Operation::Upsert);
         let update = allowed(Operation::Update) && has_key;
         let delete = allowed(Operation::Delete) && has_key;
         let upsert = allowed(Operation::Upsert) && has_key;
@@ -469,7 +636,7 @@ impl OpenApiGenerator {
                     }
                 ),
                 "operationId": format!("create_{name}"),
-                "parameters": [prefer_param(true)],
+                "parameters": if create_many { vec![prefer_param(true), missing_param()] } else { vec![prefer_param(true)] },
                 "requestBody": { "required": true, "content": {
                     "application/json": { "schema": body },
                     "text/csv": { "schema": { "type": "string" } },
@@ -494,15 +661,132 @@ impl OpenApiGenerator {
                 ]),
             }));
         }
+        let update_many = allowed(Operation::UpdateMany);
+        let delete_many = allowed(Operation::DeleteMany);
+        let bulk_upsert = upsert_ops && create_many && table.has_upsert();
+        let limit_text = match config.limits.bulk_rows {
+            Some(max) => format!("at most {max} rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413)"),
+            None => "any number of rows".to_string(),
+        };
+        let affected_headers = json!({
+            "X-Affected-Count": { "description": "Number of rows written", "schema": { "type": "integer" } },
+            "Preference-Applied": { "schema": { "type": "string" } }
+        });
+        if update_many {
+            collection.insert("patch".into(), json!({
+                "summary": format!("Update {name} by filter"),
+                "description": format!("Set the given columns in every row the `filter` matches, in one statement and one transaction; {limit_text}. Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`. A JSON Patch applies to one row (`PATCH …/{{key}}`)."),
+                "operationId": format!("update_many_{name}"),
+                "parameters": [collection_filter_param(name), unfiltered_param(), prefer_param(true)],
+                "requestBody": { "required": true, "content": {
+                    "application/json": { "schema": schema_ref(&format!("{name}UpdateInput")) },
+                    "application/merge-patch+json": { "schema": schema_ref(&format!("{name}UpdateInput")) }
+                } },
+                "responses": responses(json!({
+                    "200": {
+                        "description": "The updated rows",
+                        "headers": affected_headers.clone(),
+                        "content": json_content(rows.clone())
+                    },
+                    "204": { "description": "Updated (`Prefer: return=minimal`); `X-Affected-Count` has the count", "headers": affected_headers.clone() }
+                }), &[
+                    ("409", "Conflict: a unique constraint, with its typed `code`"),
+                    ("413", "Content Too Large: the filter matches more rows than `limits.bulk_rows`"),
+                    ("415", "Unsupported Media Type: send JSON or a merge patch"),
+                    ("422", "Unprocessable Content: a validation failure, with its typed `code`"),
+                ]),
+            }));
+        }
+        if delete_many {
+            collection.insert("delete".into(), json!({
+                "summary": format!("Delete {name} by filter"),
+                "description": format!("Delete every row the `filter` matches, in one statement and one transaction; {limit_text}. Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`."),
+                "operationId": format!("delete_many_{name}"),
+                "parameters": [collection_filter_param(name), unfiltered_param(), prefer_param(true)],
+                "responses": responses(json!({
+                    "200": {
+                        "description": "The deleted rows",
+                        "headers": affected_headers.clone(),
+                        "content": json_content(rows.clone())
+                    },
+                    "204": { "description": "Deleted (`Prefer: return=minimal`); `X-Affected-Count` has the count", "headers": affected_headers.clone() }
+                }), &[
+                    ("409", "Conflict: a foreign key still refers to a row"),
+                    ("413", "Content Too Large: the filter matches more rows than `limits.bulk_rows`"),
+                ]),
+            }));
+        }
+        if bulk_upsert {
+            let keys: Vec<String> = table
+                .conflict_keys()
+                .map(|(_, cols)| {
+                    cols.iter()
+                        .map(|c| c.field_name.clone())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .collect();
+            let updatable: Vec<String> = table
+                .writable_columns()
+                .map(|c| c.field_name.clone())
+                .collect();
+            collection.insert("put".into(), json!({
+                "summary": format!("Upsert many {name}"),
+                "description": format!("Insert the rows of the array ({}), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.", limit_text),
+                "operationId": format!("upsert_many_{name}"),
+                "parameters": [
+                    {
+                        "name": "conflict", "in": "query", "style": "form", "explode": false,
+                        "description": "The unique key rows are matched by: its columns, comma-separated (default: the primary key)",
+                        "schema": { "type": "array", "items": { "type": "string" }, "examples": keys }
+                    },
+                    {
+                        "name": "resolution", "in": "query",
+                        "description": "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it",
+                        "schema": { "type": "string", "enum": ["merge", "ignore"], "default": "merge" }
+                    },
+                    {
+                        "name": "update", "in": "query", "style": "form", "explode": false,
+                        "description": "Columns a merge updates (default: those the rows set, but the key)",
+                        "schema": { "type": "array", "items": { "type": "string", "enum": updatable } }
+                    },
+                    missing_param(),
+                    prefer_param(true)
+                ],
+                "requestBody": { "required": true, "content": {
+                    "application/json": { "schema": { "type": "array", "minItems": 1, "maxItems": config.limits.bulk_rows,
+                        "items": schema_ref(&format!("{name}CreateInput")) } },
+                    "text/csv": { "schema": { "type": "string" } }
+                } },
+                "responses": responses(json!({
+                    "200": {
+                        "description": "The rows as they are now (those `ignore` left are the existing ones)",
+                        "headers": affected_headers.clone(),
+                        "content": json_content(rows.clone())
+                    },
+                    "204": { "description": "Upserted (`Prefer: return=minimal`)", "headers": affected_headers.clone() }
+                }), &[
+                    ("409", "Conflict: a unique constraint other than the `conflict` key"),
+                    ("413", "Content Too Large: more rows than `limits.bulk_rows`"),
+                    ("422", "Unprocessable Content: a validation failure, with its typed `code`"),
+                ]),
+            }));
+        }
         if let Some(get) = collection.get("get").cloned() {
             collection.insert("head".into(), head_of(&get, format!("head_{name}")));
         }
         if !collection.is_empty() {
-            let media: &[(&str, &str)] = if create {
-                &[("Accept-Post", "The request media types of a create")]
-            } else {
-                &[]
-            };
+            let mut media: Vec<(&str, &str)> = Vec::new();
+            if create {
+                media.push(("Accept-Post", "The request media types of a create"));
+            }
+            if update_many {
+                media.push((
+                    "Accept-Patch",
+                    "`application/json`, `application/merge-patch+json`",
+                ));
+            }
+            let media = &media[..];
             collection.insert(
                 "options".into(),
                 options_of(format!("options_{name}"), media),
@@ -556,6 +840,12 @@ impl OpenApiGenerator {
                 Self::fields_param(table, catalog),
                 Self::include_param(table, catalog),
             ];
+            params.extend(Self::embed_parameters(
+                table,
+                catalog,
+                &config.limits,
+                false,
+            ));
             params.retain(|p| !p.is_null());
             if table.has_row_version() {
                 params.push(json!({
@@ -626,13 +916,15 @@ impl OpenApiGenerator {
         if update {
             item.insert("patch".into(), json!({
                 "summary": format!("Update {name} by key"),
-                "description": "Update the given fields. The key cannot be changed: a key in the body must match the URL.",
+                "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
                 "operationId": format!("update_{name}_by_key"),
                 "parameters": [key_param.clone(),
                     if_match_param("Row version (the `ETag`) the update must apply to; 412 if the row changed"),
                     prefer_previous_param()],
                 "requestBody": { "required": true, "content": {
                     "application/json": { "schema": schema_ref(&format!("{name}UpdateInput")) },
+                    "application/merge-patch+json": { "schema": schema_ref(&format!("{name}UpdateInput")) },
+                    "application/json-patch+json": { "schema": json_patch_schema() },
                     "multipart/form-data": { "schema": Self::multipart_schema(table, catalog) }
                 } },
                 "responses": write_responses("Updated", true),
@@ -879,6 +1171,14 @@ impl OpenApiGenerator {
             .visible_columns()
             .map(|c| c.field_name.clone())
             .chain(catalog.cti_columns(table).into_iter().map(|(name, _)| name))
+            .chain(
+                catalog
+                    .object_fields(&table.schema, &table.name)
+                    .iter()
+                    .filter(|f| matches!(f.kind, FieldKind::Function(_)))
+                    .filter(|f| crate::server::rest::computed_value_exists(catalog, table, &f.name))
+                    .map(|f| f.name.clone()),
+            )
             .collect()
     }
 
@@ -890,14 +1190,88 @@ impl OpenApiGenerator {
         })
     }
 
-    /// The to-one and to-many relations (not their connections) that can be embedded.
+    /// The to-one and to-many relations (not their connections) and the computed relationships
+    /// (functions mounted on the table that return rows) that can be embedded.
     pub(super) fn relation_names(table: &TableMetadata, catalog: &DatabaseCatalog) -> Vec<String> {
+        Self::embeddables(table, catalog)
+            .into_iter()
+            .map(|e| e.name)
+            .collect()
+    }
+
+    pub(super) fn embeddables<'a>(
+        table: &TableMetadata,
+        catalog: &'a DatabaseCatalog,
+    ) -> Vec<crate::server::rest::Embeddable<'a>> {
         catalog
             .object_fields(&table.schema, &table.name)
             .iter()
-            .filter(|f| matches!(f.kind, FieldKind::Relation(_)))
-            .map(|f| f.name.clone())
+            .filter(|f| matches!(f.kind, FieldKind::Relation(_) | FieldKind::Function(_)))
+            .filter_map(|f| crate::server::rest::find_embeddable(catalog, table, &f.name))
             .collect()
+    }
+
+    /// The controls of every embedded relation of `table`, one set of parameters each:
+    /// `fields[rel]` and, for a list of rows, `filter[rel]`, `order[rel]`, `first[rel]` and
+    /// `offset[rel]`; and, on a collection, `inner` and `anti`.
+    pub(super) fn embed_parameters(
+        table: &TableMetadata,
+        catalog: &DatabaseCatalog,
+        limits: &LimitsConfig,
+        collection: bool,
+    ) -> Vec<Value> {
+        let mut params = Vec::new();
+        let embeddables = Self::embeddables(table, catalog);
+        for e in &embeddables {
+            let name = &e.name;
+            let columns = Self::visible_fields(e.target, catalog);
+            params.push(json!({
+                "name": format!("fields[{name}]"), "in": "query", "style": "form", "explode": false,
+                "description": format!("Columns of the embedded `{name}` (default: all); `include={name}` first"),
+                "schema": { "type": "array", "items": { "type": "string", "enum": columns } }
+            }));
+            if !e.many {
+                continue;
+            }
+            params.push(json!({
+                "name": format!("filter[{name}]"), "in": "query", "style": "deepObject", "explode": true,
+                "description": format!("Keeps only the embedded `{name}` rows that match, as `filter` does for a list: `filter[{name}][column][operator]=value`. The parents stay; `inner={name}` keeps those with a match"),
+                "schema": schema_ref(&format!("{}Filter", e.target.name))
+            }));
+            params.push(json!({
+                "name": format!("order[{name}]"), "in": "query", "style": "form", "explode": false,
+                "description": format!("Order of the embedded `{name}` rows: `column`, `-column` or `column:desc`"),
+                "schema": { "type": "array", "items": { "type": "string", "pattern": format!("^[+-]?{}(:(asc|desc))?$", alternation(&columns)) } }
+            }));
+            params.push(json!({
+                "name": format!("first[{name}]"), "in": "query",
+                "description": format!("Number of embedded `{name}` rows (at most `limits.page_size.max`)"),
+                "schema": Self::page_schema(limits)
+            }));
+            params.push(json!({
+                "name": format!("offset[{name}]"), "in": "query",
+                "description": format!("Embedded `{name}` rows to skip"),
+                "schema": { "type": "integer", "minimum": 0 }
+            }));
+        }
+        let relations: Vec<String> = embeddables
+            .iter()
+            .filter(|e| e.relation)
+            .map(|e| e.name.clone())
+            .collect();
+        if collection && !relations.is_empty() {
+            for (name, text) in [
+                ("inner", "Keeps the rows that have a row through each of these relations (matching its `filter[relation]`), like an inner join"),
+                ("anti", "Keeps the rows that have no row through any of these relations (matching its `filter[relation]`)"),
+            ] {
+                params.push(json!({
+                    "name": name, "in": "query", "style": "form", "explode": false,
+                    "description": format!("{text}. Relations: {}", relations.join(", ")),
+                    "schema": { "type": "array", "items": { "type": "string", "pattern": format!("^{}(\\.[A-Za-z_][A-Za-z0-9_]*)*$", alternation(&relations)) } }
+                }));
+            }
+        }
+        params
     }
 
     /// A page size: at least 1, at most `limits.page_size.max`.
@@ -988,6 +1362,7 @@ impl OpenApiGenerator {
             Self::include_param(table, catalog),
             prefer_param(false),
         ];
+        params.extend(Self::embed_parameters(table, catalog, limits, true));
         params.retain(|p| !p.is_null());
         Value::Array(params)
     }
@@ -1035,6 +1410,41 @@ impl OpenApiGenerator {
                 "type": "array",
                 "items": { "type": "string", "pattern": format!("^{}(\\.[A-Za-z_][A-Za-z0-9_]*)*$", alternation(&relations)) }
             });
+            let path = format!("^{}(\\.[A-Za-z_][A-Za-z0-9_]*)*$", alternation(&relations));
+            properties["embed"] = json!({
+                "type": "object",
+                "description": "Controls of the embedded relations, by `include` path: the columns, the filter, order and page of its rows",
+                "propertyNames": { "pattern": path },
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                        "fields": { "type": "array", "items": { "type": "string" } },
+                        "filter": { "type": "object" },
+                        "order": {
+                            "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
+                        },
+                        "first": Self::page_schema(limits),
+                        "offset": { "type": "integer", "minimum": 0 }
+                    },
+                    "additionalProperties": false
+                }
+            });
+            for (name, what) in [
+                (
+                    "inner",
+                    "Relations the rows must have a (matching) row through",
+                ),
+                (
+                    "anti",
+                    "Relations the rows must have no (matching) row through",
+                ),
+            ] {
+                properties[name] = json!({
+                    "type": "array",
+                    "description": what,
+                    "items": { "type": "string", "pattern": path }
+                });
+            }
         }
         properties
     }
