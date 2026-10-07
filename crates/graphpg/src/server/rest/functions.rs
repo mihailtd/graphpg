@@ -23,15 +23,18 @@ use axum::http::Method;
 pub const RPC_RESOURCE: &str = "rpc";
 
 /// The functions the REST API serves: root fields of the schema (not computed columns, not
-/// omitted ones), by SQL name. When several schemas have one, the default schema's wins.
+/// omitted ones), by SQL name. When several schemas have one, the default schema's wins;
+/// with a `scope` (`/rest/{schema}/rpc/…`), only that schema's are served.
 pub fn rpc_functions<'a>(
     catalog: &'a DatabaseCatalog,
     default_schema: &str,
+    scope: Option<&str>,
 ) -> Vec<&'a FunctionMetadata> {
     let mut all: Vec<&FunctionMetadata> = [false, true]
         .into_iter()
         .flat_map(|mutation| catalog.function_root_fields(mutation))
         .filter(|f| !f.row_argument && catalog.function_is_exposed(f))
+        .filter(|f| scope.is_none_or(|schema| f.schema == schema))
         .collect();
     all.sort_by_key(|f| f.schema != default_schema);
     let mut seen = std::collections::HashSet::new();
@@ -202,179 +205,185 @@ fn method_not_allowed(f: &FunctionMetadata) -> ProblemDetails {
 pub async fn rest_rpc_handler(
     method: Method,
     State(state): State<Arc<ServerState>>,
-    Path(name): Path<String>,
+    Scoped(schema, name): Scoped<String>,
     RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{RPC_RESOURCE}/{name}"), async {
-        let ctx = Ctx::new(&state, &headers, name.clone()).await?;
-        let f = rpc_functions(&ctx.catalog, &state.default_schema)
-            .into_iter()
-            .find(|f| f.name == name)
-            .ok_or_else(|| ProblemDetails::not_found(format!("Function `{name}` not found")))?;
-        let is_get = method == Method::GET;
-        if is_get && f.volatile {
-            return Err(method_not_allowed(f));
-        }
-        let shape = shape(&ctx.catalog, f)?;
-
-        // Arguments and, for functions returning rows, the options of a list
-        let (arguments, options): (serde_json::Map<_, _>, Options) = if is_get {
-            let (args, rest) = split_query(raw_query.as_deref().unwrap_or(""), f)?;
-            let mut typed = serde_json::Map::new();
-            for arg in &f.arguments {
-                if let Some(text) = args.get(&arg.graphql_name()) {
-                    typed.insert(arg.graphql_name(), parse_argument_text(text, arg)?);
-                }
+    respond(
+        format!("{}/{RPC_RESOURCE}/{name}", rest_base(&schema)),
+        async {
+            let ctx = Ctx::new(&state, &headers, schema.clone(), name.clone()).await?;
+            let f = rpc_functions(&ctx.catalog, &state.default_schema, ctx.schema.as_deref())
+                .into_iter()
+                .find(|f| f.name == name)
+                .ok_or_else(|| ProblemDetails::not_found(format!("Function `{name}` not found")))?;
+            let is_get = method == Method::GET;
+            if is_get && f.volatile {
+                return Err(method_not_allowed(f));
             }
-            (typed, Options::Query(rest))
-        } else {
-            if raw_query.as_deref().is_some_and(|q| !q.is_empty()) {
-                return Err(ProblemDetails::bad_request(
+            let shape = shape(&ctx.catalog, f)?;
+
+            // Arguments and, for functions returning rows, the options of a list
+            let (arguments, options): (serde_json::Map<_, _>, Options) = if is_get {
+                let (args, rest) = split_query(raw_query.as_deref().unwrap_or(""), f)?;
+                let mut typed = serde_json::Map::new();
+                for arg in &f.arguments {
+                    if let Some(text) = args.get(&arg.graphql_name()) {
+                        typed.insert(arg.graphql_name(), parse_argument_text(text, arg)?);
+                    }
+                }
+                (typed, Options::Query(rest))
+            } else {
+                if raw_query.as_deref().is_some_and(|q| !q.is_empty()) {
+                    return Err(ProblemDetails::bad_request(
                     "POST takes its arguments and options in the JSON body, not the query string",
                 ));
-            }
-            let single_json_arg = f.arguments.len() == 1
-                && matches!(f.arguments[0].pg_type, PgType::Json | PgType::Jsonb);
-            let (args, options) = if single_json_arg {
-                if body.is_empty() {
-                    (
-                        serde_json::Map::new(),
-                        Options::Body(serde_json::Map::new()),
-                    )
-                } else {
-                    let parsed = parse_json_body(&body)?;
-                    match parsed {
-                        serde_json::Value::Object(mut map) if map.contains_key("args") => {
-                            let args = match map.remove("args") {
-                                Some(serde_json::Value::Object(args)) => args,
-                                Some(_) => {
-                                    return Err(ProblemDetails::invalid(
-                                        "`args` must be an object",
-                                        "args",
-                                    ))
-                                }
-                                None => serde_json::Map::new(),
-                            };
-                            (args, Options::Body(map))
-                        }
-                        raw_json => {
-                            let mut args = serde_json::Map::new();
-                            args.insert(f.arguments[0].graphql_name(), raw_json);
-                            (args, Options::Body(serde_json::Map::new()))
-                        }
-                    }
                 }
-            } else {
-                let mut body = if body.is_empty() {
-                    serde_json::Map::new()
-                } else {
-                    json_object(parse_json_body(&body)?)?
-                };
-                let args = match body.remove("args") {
-                    None => serde_json::Map::new(),
-                    Some(serde_json::Value::Object(args)) => args,
-                    Some(_) => {
-                        return Err(ProblemDetails::invalid("`args` must be an object", "args"))
-                    }
-                };
-                (args, Options::Body(body))
-            };
-            (args, options)
-        };
-        let args = bind_arguments(&ctx, f, arguments)?;
-
-        match shape {
-            Shape::Connection(table) => {
-                ctx.allow(table, Operation::Read)?;
-                let query = options.into_query(Some((table, QueryKind::Collection)), &ctx)?;
-                let target = ListTarget {
-                    table,
-                    root: &f.field_name,
-                    connection: true,
-                    args,
-                };
-                let listing =
-                    list_rows(&ctx, target, &query, if is_get { "GET" } else { "POST" }).await?;
-                let link = is_get
-                    .then(|| {
-                        build_link_header(
-                            &format!("{RPC_RESOURCE}/{}", f.name),
-                            raw_query.as_deref(),
-                            listing.page_info.as_ref(),
-                            &query,
-                        )
-                    })
-                    .flatten();
-                Ok(listing_response(
-                    listing,
-                    ctx.prefs,
-                    link,
-                    !is_get,
-                    Media::Json,
-                ))
-            }
-            other => {
-                let (children, table) = match &other {
-                    Shape::Rows(table) => {
-                        ctx.allow(table, Operation::Read)?;
-                        let query = options.into_query(Some((table, QueryKind::Item)), &ctx)?;
+                let single_json_arg = f.arguments.len() == 1
+                    && matches!(f.arguments[0].pg_type, PgType::Json | PgType::Jsonb);
+                let (args, options) = if single_json_arg {
+                    if body.is_empty() {
                         (
-                            select_fields(
-                                &ctx.catalog,
-                                table,
-                                query.fields.as_ref(),
-                                query.include.as_ref(),
-                            )?,
-                            Some(*table),
+                            serde_json::Map::new(),
+                            Options::Body(serde_json::Map::new()),
                         )
+                    } else {
+                        let parsed = parse_json_body(&body)?;
+                        match parsed {
+                            serde_json::Value::Object(mut map) if map.contains_key("args") => {
+                                let args = match map.remove("args") {
+                                    Some(serde_json::Value::Object(args)) => args,
+                                    Some(_) => {
+                                        return Err(ProblemDetails::invalid(
+                                            "`args` must be an object",
+                                            "args",
+                                        ))
+                                    }
+                                    None => serde_json::Map::new(),
+                                };
+                                (args, Options::Body(map))
+                            }
+                            raw_json => {
+                                let mut args = serde_json::Map::new();
+                                args.insert(f.arguments[0].graphql_name(), raw_json);
+                                (args, Options::Body(serde_json::Map::new()))
+                            }
+                        }
                     }
-                    Shape::Value => {
-                        options.into_query(None, &ctx)?;
-                        let FunctionReturn::Value(pg_type) = &f.returns else {
-                            unreachable!("a value shape")
-                        };
-                        (value_selection(&ctx.catalog, pg_type, 0), None)
-                    }
-                    Shape::Record => {
-                        options.into_query(None, &ctx)?;
-                        let columns = f
-                            .return_columns
-                            .iter()
-                            .map(|c| {
-                                RequestField::new(crate::catalog::models::to_camel_case(&c.name))
-                                    .with_children(value_selection(&ctx.catalog, &c.pg_type, 0))
-                            })
-                            .collect();
-                        (columns, None)
-                    }
-                    _ => {
-                        options.into_query(None, &ctx)?;
-                        (Vec::new(), None)
-                    }
-                };
-                let field = RequestField::new(&f.field_name)
-                    .with_arguments(args)
-                    .with_children(children);
-                let op = if f.volatile {
-                    RequestOperation::mutation(vec![field])
                 } else {
-                    RequestOperation::query(vec![field])
+                    let mut body = if body.is_empty() {
+                        serde_json::Map::new()
+                    } else {
+                        json_object(parse_json_body(&body)?)?
+                    };
+                    let args = match body.remove("args") {
+                        None => serde_json::Map::new(),
+                        Some(serde_json::Value::Object(args)) => args,
+                        Some(_) => {
+                            return Err(ProblemDetails::invalid("`args` must be an object", "args"))
+                        }
+                    };
+                    (args, Options::Body(body))
                 };
-                let schema = table.map_or(f.schema.as_str(), |t| t.schema.as_str());
-                let data = ctx
-                    .execute(schema, op, if is_get { "GET" } else { "POST" }, f.volatile)
-                    .await?;
-                if matches!(other, Shape::Void) {
-                    return Ok(StatusCode::NO_CONTENT.into_response());
+                (args, options)
+            };
+            let args = bind_arguments(&ctx, f, arguments)?;
+
+            match shape {
+                Shape::Connection(table) => {
+                    ctx.allow(table, Operation::Read)?;
+                    let query = options.into_query(Some((table, QueryKind::Collection)), &ctx)?;
+                    let target = ListTarget {
+                        table,
+                        root: &f.field_name,
+                        connection: true,
+                        args,
+                    };
+                    let listing =
+                        list_rows(&ctx, target, &query, if is_get { "GET" } else { "POST" })
+                            .await?;
+                    let link = is_get
+                        .then(|| {
+                            build_link_header(
+                                &scoped(&ctx.schema, &format!("{RPC_RESOURCE}/{}", f.name)),
+                                raw_query.as_deref(),
+                                listing.page_info.as_ref(),
+                                &query,
+                            )
+                        })
+                        .flatten();
+                    Ok(listing_response(
+                        listing,
+                        ctx.prefs,
+                        link,
+                        !is_get,
+                        Media::Json,
+                    ))
                 }
-                let value = ResponseShaper::unwrap_single(&data, &f.field_name)
-                    .map_err(|e| shaping_error(e, ctx.is_prod))?;
-                Ok((StatusCode::OK, Json(value)).into_response())
+                other => {
+                    let (children, table) = match &other {
+                        Shape::Rows(table) => {
+                            ctx.allow(table, Operation::Read)?;
+                            let query = options.into_query(Some((table, QueryKind::Item)), &ctx)?;
+                            (
+                                select_fields(
+                                    &ctx.catalog,
+                                    table,
+                                    query.fields.as_ref(),
+                                    query.include.as_ref(),
+                                )?,
+                                Some(*table),
+                            )
+                        }
+                        Shape::Value => {
+                            options.into_query(None, &ctx)?;
+                            let FunctionReturn::Value(pg_type) = &f.returns else {
+                                unreachable!("a value shape")
+                            };
+                            (value_selection(&ctx.catalog, pg_type, 0), None)
+                        }
+                        Shape::Record => {
+                            options.into_query(None, &ctx)?;
+                            let columns = f
+                                .return_columns
+                                .iter()
+                                .map(|c| {
+                                    RequestField::new(crate::catalog::models::to_camel_case(
+                                        &c.name,
+                                    ))
+                                    .with_children(value_selection(&ctx.catalog, &c.pg_type, 0))
+                                })
+                                .collect();
+                            (columns, None)
+                        }
+                        _ => {
+                            options.into_query(None, &ctx)?;
+                            (Vec::new(), None)
+                        }
+                    };
+                    let field = RequestField::new(&f.field_name)
+                        .with_arguments(args)
+                        .with_children(children);
+                    let op = if f.volatile {
+                        RequestOperation::mutation(vec![field])
+                    } else {
+                        RequestOperation::query(vec![field])
+                    };
+                    let schema = table.map_or(f.schema.as_str(), |t| t.schema.as_str());
+                    let data = ctx
+                        .execute(schema, op, if is_get { "GET" } else { "POST" }, f.volatile)
+                        .await?;
+                    if matches!(other, Shape::Void) {
+                        return Ok(StatusCode::NO_CONTENT.into_response());
+                    }
+                    let value = ResponseShaper::unwrap_single(&data, &f.field_name)
+                        .map_err(|e| shaping_error(e, ctx.is_prod))?;
+                    Ok((StatusCode::OK, Json(value)).into_response())
+                }
             }
-        }
-    })
+        },
+    )
     .await
 }
 

@@ -57,6 +57,15 @@ async fn setup_multi_schema_db(client: &tokio_postgres::Client) {
             post_id int references multi_app.posts(id)
         );
 
+        -- Written to by the REST tests
+        CREATE TABLE multi_app.scratch (id serial primary key, note text not null);
+        CREATE TABLE multi_auth.scratch (id serial primary key, note text not null);
+
+        -- The same function name in both schemas
+        CREATE FUNCTION multi_auth.whoami() RETURNS text LANGUAGE sql STABLE AS $$ SELECT 'auth' $$;
+        CREATE FUNCTION multi_app.whoami() RETURNS text LANGUAGE sql STABLE AS $$ SELECT 'app' $$;
+        CREATE FUNCTION multi_app.only_in_app() RETURNS int LANGUAGE sql STABLE AS $$ SELECT 7 $$;
+
         -- Seed initial data
         INSERT INTO multi_auth.users (username, email) VALUES
             ('alice', 'alice@example.com'),
@@ -542,4 +551,227 @@ async fn test_multi_schema_federation_entities() {
     assert_eq!(entities[0]["username"], "alice");
     assert_eq!(entities[1]["title"], "Second Post");
     assert_eq!(entities[1]["user"]["username"], "bob");
+}
+
+async fn rest(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<serde_json::Value>,
+) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
+    let mut builder = axum::http::Request::builder().method(method).uri(uri);
+    let body = match body {
+        Some(body) => {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+            axum::body::Body::from(body.to_string())
+        }
+        None => axum::body::Body::empty(),
+    };
+    let response = app
+        .clone()
+        .oneshot(builder.body(body).unwrap())
+        .await
+        .unwrap();
+    let (status, headers) = (response.status(), response.headers().clone());
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, headers, json)
+}
+
+#[tokio::test]
+async fn test_rest_paths_name_the_schema() {
+    let app = setup_app().await;
+
+    // `/rest/audit_logs` is the default schema's, each schema's own is at its path
+    let (status, _, rows) = rest(&app, "GET", "/rest/audit_logs", None).await;
+    assert_eq!(status, StatusCode::OK, "{rows}");
+    assert_eq!(rows[0]["action"], "USER_LOGIN");
+    let (_, _, rows) = rest(&app, "GET", "/rest/multi_auth/audit_logs", None).await;
+    assert_eq!(rows[0]["action"], "USER_LOGIN");
+    let (status, _, rows) = rest(&app, "GET", "/rest/multi_app/audit_logs", None).await;
+    assert_eq!(status, StatusCode::OK, "{rows}");
+    assert_eq!(rows[0]["event"], "POST_PUBLISHED");
+
+    // A single row, a search and an aggregate
+    let (status, _, row) = rest(&app, "GET", "/rest/multi_app/audit_logs/1", None).await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert_eq!(row["event"], "POST_PUBLISHED");
+    let (status, _, rows) = rest(
+        &app,
+        "POST",
+        "/rest/multi_app/audit_logs/search",
+        Some(json!({ "filter": { "event": { "eq": "POST_PUBLISHED" } } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rows}");
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+    let (status, _, _) = rest(&app, "GET", "/rest/multi_app/audit_logs/aggregate", None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A resource of another schema is not there, nor is a schema that was not configured
+    let (status, _, problem) = rest(&app, "GET", "/rest/multi_app/users", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+    assert_eq!(problem["instance"], "/rest/multi_app/users");
+    let (status, _, _) = rest(&app, "GET", "/rest/injection_attempt/users", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = rest(&app, "GET", "/rest/public/users", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Cross-schema embedding: a post of one schema, its author of the other
+    let (status, _, rows) = rest(
+        &app,
+        "GET",
+        "/rest/multi_app/posts?include=author&order=id",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rows}");
+    assert_eq!(rows[0]["author"]["username"], "alice");
+}
+
+#[tokio::test]
+async fn test_rest_writes_under_a_schema() {
+    let app = setup_app().await;
+    let (status, headers, row) = rest(
+        &app,
+        "POST",
+        "/rest/multi_app/scratch",
+        Some(json!({ "note": "written" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{row}");
+    let id = row["id"].as_i64().unwrap();
+    assert_eq!(
+        headers[header::LOCATION],
+        format!("/rest/multi_app/scratch/{id}").as_str()
+    );
+    let (status, _, row) = rest(
+        &app,
+        "PATCH",
+        &format!("/rest/multi_app/scratch/{id}"),
+        Some(json!({ "note": "renamed" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert_eq!(row["note"], "renamed");
+    // The same key in the default schema's table is another row
+    let (status, _, _) = rest(&app, "GET", &format!("/rest/multi_auth/scratch/{id}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = rest(
+        &app,
+        "DELETE",
+        &format!("/rest/multi_app/scratch/{id}"),
+        None,
+    )
+    .await;
+    assert!(status.is_success(), "{status}");
+}
+
+#[tokio::test]
+async fn test_rest_functions_under_a_schema() {
+    let app = setup_app().await;
+    // The default schema's `whoami` at the unqualified path, each schema's at its own
+    let (_, _, body) = rest(&app, "GET", "/rest/rpc/whoami", None).await;
+    assert_eq!(body, json!("auth"));
+    let (_, _, body) = rest(&app, "GET", "/rest/multi_auth/rpc/whoami", None).await;
+    assert_eq!(body, json!("auth"));
+    let (status, _, body) = rest(&app, "GET", "/rest/multi_app/rpc/whoami", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!("app"));
+    let (_, _, body) = rest(&app, "GET", "/rest/multi_app/rpc/only_in_app", None).await;
+    assert_eq!(body, json!(7));
+    // A function of another schema is not there
+    let (status, _, _) = rest(&app, "GET", "/rest/multi_auth/rpc/only_in_app", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+fn collect(value: &serde_json::Value, refs: &mut Vec<String>, ids: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(s) => {
+            if let Some(name) = s.strip_prefix("#/components/schemas/") {
+                refs.push(name.to_string());
+            }
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|v| collect(v, refs, ids)),
+        serde_json::Value::Object(map) => {
+            for (key, v) in map {
+                match (key.as_str(), v) {
+                    ("operationId", serde_json::Value::String(id)) => ids.push(id.clone()),
+                    _ => collect(v, refs, ids),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[tokio::test]
+async fn test_openapi_has_a_fixed_path_per_schema() {
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    ensure_multi_schema_db(&client).await;
+    let mut config = Config::default();
+    config.database.schemas = vec!["multi_auth".to_string(), "multi_app".to_string()];
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schemas_with_config(&["multi_auth", "multi_app"], &config)
+        .await
+        .unwrap();
+    let graphql = SchemaBuilder::build(&catalog).unwrap();
+    let doc = graphpg::openapi::OpenApiGenerator::generate_with_schema(
+        &catalog,
+        &config,
+        "multi_auth",
+        Some(&graphql),
+    );
+
+    let paths = doc["paths"].as_object().unwrap();
+    for path in [
+        "/rest/audit_logs",
+        "/rest/multi_auth/audit_logs",
+        "/rest/multi_app/audit_logs",
+        "/rest/multi_app/audit_logs/{key}",
+        "/rest/multi_app/audit_logs/aggregate",
+        "/rest/multi_app/posts",
+        "/rest/rpc/whoami",
+        "/rest/multi_auth/rpc/whoami",
+        "/rest/multi_app/rpc/whoami",
+        "/rest/multi_app/rpc/only_in_app",
+    ] {
+        assert!(paths.contains_key(path), "no {path} in {:?}", paths.keys());
+    }
+    // Fixed paths, not a template over the schema; a schema's own are its own
+    assert!(paths.keys().all(|p| !p.contains("{schema}")));
+    assert!(!paths.contains_key("/rest/multi_auth/rpc/only_in_app"));
+    assert!(!paths.contains_key("/rest/multi_app/users"));
+    assert!(!paths.contains_key("/rest/multi_app/search"));
+
+    // Every operation has an id of its own, and every reference leads to a component
+    let (mut refs, mut uses) = (Vec::new(), Vec::new());
+    collect(&doc, &mut refs, &mut uses);
+    // (`operationId` also names the operation a link leads to)
+    let ids: Vec<String> = paths
+        .values()
+        .flat_map(|item| item.as_object().unwrap().values())
+        .filter_map(|op| op["operationId"].as_str().map(String::from))
+        .collect();
+    for used in &uses {
+        assert!(
+            ids.contains(used),
+            "a link leads to a missing operation {used}"
+        );
+    }
+    let mut unique = ids.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), ids.len(), "operation ids repeat");
+    let components = doc["components"]["schemas"].as_object().unwrap();
+    for name in refs {
+        assert!(components.contains_key(&name), "dangling reference {name}");
+    }
+    assert!(components.contains_key("multi_app.audit_logs"));
+    assert!(components.contains_key("multi_auth.audit_logs"));
 }

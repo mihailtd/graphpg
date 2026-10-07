@@ -492,44 +492,51 @@ async fn aggregate(
 /// `GET /rest/{resource}/aggregate`.
 pub async fn rest_aggregate_get_handler(
     State(state): State<Arc<ServerState>>,
-    Path(resource): Path<String>,
+    Scoped(schema, resource): Scoped<String>,
     RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}/aggregate"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
-        let table = ctx.table()?;
-        let body = body_from_query(raw_query.as_deref().unwrap_or(""), table, &ctx.catalog)?;
-        let out = aggregate(&ctx, table, body, "GET").await?;
-        Ok((StatusCode::OK, Json(out)).into_response())
-    })
+    respond(
+        format!("{}/{resource}/aggregate", rest_base(&schema)),
+        async {
+            let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
+            let table = ctx.table()?;
+            let body = body_from_query(raw_query.as_deref().unwrap_or(""), table, &ctx.catalog)?;
+            let out = aggregate(&ctx, table, body, "GET").await?;
+            Ok((StatusCode::OK, Json(out)).into_response())
+        },
+    )
     .await
 }
 
 /// `POST /rest/{resource}/aggregate`.
 pub async fn rest_aggregate_post_handler(
     State(state): State<Arc<ServerState>>,
-    Path(resource): Path<String>,
+    Scoped(schema, resource): Scoped<String>,
     RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}/aggregate"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
-        let table = ctx.table()?;
-        if raw_query.as_deref().is_some_and(|q| !q.is_empty()) {
-            return Err(ProblemDetails::bad_request(
-                "POST takes its parameters in the JSON body, not the query string",
-            ));
-        }
-        let body: AggregateBody = if body.is_empty() {
-            AggregateBody::default()
-        } else {
-            serde_json::from_slice(&body)
-                .map_err(|e| ProblemDetails::bad_request(format!("Invalid aggregate body: {e}")))?
-        };
-        let out = aggregate(&ctx, table, body, "POST").await?;
-        Ok((StatusCode::OK, Json(out)).into_response())
-    })
+    respond(
+        format!("{}/{resource}/aggregate", rest_base(&schema)),
+        async {
+            let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
+            let table = ctx.table()?;
+            if raw_query.as_deref().is_some_and(|q| !q.is_empty()) {
+                return Err(ProblemDetails::bad_request(
+                    "POST takes its parameters in the JSON body, not the query string",
+                ));
+            }
+            let body: AggregateBody = if body.is_empty() {
+                AggregateBody::default()
+            } else {
+                serde_json::from_slice(&body).map_err(|e| {
+                    ProblemDetails::bad_request(format!("Invalid aggregate body: {e}"))
+                })?
+            };
+            let out = aggregate(&ctx, table, body, "POST").await?;
+            Ok((StatusCode::OK, Json(out)).into_response())
+        },
+    )
     .await
 }

@@ -8,7 +8,7 @@ use crate::catalog::{ColumnMetadata, DatabaseCatalog, FieldKind, PgType, TableMe
 use crate::config::models::LimitsConfig;
 use crate::config::models::Operation;
 use crate::config::Config;
-use crate::server::rest::{check_table_permissions, resolve_table, REST_PREFIX};
+use crate::server::rest::{check_table_permissions, resolve_table, rest_schemas, REST_PREFIX};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -179,6 +179,84 @@ impl OpenApiGenerator {
     /// Like [`generate_for`](Self::generate_for), with the GraphQL schema the server serves:
     /// the arguments of search methods are typed from its input types.
     pub fn generate_with_schema(
+        catalog: &DatabaseCatalog,
+        config: &Config,
+        default_schema: &str,
+        graphql: Option<&apollo_compiler::Schema>,
+    ) -> Value {
+        let mut doc = Self::generate_unscoped(catalog, config, default_schema, graphql);
+        // With several schemas, every resource and function also has the path of its own
+        // schema, `/rest/{schema}/…`: the paths are fixed, one per schema, not a template
+        let schemas = rest_schemas(catalog, default_schema);
+        if schemas.len() > 1 {
+            for schema in &schemas {
+                let only = catalog.only_schema(schema);
+                let scoped = Self::generate_unscoped(&only, config, schema, graphql);
+                Self::merge_scoped(&mut doc, scoped, schema);
+            }
+        }
+        doc
+    }
+
+    /// Adds the paths and components of the document of one schema (`scoped`, written as if
+    /// that schema were the only one) to `doc`, under `/rest/{schema}` and with the schema in
+    /// the name of every component and operation.
+    fn merge_scoped(doc: &mut Value, mut scoped: Value, schema: &str) {
+        fn rename(value: &mut Value, schema: &str) {
+            match value {
+                Value::String(text) => {
+                    if let Some(name) = text.strip_prefix("#/components/schemas/") {
+                        if name != "ProblemDetails" {
+                            *text = format!("#/components/schemas/{schema}.{name}");
+                        }
+                    }
+                }
+                Value::Array(items) => items.iter_mut().for_each(|v| rename(v, schema)),
+                Value::Object(map) => {
+                    for (key, v) in map.iter_mut() {
+                        match (key.as_str(), &mut *v) {
+                            ("operationId", Value::String(id)) => *id = format!("{schema}_{id}"),
+                            _ => rename(v, schema),
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        rename(&mut scoped, schema);
+        let take = |scoped: &mut Value, pointer: &str| {
+            scoped
+                .pointer_mut(pointer)
+                .and_then(Value::as_object_mut)
+                .map(std::mem::take)
+                .unwrap_or_default()
+        };
+        let paths = take(&mut scoped, "/paths");
+        let components = take(&mut scoped, "/components/schemas");
+        if let Some(target) = doc.pointer_mut("/paths").and_then(Value::as_object_mut) {
+            for (path, item) in paths {
+                // The root and the search over every resource are not a schema's
+                if path == REST_PREFIX || path == format!("{REST_PREFIX}/search") {
+                    continue;
+                }
+                if let Some(rest) = path.strip_prefix(REST_PREFIX) {
+                    target.insert(format!("{REST_PREFIX}/{schema}{rest}"), item);
+                }
+            }
+        }
+        if let Some(target) = doc
+            .pointer_mut("/components/schemas")
+            .and_then(Value::as_object_mut)
+        {
+            for (name, component) in components {
+                if name != "ProblemDetails" {
+                    target.insert(format!("{schema}.{name}"), component);
+                }
+            }
+        }
+    }
+
+    fn generate_unscoped(
         catalog: &DatabaseCatalog,
         config: &Config,
         default_schema: &str,

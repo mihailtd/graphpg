@@ -525,7 +525,7 @@ impl OpenApiGenerator {
         served: &[&TableMetadata],
         paths: &mut Map<String, Value>,
     ) {
-        for f in rpc_functions(catalog, default_schema) {
+        for f in rpc_functions(catalog, default_schema, None) {
             // the rows of a table the API does not serve cannot be described
             let table = match &f.returns {
                 FunctionReturn::Table { schema, table } => {

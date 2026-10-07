@@ -5,12 +5,13 @@ use super::http::{
     graphql_handler, graphql_sdl_handler, graphql_subgraph_handler, health_handler, live_handler,
     openapi_spec_handler, ready_handler, rest_handler,
 };
+use super::rest::rest_schemas;
 use super::rest::{
     rest_aggregate_get_handler, rest_aggregate_post_handler, rest_column_get_handler,
     rest_column_put_handler, rest_create_handler, rest_delete_handler, rest_global_search_handler,
     rest_item_handler, rest_list_handler, rest_rpc_handler, rest_search_handler,
-    rest_search_method_handler, rest_update_handler, rest_upsert_handler, GLOBAL_SEARCH_RESOURCE,
-    REST_PREFIX, RPC_RESOURCE,
+    rest_search_method_handler, rest_update_handler, rest_upsert_handler, SchemaScope,
+    GLOBAL_SEARCH_RESOURCE, REST_PREFIX, RPC_RESOURCE,
 };
 use super::ServerState;
 use crate::config::models::{CorsConfig, HeaderPreset, HeadersConfig};
@@ -18,6 +19,7 @@ use crate::config::Config;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, HeaderValue, Method};
 use axum::routing::{get, options, post, MethodRouter};
+use axum::Extension;
 use axum::Router;
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,7 +50,8 @@ pub fn sdl_routes(state: &ServerState) -> Router<Arc<ServerState>> {
     router
 }
 
-/// Mounts the REST API routes:
+/// Mounts the REST API routes, under `/rest` and under `/rest/{schema}` for each of `schemas`
+/// (the schemas the server serves: the path names one of them or the route does not exist):
 /// - `/rest`: API root description
 /// - `/rest/{resource}`: List (GET) and Create (POST)
 /// - `/rest/{resource}/search`: Advanced filter query (POST)
@@ -59,14 +62,62 @@ pub fn sdl_routes(state: &ServerState) -> Router<Arc<ServerState>> {
 /// - `/rest/{resource}/{key}`: Single item Read (GET), Update (PATCH), Upsert (PUT), Delete (DELETE)
 /// - `/rest/{resource}/{key}/{column}`: The bytes of a `bytea` column (GET, PUT)
 ///
+/// `/rest/{schema}/…` has every route above but the root and `/search`, with the resources and
+/// functions of that schema alone. A static schema segment wins over `{resource}`, so a table
+/// named like a schema is reached through its schema's path.
+///
 /// Every route answers `OPTIONS` with its methods; `HEAD` answers like `GET` without a body.
-pub fn rest_routes() -> Router<Arc<ServerState>> {
-    let resource = format!("{REST_PREFIX}/{{resource}}");
-    Router::new()
-        .route(
-            REST_PREFIX,
-            get(rest_handler).options(allowed("GET, HEAD, OPTIONS", &[])),
-        )
+pub fn rest_routes(schemas: &[String]) -> Router<Arc<ServerState>> {
+    let mut router = routes_under(REST_PREFIX, true);
+    for schema in schemas {
+        router = router.merge(
+            routes_under(&format!("{REST_PREFIX}/{schema}"), false)
+                .layer(Extension(SchemaScope(schema.clone()))),
+        );
+    }
+    router
+}
+
+/// The schemas with a path of their own: the default one and those with tables or functions,
+/// as long as the name can stand in a path (and is not `rpc` or `search`).
+pub fn served_schemas(state: &ServerState) -> Vec<String> {
+    let catalog = state.current_catalog();
+    let schemas = rest_schemas(&catalog, &state.default_schema);
+    for schema in catalog
+        .tables
+        .iter()
+        .map(|t| &t.schema)
+        .chain(catalog.functions.iter().map(|f| &f.schema))
+        .filter(|schema| !schemas.contains(schema))
+    {
+        tracing::warn!(%schema, "the schema has no `/rest/{{schema}}` path: its name cannot be a path segment");
+    }
+    for schema in &schemas {
+        if catalog.tables.iter().any(|t| t.name == *schema) {
+            tracing::warn!(%schema, "a table is named like a schema: `/rest/{schema}/…` is the schema's, reach the table at `/rest/<schema>/{schema}`");
+        }
+    }
+    schemas
+}
+
+/// The routes of one REST root: `/rest`, or `/rest/{schema}`.
+fn routes_under(prefix: &str, root: bool) -> Router<Arc<ServerState>> {
+    let resource = format!("{prefix}/{{resource}}");
+    let mut router = Router::new();
+    if root {
+        router = router
+            .route(
+                prefix,
+                get(rest_handler).options(allowed("GET, HEAD, OPTIONS", &[])),
+            )
+            .route(
+                &format!("{prefix}/{GLOBAL_SEARCH_RESOURCE}"),
+                get(rest_global_search_handler)
+                    .post(rest_global_search_handler)
+                    .options(allowed("GET, HEAD, POST, OPTIONS", &[])),
+            );
+    }
+    router
         .route(
             &resource,
             get(rest_list_handler)
@@ -91,15 +142,9 @@ pub fn rest_routes() -> Router<Arc<ServerState>> {
                 .options(allowed("GET, HEAD, POST, OPTIONS", &[])),
         )
         .route(
-            &format!("{REST_PREFIX}/{RPC_RESOURCE}/{{function}}"),
+            &format!("{prefix}/{RPC_RESOURCE}/{{function}}"),
             get(rest_rpc_handler)
                 .post(rest_rpc_handler)
-                .options(allowed("GET, HEAD, POST, OPTIONS", &[])),
-        )
-        .route(
-            &format!("{REST_PREFIX}/{GLOBAL_SEARCH_RESOURCE}"),
-            get(rest_global_search_handler)
-                .post(rest_global_search_handler)
                 .options(allowed("GET, HEAD, POST, OPTIONS", &[])),
         )
         .route(
@@ -306,7 +351,7 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
     }
 
     if state.openapi_enabled {
-        router = router.merge(rest_routes().layer(body_limit));
+        router = router.merge(rest_routes(&served_schemas(&state)).layer(body_limit));
         router = router.merge(openapi_routes(&state));
     }
 

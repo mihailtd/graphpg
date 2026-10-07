@@ -1966,6 +1966,16 @@ impl DatabaseCatalog {
         self.index.get_or_init(|| CatalogIndex::build(self))
     }
 
+    /// A copy with only the tables and functions of `schema`: relations to other schemas are
+    /// gone from it.
+    pub fn only_schema(&self, schema: &str) -> Self {
+        let mut copy = self.clone();
+        copy.tables.retain(|t| t.schema == schema);
+        copy.functions.retain(|f| f.schema == schema);
+        copy.invalidate_index();
+        copy
+    }
+
     /// Drops derived lookup maps after the catalog changed.
     pub fn invalidate_index(&mut self) {
         self.index = OnceLock::new();

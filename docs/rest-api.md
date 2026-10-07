@@ -160,9 +160,15 @@ POST /rest/rpc/search_orders  {"args": {"q": "ada"}, "order": "-total", "first":
 POST /rest/rpc/bump_counter   {"args": {"counterId": 1, "by": 5}}   → {"id": 1, "value": 5}
 ```
 
+## Several schemas
+
+With several `database.schemas`, `/rest/{resource}` is a shortcut: the default schema's table (the first schema listed), else the table of that name in another schema. Every schema also has a path of its own, with every route below it: `/rest/{schema}/{resource}`, `/rest/{schema}/{resource}/{key}`, `/rest/{schema}/{resource}/search`, `/rest/{schema}/rpc/{function}` and so on (`/rest/auth/users`, `/rest/app/audit_logs`, `/rest/auth/rpc/login`). Two schemas with an `audit_logs` table are both reachable, unambiguously, at `/rest/auth/audit_logs` and `/rest/app/audit_logs`; the same goes for functions. A schema's path serves that schema's tables and functions only (another schema's is a `404`), `Location` and `Link` headers and the `instance` of an error keep the path the request used, and `include` can still embed a row of another schema through a foreign key. `/rest/search` (global search) spans all of them.
+
+The schema is part of the path, never a header or a parameter, and it is a fixed set: only the schemas of `database.schemas` that have tables or functions have a path, so `/rest/anything_else/users` is a `404` before any SQL is built. The [OpenAPI document](configuration.md#the-openapi-document-and-uis) lists these concrete paths (`/rest/auth/users`, `/rest/app/posts`, ...) with an operation id (`auth_list_users`) and components (`auth.users`) per schema, not a path template. A schema is added by restarting: the paths are fixed when the server starts. A table named like a schema is reached at its schema's path, since `/rest/{schema}/…` wins (a warning is logged).
+
 ## Reserved names
 
-`rpc` and `search` are paths of their own, so tables with these names are not served (the OpenAPI document leaves them out too). `search` and `aggregate` are also the last segments of `/rest/{resource}/search` and `/rest/{resource}/aggregate`: a row whose key is literally `aggregate` or `search` cannot be read with `GET /rest/{resource}/{key}`.
+`rpc` and `search` are paths of their own, so tables and schemas with these names are not served (the OpenAPI document leaves them out too). `search` and `aggregate` are also the last segments of `/rest/{resource}/search` and `/rest/{resource}/aggregate`: a row whose key is literally `aggregate` or `search` cannot be read with `GET /rest/{resource}/{key}`.
 
 ## Writing
 

@@ -133,7 +133,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | :--- | :--- | :--- |
 | Media types | JSON (and `application/problem+json` errors); CSV lists and CSV bulk creates; `multipart/form-data` writes; the bytes of a `bytea` column as their own media type; CSV and NDJSON streaming through the GraphQL `/export` endpoint | JSON, CSV, GeoJSON, plain text, XML, binary; custom handlers (domains, aggregates); `application/vnd.pgrst.object` for one row |
 | `HEAD` and `OPTIONS` | `HEAD` answers like `GET` without a body; `OPTIONS` lists the methods (`Allow`, `Accept-Post`, `Accept-Patch`) and CORS preflights are answered by the CORS layer; both are in the OpenAPI document | Yes |
-| Several schemas in one deployment | All `database.schemas` merged into one API; if two schemas have a same-named table, REST serves the default schema's | One schema per request, chosen by `Accept-Profile` / `Content-Profile` |
+| Several schemas in one deployment | All `database.schemas` merged into one API; REST adds a path per schema (`/rest/{schema}/{resource}`, `/rest/{schema}/rpc/{function}`) next to the default schema's shortcut, with no headers | One schema per request, chosen by `Accept-Profile` / `Content-Profile` |
 | CORS | Configurable (`server.cors`): any origin in dev, none in prod unless listed | Configurable allowed origins |
 | Request ID / `Server-Timing` / `EXPLAIN` by header | `X-Request-Id` echo/generation, dev `Server-Timing`, tracing spans, GraphQL `debug.explain` in dev | `X-Request-Id` echo, `Server-Timing`, `Accept: application/vnd.pgrst.plan` |
 

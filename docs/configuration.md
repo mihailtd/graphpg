@@ -250,7 +250,7 @@ database:
   schemas: [auth, app, billing]
 ```
 
-The first schema listed is the default: where two schemas have a table of the same name, unqualified names in the config resolve to it, and the REST API (which names a resource after its table, without a prefix) serves the default schema's table only. If `database.schemas` is omitted, graphpg defaults to `app_public`.
+The first schema listed is the default: where two schemas have a table of the same name, unqualified names in the config resolve to it, and the REST API serves the default schema's table at `/rest/<table>`; every schema's own are at `/rest/<schema>/<table>` (see [Several schemas](rest-api.md#several-schemas)). If `database.schemas` is omitted, graphpg defaults to `app_public`.
 
 Foreign keys across schemas become ordinary relations, joined in the same single SQL statement (`app.posts.author_id` referencing `auth.users.id` gives `Post.user` and `User.posts`). `node(id:)` and Federation `_entities` route to the right schema.
 

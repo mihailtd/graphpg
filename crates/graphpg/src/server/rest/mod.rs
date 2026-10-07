@@ -91,6 +91,90 @@ pub fn resolve_table<'a>(
         })
 }
 
+/// Finds the table a resource name refers to in `schema` alone (`/rest/{schema}/{resource}`):
+/// by name, then case-insensitively or by its list field name.
+pub fn resolve_table_in<'a>(
+    catalog: &'a DatabaseCatalog,
+    schema: &str,
+    resource: &str,
+) -> Option<&'a TableMetadata> {
+    if resource == RPC_RESOURCE || resource == GLOBAL_SEARCH_RESOURCE {
+        return None;
+    }
+    catalog.find_table(schema, resource).or_else(|| {
+        catalog.tables.iter().find(|t| {
+            t.schema == schema
+                && (t.name.eq_ignore_ascii_case(resource) || t.list_field == resource)
+        })
+    })
+}
+
+/// The schemas with a path of their own, `/rest/{schema}/…`: the default one and those with
+/// tables or functions, as long as the name can stand in a path (and is not `rpc` or `search`).
+/// The router mounts these and the OpenAPI document describes them.
+pub fn rest_schemas(catalog: &DatabaseCatalog, default_schema: &str) -> Vec<String> {
+    let mut schemas = vec![default_schema.to_string()];
+    for schema in catalog
+        .tables
+        .iter()
+        .map(|t| &t.schema)
+        .chain(catalog.functions.iter().map(|f| &f.schema))
+    {
+        if !schemas.contains(schema) {
+            schemas.push(schema.clone());
+        }
+    }
+    schemas.retain(|schema| {
+        !schema.is_empty()
+            && schema
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            && schema != RPC_RESOURCE
+            && schema != GLOBAL_SEARCH_RESOURCE
+    });
+    schemas
+}
+
+/// A resource name as it is in a path under `/rest`: `schema/name` under a schema.
+pub fn scoped(schema: &Option<String>, name: &str) -> String {
+    match schema {
+        Some(schema) => format!("{schema}/{name}"),
+        None => name.to_string(),
+    }
+}
+
+/// The path REST resources are under: `/rest`, or `/rest/{schema}` for a schema's own.
+pub fn rest_base(schema: &Option<String>) -> String {
+    match schema {
+        Some(schema) => format!("{REST_PREFIX}/{schema}"),
+        None => REST_PREFIX.to_string(),
+    }
+}
+
+/// The schema a request's path names: set on the routes of `/rest/{schema}/…`.
+#[derive(Debug, Clone)]
+pub struct SchemaScope(pub String);
+
+/// Path parameters, with the schema of the path (`None` for the unqualified routes).
+pub struct Scoped<T>(pub Option<String>, pub T);
+
+impl<S, T> axum::extract::FromRequestParts<S> for Scoped<T>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned + Send,
+{
+    type Rejection = <Path<T> as axum::extract::FromRequestParts<S>>::Rejection;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let schema = parts.extensions.get::<SchemaScope>().map(|s| s.0.clone());
+        let Path(value) = Path::<T>::from_request_parts(parts, state).await?;
+        Ok(Self(schema, value))
+    }
+}
+
 /// Whether `operation` on `table` is allowed by the configuration and the catalog (which
 /// reflects the connecting role's grants).
 pub fn check_table_permissions(
@@ -470,6 +554,8 @@ fn select_fields(
 /// What every handler needs: the live catalog, the caller's identity and preferences.
 struct Ctx {
     state: Arc<ServerState>,
+    /// The schema of the path (`/rest/{schema}/…`); `None` for the unqualified `/rest/…`.
+    schema: Option<String>,
     catalog: Arc<DatabaseCatalog>,
     auth: Option<AuthSessionContext>,
     prefs: Preferences,
@@ -481,6 +567,7 @@ impl Ctx {
     async fn new(
         state: &Arc<ServerState>,
         headers: &HeaderMap,
+        schema: Option<String>,
         resource: String,
     ) -> Result<Self, ProblemDetails> {
         if !state.openapi_enabled {
@@ -496,12 +583,17 @@ impl Ctx {
             prefs: parse_prefer_header(headers),
             is_prod: state.mask_errors,
             state: state.clone(),
+            schema,
             resource,
         })
     }
 
     fn table(&self) -> Result<&TableMetadata, ProblemDetails> {
-        resolve_table(&self.catalog, &self.state.default_schema, &self.resource).ok_or_else(|| {
+        let found = match &self.schema {
+            Some(schema) => resolve_table_in(&self.catalog, schema, &self.resource),
+            None => resolve_table(&self.catalog, &self.state.default_schema, &self.resource),
+        };
+        found.ok_or_else(|| {
             ProblemDetails::not_found(format!("Resource `{}` not found", self.resource))
         })
     }
@@ -721,8 +813,12 @@ pub fn extract_etag(row: &mut serde_json::Value, table: &TableMetadata) -> Optio
     version.map(|v| format!("\"{v}\""))
 }
 
-/// URL of a row: `/rest/<table>/<key>` with a composite key comma-separated.
-fn location_of(table: &TableMetadata, row: &serde_json::Value) -> Option<String> {
+/// URL of a row: `/rest/<table>/<key>` (`/rest/<schema>/<table>/<key>` under a schema) with a composite key comma-separated.
+fn location_of(
+    schema: &Option<String>,
+    table: &TableMetadata,
+    row: &serde_json::Value,
+) -> Option<String> {
     let parts = table
         .primary_key
         .iter()
@@ -737,7 +833,7 @@ fn location_of(table: &TableMetadata, row: &serde_json::Value) -> Option<String>
         })
         .collect::<Option<Vec<_>>>()?;
     let name = percent_encode(table.name.as_bytes(), URL_ENCODE_SET);
-    Some(format!("{REST_PREFIX}/{name}/{}", parts.join(",")))
+    Some(format!("{}/{name}/{}", rest_base(schema), parts.join(",")))
 }
 
 fn set_header(headers: &mut HeaderMap, name: header::HeaderName, value: &str) {
@@ -767,6 +863,7 @@ impl From<serde_json::Value> for Written {
 /// A write response: the row (or no body for `return=minimal`) with `ETag` and `Location`;
 /// with `Prefer: previous`, `{"row": …, "previous": …}`.
 fn write_response(
+    schema: &Option<String>,
     table: &TableMetadata,
     written: Written,
     status: StatusCode,
@@ -776,7 +873,7 @@ fn write_response(
     let Written { mut row, previous } = written;
     let mut headers = HeaderMap::new();
     if with_location {
-        if let Some(location) = location_of(table, &row) {
+        if let Some(location) = location_of(schema, table, &row) {
             set_header(&mut headers, header::LOCATION, &location);
         }
     }
@@ -1220,12 +1317,12 @@ fn build_link_header(
 /// Handler for `GET /rest/{resource}`.
 pub async fn rest_list_handler(
     State(state): State<Arc<ServerState>>,
-    Path(resource): Path<String>,
+    Scoped(schema, resource): Scoped<String>,
     RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
+    respond(format!("{}/{resource}", rest_base(&schema)), async {
+        let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let media = media::negotiate(&headers)?;
         let table = ctx.table()?;
         let query = parse_query_params(
@@ -1264,7 +1361,8 @@ pub async fn rest_list_handler(
         if let Some(range) = range {
             if listing.rows.is_empty() && range.first > 0 {
                 // Past the end: the answer names the size of the whole
-                let mut counting = Ctx::new(&state, &headers, table.name.clone()).await?;
+                let mut counting =
+                    Ctx::new(&state, &headers, schema.clone(), table.name.clone()).await?;
                 counting.prefs.count = query::CountPreference::Exact;
                 let first_row = RestQuery {
                     first: Some(1),
@@ -1282,7 +1380,7 @@ pub async fn rest_list_handler(
         }
 
         let link = build_link_header(
-            &table.name,
+            &scoped(&ctx.schema, &table.name),
             raw_query.as_deref(),
             listing.page_info.as_ref(),
             &query,
@@ -1394,13 +1492,13 @@ impl SearchBody {
 /// pagination in a JSON body (`and` / `or` / `not`, relation filters).
 pub async fn rest_search_handler(
     State(state): State<Arc<ServerState>>,
-    Path(resource): Path<String>,
+    Scoped(schema, resource): Scoped<String>,
     RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}/search"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
+    respond(format!("{}/{resource}/search", rest_base(&schema)), async {
+        let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let media = media::negotiate(&headers)?;
         let table = ctx.table()?;
         if raw_query.as_deref().is_some_and(|q| !q.is_empty()) {
@@ -1425,12 +1523,12 @@ pub async fn rest_search_handler(
 /// Handler for `GET /rest/{resource}/{key}`.
 pub async fn rest_item_handler(
     State(state): State<Arc<ServerState>>,
-    Path((resource, key)): Path<(String, String)>,
+    Scoped(schema, (resource, key)): Scoped<(String, String)>,
     RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}/{key}"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
+    respond(format!("{}/{resource}/{key}", rest_base(&schema)), async {
+        let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let table = ctx.table()?;
         ctx.allow(table, Operation::Read)?;
         let parsed_key = parse_primary_key(&key, table).map_err(ProblemDetails::bad_request)?;
@@ -1522,57 +1620,61 @@ fn binary_column<'a>(
 /// media type recognized from their first bytes.
 pub async fn rest_column_get_handler(
     State(state): State<Arc<ServerState>>,
-    Path((resource, key, column)): Path<(String, String, String)>,
+    Scoped(schema, (resource, key, column)): Scoped<(String, String, String)>,
     headers: HeaderMap,
 ) -> Response {
     use base64::Engine;
-    respond(format!("{REST_PREFIX}/{resource}/{key}/{column}"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
-        let table = ctx.table()?;
-        ctx.allow(table, Operation::Read)?;
-        let column = binary_column(table, &column)?;
-        let parsed_key = parse_primary_key(&key, table).map_err(ProblemDetails::bad_request)?;
-        let request = RequestField::new(&table.single_field)
-            .with_arguments(key_args(table, &parsed_key))
-            .with_children(vec![RequestField::new(&column.field_name)]);
-        let data = ctx
-            .execute(
-                &table.schema,
-                RequestOperation::query(vec![request]),
-                "GET",
-                false,
-            )
-            .await?;
-        let row = ResponseShaper::unwrap_single(&data, &table.single_field)
-            .map_err(|e| shaping_error(e, ctx.is_prod))?;
-        let encoded = row
-            .get(&column.field_name)
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                ProblemDetails::not_found(format!(
-                    "`{}` of `{}` `{key}` has no value",
-                    column.field_name, table.name
-                ))
-            })?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map_err(|e| shaping_error(e, ctx.is_prod))?;
-        let content_type = media::sniff(&bytes);
-        if !media::accepts(&headers, content_type) && !media::accepts(&headers, media::OCTET_STREAM)
-        {
-            return Err(ProblemDetails::not_acceptable(format!(
-                "This value is `{content_type}`"
-            )));
-        }
-        let mut out = HeaderMap::new();
-        set_header(&mut out, header::CONTENT_TYPE, content_type);
-        set_header(
-            &mut out,
-            header::HeaderName::from_static("x-content-type-options"),
-            "nosniff",
-        );
-        Ok((StatusCode::OK, out, bytes).into_response())
-    })
+    respond(
+        format!("{}/{resource}/{key}/{column}", rest_base(&schema)),
+        async {
+            let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
+            let table = ctx.table()?;
+            ctx.allow(table, Operation::Read)?;
+            let column = binary_column(table, &column)?;
+            let parsed_key = parse_primary_key(&key, table).map_err(ProblemDetails::bad_request)?;
+            let request = RequestField::new(&table.single_field)
+                .with_arguments(key_args(table, &parsed_key))
+                .with_children(vec![RequestField::new(&column.field_name)]);
+            let data = ctx
+                .execute(
+                    &table.schema,
+                    RequestOperation::query(vec![request]),
+                    "GET",
+                    false,
+                )
+                .await?;
+            let row = ResponseShaper::unwrap_single(&data, &table.single_field)
+                .map_err(|e| shaping_error(e, ctx.is_prod))?;
+            let encoded = row
+                .get(&column.field_name)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    ProblemDetails::not_found(format!(
+                        "`{}` of `{}` `{key}` has no value",
+                        column.field_name, table.name
+                    ))
+                })?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|e| shaping_error(e, ctx.is_prod))?;
+            let content_type = media::sniff(&bytes);
+            if !media::accepts(&headers, content_type)
+                && !media::accepts(&headers, media::OCTET_STREAM)
+            {
+                return Err(ProblemDetails::not_acceptable(format!(
+                    "This value is `{content_type}`"
+                )));
+            }
+            let mut out = HeaderMap::new();
+            set_header(&mut out, header::CONTENT_TYPE, content_type);
+            set_header(
+                &mut out,
+                header::HeaderName::from_static("x-content-type-options"),
+                "nosniff",
+            );
+            Ok((StatusCode::OK, out, bytes).into_response())
+        },
+    )
     .await
 }
 
@@ -1580,30 +1682,33 @@ pub async fn rest_column_get_handler(
 /// the new value of a `bytea` column.
 pub async fn rest_column_put_handler(
     State(state): State<Arc<ServerState>>,
-    Path((resource, key, column)): Path<(String, String, String)>,
+    Scoped(schema, (resource, key, column)): Scoped<(String, String, String)>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
     use base64::Engine;
-    respond(format!("{REST_PREFIX}/{resource}/{key}/{column}"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
-        let table = ctx.table()?;
-        let column = binary_column(table, &column)?;
-        let input = serde_json::json!({
-            column.field_name.clone(): base64::engine::general_purpose::STANDARD.encode(&body)
-        });
-        let if_match = parse_if_match(&headers)?;
-        update_row(
-            &ctx,
-            table,
-            &key,
-            input.to_string().as_bytes(),
-            if_match,
-            "PUT",
-        )
-        .await?;
-        Ok(StatusCode::NO_CONTENT.into_response())
-    })
+    respond(
+        format!("{}/{resource}/{key}/{column}", rest_base(&schema)),
+        async {
+            let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
+            let table = ctx.table()?;
+            let column = binary_column(table, &column)?;
+            let input = serde_json::json!({
+                column.field_name.clone(): base64::engine::general_purpose::STANDARD.encode(&body)
+            });
+            let if_match = parse_if_match(&headers)?;
+            update_row(
+                &ctx,
+                table,
+                &key,
+                input.to_string().as_bytes(),
+                if_match,
+                "PUT",
+            )
+            .await?;
+            Ok(StatusCode::NO_CONTENT.into_response())
+        },
+    )
     .await
 }
 
@@ -1615,12 +1720,12 @@ pub async fn rest_column_put_handler(
 /// Nested objects in the body are nested writes, in the shape of the GraphQL input.
 pub async fn rest_create_handler(
     State(state): State<Arc<ServerState>>,
-    Path(resource): Path<String>,
+    Scoped(schema, resource): Scoped<String>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
+    respond(format!("{}/{resource}", rest_base(&schema)), async {
+        let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let table = ctx.table()?;
         ctx.allow(table, Operation::Create)?;
         let body = parse_json_body(&json_body(table, &headers, body, true)?)?;
@@ -1691,6 +1796,7 @@ pub async fn rest_create_handler(
                 let args = HashMap::from([("input".to_string(), body)]);
                 let written = run_write(&ctx, table, &m, args, "POST", false).await?;
                 Ok(write_response(
+                    &ctx.schema,
                     table,
                     written,
                     StatusCode::CREATED,
@@ -1754,6 +1860,7 @@ async fn update_row(
         )));
     }
     Ok(write_response(
+        &ctx.schema,
         table,
         written,
         StatusCode::OK,
@@ -1765,12 +1872,12 @@ async fn update_row(
 /// Handler for `PATCH /rest/{resource}/{key}`.
 pub async fn rest_update_handler(
     State(state): State<Arc<ServerState>>,
-    Path((resource, key)): Path<(String, String)>,
+    Scoped(schema, (resource, key)): Scoped<(String, String)>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}/{key}"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
+    respond(format!("{}/{resource}/{key}", rest_base(&schema)), async {
+        let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let table = ctx.table()?;
         let if_match = parse_if_match(&headers)?;
         let body = json_body(table, &headers, body, false)?;
@@ -1783,12 +1890,12 @@ pub async fn rest_update_handler(
 /// `If-Match` the row must exist at that version, so it is an update instead.
 pub async fn rest_upsert_handler(
     State(state): State<Arc<ServerState>>,
-    Path((resource, key)): Path<(String, String)>,
+    Scoped(schema, (resource, key)): Scoped<(String, String)>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}/{key}"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
+    respond(format!("{}/{resource}/{key}", rest_base(&schema)), async {
+        let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let table = ctx.table()?;
         let body = json_body(table, &headers, body, false)?;
         if headers.contains_key(header::IF_MATCH) {
@@ -1829,6 +1936,7 @@ pub async fn rest_upsert_handler(
         ]);
         let written = run_write(&ctx, table, &m, args, "PUT", ctx.prefs.previous).await?;
         Ok(write_response(
+            &ctx.schema,
             table,
             written,
             StatusCode::OK,
@@ -1842,11 +1950,11 @@ pub async fn rest_upsert_handler(
 /// Handler for `DELETE /rest/{resource}/{key}`.
 pub async fn rest_delete_handler(
     State(state): State<Arc<ServerState>>,
-    Path((resource, key)): Path<(String, String)>,
+    Scoped(schema, (resource, key)): Scoped<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}/{key}"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
+    respond(format!("{}/{resource}/{key}", rest_base(&schema)), async {
+        let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let table = ctx.table()?;
         ctx.allow(table, Operation::Delete)?;
         let parsed_key = parse_primary_key(&key, table).map_err(ProblemDetails::bad_request)?;
