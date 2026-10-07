@@ -9,14 +9,19 @@
 #![allow(clippy::result_large_err)]
 
 mod aggregates;
+mod collection;
 mod functions;
 mod media;
+mod patch;
 mod problem;
 mod query;
 mod search;
 mod validate;
 
 pub use aggregates::{rest_aggregate_get_handler, rest_aggregate_post_handler};
+pub use collection::{
+    rest_bulk_upsert_handler, rest_collection_delete_handler, rest_collection_update_handler,
+};
 pub use functions::{rest_rpc_handler, rpc_functions, RPC_RESOURCE};
 pub use problem::ProblemDetails;
 pub(crate) use query::{find_embeddable, Embeddable};
@@ -2017,6 +2022,7 @@ pub async fn rest_column_put_handler(
 pub async fn rest_create_handler(
     State(state): State<Arc<ServerState>>,
     Scoped(schema, resource): Scoped<String>,
+    RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
@@ -2027,29 +2033,13 @@ pub async fn rest_create_handler(
         let body = parse_json_body(&json_body(table, &headers, body, true)?)?;
 
         match body {
-            serde_json::Value::Array(rows) => {
+            rows @ serde_json::Value::Array(_) => {
                 ctx.allow(table, Operation::CreateMany)?;
-                if rows.is_empty() {
-                    return Err(ProblemDetails::bad_request(
-                        "Bulk create needs at least one row",
-                    ));
-                }
-                if let Some(max) = ctx.state.limits.bulk_rows {
-                    if rows.len() > max {
-                        return Err(ProblemDetails::from_limit(
-                            &crate::plan::LimitError::BulkRows {
-                                rows: rows.len(),
-                                max,
-                            },
-                        ));
-                    }
-                }
-                if let Some(i) = rows.iter().position(|r| !r.is_object()) {
-                    return Err(ProblemDetails::invalid(
-                        format!("Row {i} of the body must be a JSON object"),
-                        format!("body[{i}]"),
-                    ));
-                }
+                let mut rows = collection::bulk_rows(&ctx, rows)?;
+                collection::fill_missing(
+                    &mut rows,
+                    collection::create_missing(raw_query.as_deref())?,
+                );
                 let m = mutation_field(
                     &ctx.catalog,
                     table,
@@ -2176,6 +2166,9 @@ pub async fn rest_update_handler(
         let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
         let table = ctx.table()?;
         let if_match = parse_if_match(&headers)?;
+        if media::content_type(&headers).as_deref() == Some(media::JSON_PATCH) {
+            return collection::json_patch_row(&ctx, table, &key, &body, if_match).await;
+        }
         let body = json_body(table, &headers, body, false)?;
         update_row(&ctx, table, &key, &body, if_match, "PATCH").await
     })

@@ -147,6 +147,50 @@ pub(super) fn alternation(names: &[String]) -> String {
     format!("({})", escaped.join("|"))
 }
 
+/// The `filter` of a write by filter.
+fn collection_filter_param(name: &str) -> Value {
+    json!({
+        "name": "filter", "in": "query", "style": "deepObject", "explode": true,
+        "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+        "schema": schema_ref(&format!("{name}Filter"))
+    })
+}
+
+fn unfiltered_param() -> Value {
+    json!({
+        "name": "unfiltered", "in": "query",
+        "description": "Allow the write without a `filter`, which writes every row",
+        "schema": { "type": "boolean", "default": false }
+    })
+}
+
+/// What a column the rows of a bulk write do not set becomes.
+fn missing_param() -> Value {
+    json!({
+        "name": "missing", "in": "query",
+        "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+        "schema": { "type": "string", "enum": ["default", "null"], "default": "default" }
+    })
+}
+
+/// RFC 6902 JSON Patch: an array of operations.
+fn json_patch_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "required": ["op", "path"],
+            "properties": {
+                "op": { "type": "string", "enum": ["add", "remove", "replace", "move", "copy", "test"] },
+                "path": { "type": "string", "description": "JSON Pointer into the row: `/title`, `/settings/theme`" },
+                "from": { "type": "string", "description": "JSON Pointer to move or copy from" },
+                "value": {}
+            },
+            "additionalProperties": false
+        }
+    })
+}
+
 /// Replaces the `$ref`s to components that do not exist with a plain object schema.
 fn fix_dangling_refs(
     paths: &mut serde_json::Map<String, Value>,
@@ -406,6 +450,7 @@ impl OpenApiGenerator {
         let read = allowed(Operation::Read);
         let create = allowed(Operation::Create);
         let create_many = create && allowed(Operation::CreateMany);
+        let upsert_ops = allowed(Operation::Upsert);
         let update = allowed(Operation::Update) && has_key;
         let delete = allowed(Operation::Delete) && has_key;
         let upsert = allowed(Operation::Upsert) && has_key;
@@ -499,7 +544,7 @@ impl OpenApiGenerator {
                     }
                 ),
                 "operationId": format!("create_{name}"),
-                "parameters": [prefer_param(true)],
+                "parameters": if create_many { vec![prefer_param(true), missing_param()] } else { vec![prefer_param(true)] },
                 "requestBody": { "required": true, "content": {
                     "application/json": { "schema": body },
                     "text/csv": { "schema": { "type": "string" } },
@@ -524,15 +569,132 @@ impl OpenApiGenerator {
                 ]),
             }));
         }
+        let update_many = allowed(Operation::UpdateMany);
+        let delete_many = allowed(Operation::DeleteMany);
+        let bulk_upsert = upsert_ops && create_many && table.has_upsert();
+        let limit_text = match config.limits.bulk_rows {
+            Some(max) => format!("at most {max} rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413)"),
+            None => "any number of rows".to_string(),
+        };
+        let affected_headers = json!({
+            "X-Affected-Count": { "description": "Number of rows written", "schema": { "type": "integer" } },
+            "Preference-Applied": { "schema": { "type": "string" } }
+        });
+        if update_many {
+            collection.insert("patch".into(), json!({
+                "summary": format!("Update {name} by filter"),
+                "description": format!("Set the given columns in every row the `filter` matches, in one statement and one transaction; {limit_text}. Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`. A JSON Patch applies to one row (`PATCH …/{{key}}`)."),
+                "operationId": format!("update_many_{name}"),
+                "parameters": [collection_filter_param(name), unfiltered_param(), prefer_param(true)],
+                "requestBody": { "required": true, "content": {
+                    "application/json": { "schema": schema_ref(&format!("{name}UpdateInput")) },
+                    "application/merge-patch+json": { "schema": schema_ref(&format!("{name}UpdateInput")) }
+                } },
+                "responses": responses(json!({
+                    "200": {
+                        "description": "The updated rows",
+                        "headers": affected_headers.clone(),
+                        "content": json_content(rows.clone())
+                    },
+                    "204": { "description": "Updated (`Prefer: return=minimal`); `X-Affected-Count` has the count", "headers": affected_headers.clone() }
+                }), &[
+                    ("409", "Conflict: a unique constraint, with its typed `code`"),
+                    ("413", "Content Too Large: the filter matches more rows than `limits.bulk_rows`"),
+                    ("415", "Unsupported Media Type: send JSON or a merge patch"),
+                    ("422", "Unprocessable Content: a validation failure, with its typed `code`"),
+                ]),
+            }));
+        }
+        if delete_many {
+            collection.insert("delete".into(), json!({
+                "summary": format!("Delete {name} by filter"),
+                "description": format!("Delete every row the `filter` matches, in one statement and one transaction; {limit_text}. Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`."),
+                "operationId": format!("delete_many_{name}"),
+                "parameters": [collection_filter_param(name), unfiltered_param(), prefer_param(true)],
+                "responses": responses(json!({
+                    "200": {
+                        "description": "The deleted rows",
+                        "headers": affected_headers.clone(),
+                        "content": json_content(rows.clone())
+                    },
+                    "204": { "description": "Deleted (`Prefer: return=minimal`); `X-Affected-Count` has the count", "headers": affected_headers.clone() }
+                }), &[
+                    ("409", "Conflict: a foreign key still refers to a row"),
+                    ("413", "Content Too Large: the filter matches more rows than `limits.bulk_rows`"),
+                ]),
+            }));
+        }
+        if bulk_upsert {
+            let keys: Vec<String> = table
+                .conflict_keys()
+                .map(|(_, cols)| {
+                    cols.iter()
+                        .map(|c| c.field_name.clone())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .collect();
+            let updatable: Vec<String> = table
+                .writable_columns()
+                .map(|c| c.field_name.clone())
+                .collect();
+            collection.insert("put".into(), json!({
+                "summary": format!("Upsert many {name}"),
+                "description": format!("Insert the rows of the array ({}), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.", limit_text),
+                "operationId": format!("upsert_many_{name}"),
+                "parameters": [
+                    {
+                        "name": "conflict", "in": "query", "style": "form", "explode": false,
+                        "description": "The unique key rows are matched by: its columns, comma-separated (default: the primary key)",
+                        "schema": { "type": "array", "items": { "type": "string" }, "examples": keys }
+                    },
+                    {
+                        "name": "resolution", "in": "query",
+                        "description": "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it",
+                        "schema": { "type": "string", "enum": ["merge", "ignore"], "default": "merge" }
+                    },
+                    {
+                        "name": "update", "in": "query", "style": "form", "explode": false,
+                        "description": "Columns a merge updates (default: those the rows set, but the key)",
+                        "schema": { "type": "array", "items": { "type": "string", "enum": updatable } }
+                    },
+                    missing_param(),
+                    prefer_param(true)
+                ],
+                "requestBody": { "required": true, "content": {
+                    "application/json": { "schema": { "type": "array", "minItems": 1, "maxItems": config.limits.bulk_rows,
+                        "items": schema_ref(&format!("{name}CreateInput")) } },
+                    "text/csv": { "schema": { "type": "string" } }
+                } },
+                "responses": responses(json!({
+                    "200": {
+                        "description": "The rows as they are now (those `ignore` left are the existing ones)",
+                        "headers": affected_headers.clone(),
+                        "content": json_content(rows.clone())
+                    },
+                    "204": { "description": "Upserted (`Prefer: return=minimal`)", "headers": affected_headers.clone() }
+                }), &[
+                    ("409", "Conflict: a unique constraint other than the `conflict` key"),
+                    ("413", "Content Too Large: more rows than `limits.bulk_rows`"),
+                    ("422", "Unprocessable Content: a validation failure, with its typed `code`"),
+                ]),
+            }));
+        }
         if let Some(get) = collection.get("get").cloned() {
             collection.insert("head".into(), head_of(&get, format!("head_{name}")));
         }
         if !collection.is_empty() {
-            let media: &[(&str, &str)] = if create {
-                &[("Accept-Post", "The request media types of a create")]
-            } else {
-                &[]
-            };
+            let mut media: Vec<(&str, &str)> = Vec::new();
+            if create {
+                media.push(("Accept-Post", "The request media types of a create"));
+            }
+            if update_many {
+                media.push((
+                    "Accept-Patch",
+                    "`application/json`, `application/merge-patch+json`",
+                ));
+            }
+            let media = &media[..];
             collection.insert(
                 "options".into(),
                 options_of(format!("options_{name}"), media),
@@ -662,13 +824,15 @@ impl OpenApiGenerator {
         if update {
             item.insert("patch".into(), json!({
                 "summary": format!("Update {name} by key"),
-                "description": "Update the given fields. The key cannot be changed: a key in the body must match the URL.",
+                "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
                 "operationId": format!("update_{name}_by_key"),
                 "parameters": [key_param.clone(),
                     if_match_param("Row version (the `ETag`) the update must apply to; 412 if the row changed"),
                     prefer_previous_param()],
                 "requestBody": { "required": true, "content": {
                     "application/json": { "schema": schema_ref(&format!("{name}UpdateInput")) },
+                    "application/merge-patch+json": { "schema": schema_ref(&format!("{name}UpdateInput")) },
+                    "application/json-patch+json": { "schema": json_patch_schema() },
                     "multipart/form-data": { "schema": Self::multipart_schema(table, catalog) }
                 } },
                 "responses": write_responses("Updated", true),

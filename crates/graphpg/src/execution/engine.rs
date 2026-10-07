@@ -33,6 +33,10 @@ pub enum ExecutionError {
     #[error("the `{table}` row changed since `expectedVersion` was read")]
     StaleVersion { schema: String, table: String },
 
+    /// An update or delete by filter affected more rows than `limits.bulk_rows` allows.
+    #[error("the operation writes {actual} rows; at most {max} are allowed")]
+    TooManyRows { max: u64, actual: u64 },
+
     #[error("{source} (in mutation field `{field}`; the operation was rolled back)")]
     Mutation {
         field: String,
@@ -526,15 +530,32 @@ impl ExecutionEngine {
             };
             lines.extend(plan);
         }
-        match Self::query_data(conn, &payload).await {
+        let data = match Self::query_data(conn, &payload).await {
             Err(ExecutionError::Postgres(error)) if mutation.payload.context.is_some() => {
-                Err(ExecutionError::Write {
+                return Err(ExecutionError::Write {
                     error,
                     context: mutation.payload.context.clone(),
                 })
             }
-            other => other,
+            other => other?,
+        };
+        let Some(limit) = &mutation.affected_limit else {
+            return Ok(data);
+        };
+        let mut data = data;
+        let actual = data.get(&limit.alias).and_then(serde_json::Value::as_u64);
+        if let Some(actual) = actual.filter(|actual| *actual > limit.max) {
+            return Err(ExecutionError::TooManyRows {
+                max: limit.max,
+                actual,
+            });
         }
+        if limit.hidden {
+            if let Some(object) = data.as_object_mut() {
+                object.remove(&limit.alias);
+            }
+        }
+        Ok(data)
     }
 
     /// The plan of a data-modifying statement, explained (and so executed) in a savepoint

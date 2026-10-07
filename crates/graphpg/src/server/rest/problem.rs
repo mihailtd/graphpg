@@ -239,6 +239,13 @@ impl ProblemDetails {
             }
         }
 
+        if let ExecutionError::TooManyRows { max, actual } = root {
+            return Self::from_limit(&crate::plan::LimitError::BulkRows {
+                rows: *actual as usize,
+                max: *max as usize,
+            });
+        }
+
         if let Some(v) = err.violation(catalog) {
             let status = violation_status(&v.code);
             let mut problem = Self::new(status, v.message)

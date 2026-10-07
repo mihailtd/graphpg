@@ -7,7 +7,8 @@ use super::http::{
 };
 use super::rest::rest_schemas;
 use super::rest::{
-    rest_aggregate_get_handler, rest_aggregate_post_handler, rest_column_get_handler,
+    rest_aggregate_get_handler, rest_aggregate_post_handler, rest_bulk_upsert_handler,
+    rest_collection_delete_handler, rest_collection_update_handler, rest_column_get_handler,
     rest_column_put_handler, rest_create_handler, rest_delete_handler, rest_global_search_handler,
     rest_item_handler, rest_list_handler, rest_rpc_handler, rest_search_handler,
     rest_search_method_handler, rest_update_handler, rest_upsert_handler, SchemaScope,
@@ -122,9 +123,15 @@ fn routes_under(prefix: &str, root: bool) -> Router<Arc<ServerState>> {
             &resource,
             get(rest_list_handler)
                 .post(rest_create_handler)
+                .put(rest_bulk_upsert_handler)
+                .patch(rest_collection_update_handler)
+                .delete(rest_collection_delete_handler)
                 .options(allowed(
-                    "GET, HEAD, POST, OPTIONS",
-                    &[("accept-post", WRITE_MEDIA_WITH_CSV)],
+                    "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
+                    &[
+                        ("accept-post", WRITE_MEDIA_WITH_CSV),
+                        ("accept-patch", COLLECTION_PATCH_MEDIA),
+                    ],
                 )),
         )
         .route(
@@ -155,7 +162,7 @@ fn routes_under(prefix: &str, root: bool) -> Router<Arc<ServerState>> {
                 .delete(rest_delete_handler)
                 .options(allowed(
                     "GET, HEAD, PATCH, PUT, DELETE, OPTIONS",
-                    &[("accept-patch", WRITE_MEDIA)],
+                    &[("accept-patch", ROW_PATCH_MEDIA)],
                 )),
         )
         .route(
@@ -166,7 +173,14 @@ fn routes_under(prefix: &str, root: bool) -> Router<Arc<ServerState>> {
         )
 }
 
+/// Request media types of a patch of one row: JSON (also as an RFC 7396 merge patch), an
+/// RFC 6902 JSON Patch, and `multipart/form-data` for files.
+const ROW_PATCH_MEDIA: &str =
+    "application/json, application/merge-patch+json, application/json-patch+json, multipart/form-data";
+/// Request media types of a patch of the rows a filter matches.
+const COLLECTION_PATCH_MEDIA: &str = "application/json, application/merge-patch+json";
 /// Request media types of a write: JSON, and `multipart/form-data` for files.
+#[allow(dead_code)]
 const WRITE_MEDIA: &str = "application/json, multipart/form-data";
 /// Request media types of a create: those of a write, and CSV rows.
 const WRITE_MEDIA_WITH_CSV: &str = "application/json, text/csv, multipart/form-data";

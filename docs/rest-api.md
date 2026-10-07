@@ -199,9 +199,12 @@ The schema is part of the path, never a header or a parameter, and it is a fixed
 | Request | |
 | :--- | :--- |
 | `POST /rest/{resource}` | Create a row (object body) → `201` with `Location` and `ETag`. An array body creates up to **1000** rows in one statement and answers with an array |
-| `PATCH /rest/{resource}/{key}` | Update the given fields → `200` |
+| `PATCH /rest/{resource}/{key}` | Update the given fields → `200` (JSON, an RFC 7396 merge patch, or an RFC 6902 JSON Patch) |
 | `PUT /rest/{resource}/{key}` | Insert the row or update its columns → `200` either way |
 | `DELETE /rest/{resource}/{key}` | Delete → `200` with the row |
+| `PATCH /rest/{resource}?filter…` | Update the rows a filter matches → `200` with the rows and `X-Affected-Count` |
+| `DELETE /rest/{resource}?filter…` | Delete the rows a filter matches, likewise |
+| `PUT /rest/{resource}` | Upsert an array of rows by a declared unique key |
 
 - **Nested writes:** nested objects in the body are written in the same transaction, in the shape of the GraphQL input.
 - **The URL owns the key.** A key in a body must match the URL (the global ID of the same row is fine, so a representation read from the API can be sent back); a different one is a 400. `PATCH` with no fields is a 400.
@@ -210,6 +213,25 @@ The schema is part of the path, never a header or a parameter, and it is a fixed
 - A request is **all-or-nothing** in one transaction: there is no partial data, unlike GraphQL.
 - Bodies are limited by `limits.request_body_bytes` (1 MiB by default).
 - **`Prefer: previous`** on `PATCH` and `PUT` answers `{"row": …, "previous": …}`: the row as it is now and as it was before the write, read in the writing statement itself (`RETURNING OLD`, PostgreSQL 18; ignored without it). `previous` is `null` for a row a `PUT` inserted, and has no `rowVersion`. `Preference-Applied: previous` says it was honoured; `return=minimal` wins over it.
+
+### Writes to a collection
+
+`PATCH` and `DELETE` on `/rest/{resource}` take the `filter` a list takes (`filter[status][eq]=draft`, `filter[or][0]…`, relation filters), nothing else: `order`, `first`, `include` and the like are a 400, as is an unknown operator. The body of a `PATCH` is the columns to set (`application/json` or `application/merge-patch+json`: a `null` sets the column to `NULL`). One statement, one transaction, planned onto the GraphQL `update<Types>(where:)` and `delete<Types>(where:)`.
+
+- **No runaway writes.** Without a `filter` the write is refused (`400`, code `FILTER_REQUIRED`) unless you send `unfiltered=true`. A write by filter may affect at most `limits.bulk_rows` rows (1000 by default): if more match, the transaction is rolled back and nothing changes (`413`, `BULK_LIMIT_EXCEEDED`, with the `limit` and the `actual` count). GraphQL's `update<Types>(where:)` and `delete<Types>(where:)` have the same bound.
+- **The answer** is the affected rows, with their number in `X-Affected-Count`; `Prefer: return=minimal` answers `204` with just the header.
+
+```
+PATCH  /rest/orders?filter[status][eq]=draft&filter[createdAt][lt]=2026-01-01   {"status": "ARCHIVED"}
+DELETE /rest/sessions?filter[expiresAt][lt]=2026-10-01
+PATCH  /rest/orders?unfiltered=true   {"seen": true}
+```
+
+**Bulk upsert**: `PUT /rest/{resource}` with an array (`application/json` or CSV, at most `limits.bulk_rows` rows). `conflict=email` names the unique key the rows are matched by (its columns, comma-separated; the primary key by default), `resolution=merge` (the default) updates the rows that exist from the proposed ones (`update=name,qty` limits it to those columns; by default the columns the rows set, apart from the key) and `resolution=ignore` leaves them. Rows that do not exist are inserted. The answer is the rows as they are now. `conflict` must be a unique key of the table: anything else is a 400 naming the keys there are.
+
+**Missing columns** (bulk `POST` and `PUT`): when some rows of the array set a column and others do not, `missing=default` (the default) inserts the latter with the column's default, and `missing=null` sets the column to `NULL` in every row that does not set it.
+
+**JSON Patch.** `PATCH /rest/{resource}/{key}` with `Content-Type: application/json-patch+json` takes RFC 6902 operations (`add`, `remove`, `replace`, `move`, `copy`, `test`) applied to the row as the API shows it: `/title` is the column, `/settings/theme` reaches into a JSON column. The columns that changed are updated, as with a plain `PATCH`; an operation that does not apply (a failed `test`, a missing path) is `422` with code `PATCH_FAILED` and nothing is written. Without `If-Match` the row is read and then written in two statements, so send the `ETag` back when another writer may be at it. A JSON Patch is for one row: on a collection it is a `415`.
 
 ### Nested writes
 

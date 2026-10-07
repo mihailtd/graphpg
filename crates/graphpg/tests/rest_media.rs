@@ -323,7 +323,10 @@ async fn head_answers_like_get_without_a_body_and_options_lists_the_methods() {
 
     let options = env.call("OPTIONS", "/rest/typed", &[], vec![]).await;
     assert_eq!(options.status, StatusCode::NO_CONTENT);
-    assert_eq!(options.header("allow"), "GET, HEAD, POST, OPTIONS");
+    assert_eq!(
+        options.header("allow"),
+        "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"
+    );
     assert!(options.header("accept-post").contains("text/csv"));
     let item = env.call("OPTIONS", "/rest/typed/1", &[], vec![]).await;
     assert_eq!(

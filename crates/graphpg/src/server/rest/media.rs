@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 
 pub const CSV: &str = "text/csv";
 pub const JSON: &str = "application/json";
+pub const JSON_PATCH: &str = "application/json-patch+json";
 pub const MULTIPART: &str = "multipart/form-data";
 pub const OCTET_STREAM: &str = "application/octet-stream";
 

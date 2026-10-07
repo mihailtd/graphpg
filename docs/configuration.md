@@ -297,7 +297,7 @@ In dev mode the watcher rewrites the files on every schema change (`watch.export
 | `page_size.max` | 1000 | Largest `first` / `last` (`PAGE_SIZE_EXCEEDED`). Lists that have no page size (plain list fields, to-many relations) are **cut at this many rows**: page through a connection to read more |
 | `depth` | 10 | How many levels of rows an operation nests: a root list is 1, the rows of a relation under it 2, … (`DEPTH_LIMIT_EXCEEDED`). A REST `include` path counts too |
 | `cost` | 10 000 000 | An estimate of the rows an operation reads: each step's rows (its page size, 1 for a single row) times the rows it hangs from, summed. 100 forums with their last 100 messages and each message's author cost `100 + 100 × 100 + 100 × 100` (`COST_LIMIT_EXCEEDED`) |
-| `bulk_rows` | 1000 | Rows one write inserts, nested writes included: GraphQL `create<Types>`, REST bulk creates (`BULK_LIMIT_EXCEEDED`, HTTP 413) |
+| `bulk_rows` | 1000 | Rows one write inserts, nested writes included (GraphQL `create<Types>`, REST bulk creates and upserts), and rows an update or delete by filter may affect (GraphQL `update<Types>(where:)`, `delete<Types>(where:)`, REST `PATCH` / `DELETE` on a collection): above it the write is rolled back (`BULK_LIMIT_EXCEEDED`, HTTP 413) |
 | `groups` | 10 000 | Groups an aggregate request may return (`TOO_MANY_GROUPS`) |
 | `request_body_bytes` | 1 MiB | Largest request body of `/graphql` and `/rest` (413). `/import` streams and is not limited |
 | `count_threshold` | 10 000 | Threshold for `Prefer: count=estimated`: exact count below it, planner estimate above |

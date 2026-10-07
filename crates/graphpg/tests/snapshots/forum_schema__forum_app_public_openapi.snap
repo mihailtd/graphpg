@@ -524,6 +524,19 @@ expression: openapi
                 "return=minimal"
               ]
             }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
           }
         ],
         "requestBody": {
@@ -675,6 +688,538 @@ expression: openapi
           },
           "415": {
             "description": "Unsupported Media Type: send JSON, CSV rows or `multipart/form-data`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update forums by filter",
+        "description": "Set the given columns in every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`. A JSON Patch applies to one row (`PATCH …/{key}`).",
+        "operationId": "update_many_forums",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/forumsFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/forumsUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/forumsUpdateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/forums"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Updated (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type: send JSON or a merge patch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete forums by filter",
+        "description": "Delete every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`.",
+        "operationId": "delete_many_forums",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/forumsFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/forums"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a foreign key still refers to a row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Upsert many forums",
+        "description": "Insert the rows of the array (at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413)), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.",
+        "operationId": "upsert_many_forums",
+        "parameters": [
+          {
+            "name": "conflict",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "The unique key rows are matched by: its columns, comma-separated (default: the primary key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "examples": [
+                "id"
+              ]
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "description": "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "merge",
+                "ignore"
+              ],
+              "default": "merge"
+            }
+          },
+          {
+            "name": "update",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns a merge updates (default: those the rows set, but the key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1000,
+                "items": {
+                  "$ref": "#/components/schemas/forumsCreateInput"
+                }
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rows as they are now (those `ignore` left are the existing ones)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/forums"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Upserted (`Prefer: return=minimal`)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint other than the `conflict` key",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: more rows than `limits.bulk_rows`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1115,6 +1660,12 @@ expression: openapi
               },
               "Accept-Post": {
                 "description": "The request media types of a create",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Patch": {
+                "description": "`application/json`, `application/merge-patch+json`",
                 "schema": {
                   "type": "string"
                 }
@@ -1601,7 +2152,7 @@ expression: openapi
       },
       "patch": {
         "summary": "Update forums by key",
-        "description": "Update the given fields. The key cannot be changed: a key in the body must match the URL.",
+        "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
         "operationId": "update_forums_by_key",
         "parameters": [
           {
@@ -1641,6 +2192,46 @@ expression: openapi
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/forumsUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/forumsUpdateInput"
+              }
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "op",
+                    "path"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "add",
+                        "remove",
+                        "replace",
+                        "move",
+                        "copy",
+                        "test"
+                      ]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "JSON Pointer into the row: `/title`, `/settings/theme`"
+                    },
+                    "from": {
+                      "type": "string",
+                      "description": "JSON Pointer to move or copy from"
+                    },
+                    "value": {}
+                  },
+                  "additionalProperties": false
+                }
               }
             },
             "multipart/form-data": {
@@ -3160,6 +3751,19 @@ expression: openapi
                 "return=minimal"
               ]
             }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
           }
         ],
         "requestBody": {
@@ -3330,6 +3934,542 @@ expression: openapi
           },
           "415": {
             "description": "Unsupported Media Type: send JSON, CSV rows or `multipart/form-data`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update messages by filter",
+        "description": "Set the given columns in every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`. A JSON Patch applies to one row (`PATCH …/{key}`).",
+        "operationId": "update_many_messages",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/messagesUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/messagesUpdateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/messages"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Updated (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type: send JSON or a merge patch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete messages by filter",
+        "description": "Delete every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`.",
+        "operationId": "delete_many_messages",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/messagesFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/messages"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a foreign key still refers to a row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Upsert many messages",
+        "description": "Insert the rows of the array (at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413)), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.",
+        "operationId": "upsert_many_messages",
+        "parameters": [
+          {
+            "name": "conflict",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "The unique key rows are matched by: its columns, comma-separated (default: the primary key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "examples": [
+                "id"
+              ]
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "description": "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "merge",
+                "ignore"
+              ],
+              "default": "merge"
+            }
+          },
+          {
+            "name": "update",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns a merge updates (default: those the rows set, but the key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "archivedAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1000,
+                "items": {
+                  "$ref": "#/components/schemas/messagesCreateInput"
+                }
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rows as they are now (those `ignore` left are the existing ones)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/messages"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Upserted (`Prefer: return=minimal`)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint other than the `conflict` key",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: more rows than `limits.bulk_rows`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3681,6 +4821,12 @@ expression: openapi
               },
               "Accept-Post": {
                 "description": "The request media types of a create",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Patch": {
+                "description": "`application/json`, `application/merge-patch+json`",
                 "schema": {
                   "type": "string"
                 }
@@ -4081,7 +5227,7 @@ expression: openapi
       },
       "patch": {
         "summary": "Update messages by key",
-        "description": "Update the given fields. The key cannot be changed: a key in the body must match the URL.",
+        "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
         "operationId": "update_messages_by_key",
         "parameters": [
           {
@@ -4121,6 +5267,46 @@ expression: openapi
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/messagesUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/messagesUpdateInput"
+              }
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "op",
+                    "path"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "add",
+                        "remove",
+                        "replace",
+                        "move",
+                        "copy",
+                        "test"
+                      ]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "JSON Pointer into the row: `/title`, `/settings/theme`"
+                    },
+                    "from": {
+                      "type": "string",
+                      "description": "JSON Pointer to move or copy from"
+                    },
+                    "value": {}
+                  },
+                  "additionalProperties": false
+                }
               }
             },
             "multipart/form-data": {
@@ -5618,6 +6804,19 @@ expression: openapi
                 "return=minimal"
               ]
             }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
           }
         ],
         "requestBody": {
@@ -5773,6 +6972,540 @@ expression: openapi
           },
           "415": {
             "description": "Unsupported Media Type: send JSON, CSV rows or `multipart/form-data`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update users by filter",
+        "description": "Set the given columns in every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`. A JSON Patch applies to one row (`PATCH …/{key}`).",
+        "operationId": "update_many_users",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/usersFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/usersUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/usersUpdateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/users"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Updated (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type: send JSON or a merge patch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content: a validation failure, with its typed `code`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete users by filter",
+        "description": "Delete every row the `filter` matches, in one statement and one transaction; at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413). Without a `filter` the write is refused (`FILTER_REQUIRED`) unless `unfiltered=true`.",
+        "operationId": "delete_many_users",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "description": "The rows to write: the filter a list takes, `filter[column][operator]=value`. Required unless `unfiltered=true`",
+            "schema": {
+              "$ref": "#/components/schemas/usersFilter"
+            }
+          },
+          {
+            "name": "unfiltered",
+            "in": "query",
+            "description": "Allow the write without a `filter`, which writes every row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted rows",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/users"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Deleted (`Prefer: return=minimal`); `X-Affected-Count` has the count",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a foreign key still refers to a row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: the filter matches more rows than `limits.bulk_rows`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Upsert many users",
+        "description": "Insert the rows of the array (at most 1000 rows (`limits.bulk_rows`): above that the write is rolled back with `BULK_LIMIT_EXCEEDED` (413)), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.",
+        "operationId": "upsert_many_users",
+        "parameters": [
+          {
+            "name": "conflict",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "The unique key rows are matched by: its columns, comma-separated (default: the primary key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "examples": [
+                "id",
+                "username"
+              ]
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "description": "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "merge",
+                "ignore"
+              ],
+              "default": "merge"
+            }
+          },
+          {
+            "name": "update",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Columns a merge updates (default: those the rows set, but the key)",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt"
+                ]
+              }
+            }
+          },
+          {
+            "name": "missing",
+            "in": "query",
+            "description": "What a column some row of the array sets and another does not becomes in the latter: `default` (the column's default) or `null`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "null"
+              ],
+              "default": "default"
+            }
+          },
+          {
+            "name": "Prefer",
+            "in": "header",
+            "description": "`return=minimal` answers 204 without a body (default: `return=representation`)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "return=representation",
+                "return=minimal"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1000,
+                "items": {
+                  "$ref": "#/components/schemas/usersCreateInput"
+                }
+              }
+            },
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rows as they are now (those `ignore` left are the existing ones)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/users"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Upserted (`Prefer: return=minimal`)",
+            "headers": {
+              "X-Affected-Count": {
+                "description": "Number of rows written",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request: an unknown or malformed parameter, operator, field or body",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the operation is not permitted on this resource",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: a unique constraint other than the `conflict` key",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large: more rows than `limits.bulk_rows`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6148,6 +7881,12 @@ expression: openapi
               },
               "Accept-Post": {
                 "description": "The request media types of a create",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Patch": {
+                "description": "`application/json`, `application/merge-patch+json`",
                 "schema": {
                   "type": "string"
                 }
@@ -6569,7 +8308,7 @@ expression: openapi
       },
       "patch": {
         "summary": "Update users by key",
-        "description": "Update the given fields. The key cannot be changed: a key in the body must match the URL.",
+        "description": "Update the given fields: a JSON body (or an RFC 7396 merge patch: `null` sets a column to NULL), or an RFC 6902 JSON Patch (`application/json-patch+json`) applied to the row as the API shows it (`/title`, `/settings/theme`), answered with 422 `PATCH_FAILED` when an operation does not apply. The key cannot be changed: a key in the body must match the URL.",
         "operationId": "update_users_by_key",
         "parameters": [
           {
@@ -6609,6 +8348,46 @@ expression: openapi
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/usersUpdateInput"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/usersUpdateInput"
+              }
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "op",
+                    "path"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "add",
+                        "remove",
+                        "replace",
+                        "move",
+                        "copy",
+                        "test"
+                      ]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "JSON Pointer into the row: `/title`, `/settings/theme`"
+                    },
+                    "from": {
+                      "type": "string",
+                      "description": "JSON Pointer to move or copy from"
+                    },
+                    "value": {}
+                  },
+                  "additionalProperties": false
+                }
               }
             },
             "multipart/form-data": {

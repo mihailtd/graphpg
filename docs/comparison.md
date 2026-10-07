@@ -100,13 +100,13 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Feature | graphpg REST | PostgREST |
 | :--- | :--- | :--- |
 | Create one row | `POST` JSON | `POST` JSON |
-| Bulk create | `POST` JSON array or **CSV**, one statement, bounded by `limits.bulk_rows` | `POST` JSON array or **CSV**; `?columns=` to pick keys; form-encoded bodies |
+| Bulk create | `POST` JSON array or **CSV**, one statement, bounded by `limits.bulk_rows`; `missing=default|null` | `POST` JSON array or **CSV**; `?columns=` to pick keys; form-encoded bodies |
 | **Nested writes** (create / connect / update / sync children in one request) | **Yes**: the GraphQL input shape, validated to any depth, atomic | **No** (multi-table writes need an RPC function) |
-| Update | `PATCH /rest/<table>/<key>` | `PATCH /<table>?<filters>` (any filter; many rows) |
-| Delete | `DELETE /rest/<table>/<key>` | `DELETE /<table>?<filters>` (any filter; many rows) |
-| Update or delete many rows by filter | Not over REST (GraphQL `update<Types>(where:)`) | Yes; `Prefer: max-affected=N` guards the count |
-| Upsert | `PUT /rest/<table>/<key>` (primary key) | `POST` with `resolution=merge-duplicates` / `ignore-duplicates` and `on_conflict=<unique columns>`; `PUT` by primary key |
-| Missing columns | The column default (or null) | `Prefer: missing=default` chooses the default over null |
+| Update | `PATCH /rest/<table>/<key>`, or `PATCH /rest/<table>?<filters>` (many rows); JSON, `merge-patch+json` or, for a row, `json-patch+json` | `PATCH /<table>?<filters>` (any filter; many rows) |
+| Delete | `DELETE /rest/<table>/<key>` or `DELETE /rest/<table>?<filters>` | `DELETE /<table>?<filters>` (any filter; many rows) |
+| Update or delete many rows by filter | Yes, with the list's `filter`; refused without one (`unfiltered=true` to mean it); at most `limits.bulk_rows` rows, else rolled back (`413`); `X-Affected-Count` | Yes; `Prefer: max-affected=N` guards the count |
+| Upsert | `PUT /rest/<table>/<key>` (primary key); `PUT /rest/<table>` with an array, `conflict=<unique columns>`, `resolution=merge|ignore`, `update=<columns>` (query parameters, no vendor header) | `POST` with `resolution=merge-duplicates` / `ignore-duplicates` and `on_conflict=<unique columns>`; `PUT` by primary key |
+| Missing columns | `missing=default|null` (query parameter, bulk writes) | `Prefer: missing=default` chooses the default over null |
 | Response shape | `Prefer: return=minimal` (204) or the row (default); `Location` and `ETag` | `return=minimal` (default), `headers-only`, `representation`; `Preference-Applied` |
 | Row as it was before the write | `Prefer: previous` (`RETURNING OLD`, PostgreSQL 18) | No |
 | Optimistic concurrency | Row version as `ETag` / `If-Match` (412 `STALE_VERSION`); conditional `GET` / `HEAD` with `If-None-Match` (304 `Not Modified`) | No row versions |
