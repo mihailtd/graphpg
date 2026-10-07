@@ -2,7 +2,7 @@
 
 graphpg serves a REST API next to GraphQL, planned onto the same operation plan: the same lateral-join SQL, keyset pagination, nested writes, typed constraint errors and Row-Level Security. It is served under `/rest` when `openapi.enabled` is on, and described by an [OpenAPI 3.1 document](configuration.md#the-openapi-document-and-uis) generated from the same catalog and configuration, so the document and the API cannot drift apart.
 
-A resource is a table, view or materialized view, named as in the database (`/rest/forums`; with several schemas, the default schema's table when names collide). Views follow what PostgreSQL allows: they are always readable, writable only where PostgreSQL can update them and a key is declared (`graphpg.yaml`), and read by key only once they have one. Coming from PostgREST? The [comparison](comparison.md#compared-with-postgrest) maps its grammar to this one. Rows use the API's field names (`archivedAt`) and carry the real primary key under the key column's name (`id` is the UUID, not a Relay global ID).
+A resource is a table, view or materialized view, named as in the database (`/rest/forums`; with several schemas, the default schema's table when names collide). Views follow what PostgreSQL allows: they are always readable, writable only where PostgreSQL can update them and a key is declared (`graphpg.yaml`), and read by key only once they have one. Coming from PostgREST? The [comparison](comparison.md#compared-with-postgrest) maps its grammar to this one. Rows use the API's field names (`archivedAt`) and carry the real primary key under the key column's name (`id` is the UUID, not a Relay global ID). For tables participating in polymorphic Concrete Table Inheritance (CTI), rows automatically include `__typename` and subtype columns matching their concrete type.
 
 ## Strict by design
 
@@ -50,11 +50,14 @@ A single-row `GET` accepts only `fields` and `include`.
 
 Operators that need a typed value (`gtAny` on an `int` column) report a cell that does not fit as a `400` naming the parameter. Operators of a column's type only: `regex` on a number is a `400`.
 
-Lists carry RFC 8288 `Link` headers (`rel="next"` / `rel="prev"`) that keep every other parameter. The total is **opt-in**, because it scans every matching row: send `Prefer: count=exact` to get `X-Total-Count` (answered with `Preference-Applied: count=exact`).
+Lists carry RFC 8288 `Link` headers (`rel="next"` / `rel="prev"`) that keep every other parameter. The total is **opt-in**, because it scans every matching row:
+- `Prefer: count=exact`: Scans matching rows and returns the exact count in `X-Total-Count` (with `Preference-Applied: count=exact`).
+- `Prefer: count=planned`: Uses the PostgreSQL planner's row estimate (from `reltuples` or `EXPLAIN`), answering with `Preference-Applied: count=planned`, `X-Total-Count`, and `X-Total-Count-Estimate: true`.
+- `Prefer: count=estimated`: Computes an exact count when the estimate is below `limits.count_threshold` (default 10,000), falling back to the planner estimate above it. Sets `X-Total-Count-Estimate: true` whenever the estimate was used.
 
 ### Ranges
 
-A list takes `Range: items=A-B` (`items=0-24`, or `items=25-` to the end): rows `A` to `B`, counting from 0. The answer is `206 Partial Content` with `Content-Range: items A-B/N`, where `N` is `*` unless `Prefer: count=exact` asked for the count (it costs a scan, so it is not done unasked), and a `200` when the range covers a list whose size is known to fit it. A range past the end is `416` with `Content-Range: items */N`, as is one that ends before it starts. A page larger than `limits.page_size.max` is cut at the maximum, and the `Content-Range` says which rows came. Another unit, a suffix (`items=-5`) or several ranges are ignored and the whole list is sent. A range does not combine with `first`, `last`, `after`, `before` or `offset` (`400`). Every list answers with `Accept-Ranges: items`, and `HEAD` carries the same headers. Keyset cursors and `Link` headers stay the way to page through a list that changes.
+A list takes `Range: items=A-B` (`items=0-24`, or `items=25-` to the end): rows `A` to `B`, counting from 0. The answer is `206 Partial Content` with `Content-Range: items A-B/N`, where `N` is `*` unless `Prefer: count=...` asked for the count (it costs a scan, so it is not done unasked), and a `200` when the range covers a list whose size is known to fit it. A range past the end is `416` with `Content-Range: items */N`, as is one that ends before it starts. A page larger than `limits.page_size.max` is cut at the maximum, and the `Content-Range` says which rows came. Another unit, a suffix (`items=-5`) or several ranges are ignored and the whole list is sent. A range does not combine with `first`, `last`, `after`, `before` or `offset` (`400`). Every list answers with `Accept-Ranges: items`, and `HEAD` carries the same headers. Keyset cursors and `Link` headers stay the way to page through a list that changes.
 
 ### Search
 
@@ -222,6 +225,14 @@ Errors are RFC 9457 `application/problem+json`:
 | 503 | The database is unavailable, or a statement ran past `limits.statement_timeout` (`STATEMENT_TIMEOUT`) |
 
 In **prod** mode raw PostgreSQL messages never reach the client: unexpected failures say so in general terms, with a `requestId` that is also written to the server log together with the real error. **Dev** mode adds the detail.
+
+### Custom SQL errors (`PTxxx` and `errors.map`)
+
+Custom application errors raised in SQL are never masked in production:
+- **`PTxxx` SQLSTATE codes**: Functions and triggers can raise exceptions with PostgREST-style `PTxxx` codes (e.g. `RAISE EXCEPTION ... USING ERRCODE = 'PT402'`). If the exception message is JSON (`{"message": "...", "code": "...", "hint": "..."}`), the fields populate the RFC 9457 problem response directly. The HTTP status matches the code suffix (e.g. `PT402` -> `402 Payment Required`).
+- **`errors.map`**: Configuration mapping SQLSTATE error codes or constraint names to custom HTTP status codes, titles, codes, and problem type URIs.
+
+Both `PTxxx` codes and mapped errors also expose the resulting code in GraphQL responses under `errors[].extensions.code`.
 
 ## Limits
 

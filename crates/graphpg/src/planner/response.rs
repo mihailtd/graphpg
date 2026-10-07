@@ -62,6 +62,26 @@ impl ResponseShaper {
         include_page_info: bool,
         include_total_count: bool,
     ) -> RequestField {
+        Self::build_list_request_ext(
+            root_field_name,
+            arguments,
+            row_fields,
+            include_page_info,
+            include_total_count,
+            false,
+        )
+    }
+
+    /// Constructs a `RequestField` for a collection query, optionally asking for an estimated
+    /// `totalCount(estimate: true)`.
+    pub fn build_list_request_ext(
+        root_field_name: impl Into<String>,
+        arguments: HashMap<String, serde_json::Value>,
+        row_fields: Vec<RequestField>,
+        include_page_info: bool,
+        include_total_count: bool,
+        estimate_total_count: bool,
+    ) -> RequestField {
         let mut children = vec![RequestField::new("nodes").with_children(row_fields)];
 
         if include_page_info {
@@ -74,7 +94,11 @@ impl ResponseShaper {
         }
 
         if include_total_count {
-            children.push(RequestField::new("totalCount"));
+            let mut tc = RequestField::new("totalCount");
+            if estimate_total_count {
+                tc = tc.with_argument("estimate", serde_json::json!(true));
+            }
+            children.push(tc);
         }
 
         RequestField::new(root_field_name)

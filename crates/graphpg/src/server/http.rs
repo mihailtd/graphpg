@@ -83,6 +83,7 @@ pub(crate) fn execution_error(
     err: &ExecutionError,
     catalog: &DatabaseCatalog,
     mask_errors: bool,
+    errors_config: &crate::config::models::ErrorsConfig,
 ) -> (StatusCode, GraphQLError) {
     let path = match err {
         ExecutionError::Mutation { field, .. } => {
@@ -90,6 +91,83 @@ pub(crate) fn execution_error(
         }
         _ => None,
     };
+
+    let mut root = err;
+    while let ExecutionError::Mutation { source, .. } = root {
+        root = source;
+    }
+    let db_error = match root {
+        ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => e.as_db_error(),
+        _ => None,
+    };
+
+    if let Some(db) = db_error {
+        let sqlstate = db.code().code();
+        let constraint = db.constraint();
+
+        let mapped = errors_config
+            .map
+            .get(sqlstate)
+            .or_else(|| constraint.and_then(|c| errors_config.map.get(c)));
+
+        if let Some(cfg) = mapped {
+            let code = cfg.code.clone().unwrap_or_else(|| sqlstate.to_string());
+            let mut extensions = serde_json::json!({ "code": code });
+            if let Some(hint) = db.hint() {
+                extensions["hint"] = serde_json::json!(hint);
+            }
+            return (
+                StatusCode::OK,
+                GraphQLError {
+                    message: db.message().to_string(),
+                    path,
+                    extensions: Some(extensions),
+                },
+            );
+        }
+
+        if sqlstate.len() == 5
+            && sqlstate.starts_with("PT")
+            && sqlstate[2..].chars().all(|c| c.is_ascii_digit())
+        {
+            let (message, code) = if let Ok(serde_json::Value::Object(map)) =
+                serde_json::from_str::<serde_json::Value>(db.message())
+            {
+                let msg = map
+                    .get("message")
+                    .or_else(|| map.get("detail"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(db.message())
+                    .to_string();
+                let c = map
+                    .get("code")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .or_else(|| db.hint().map(ToString::to_string))
+                    .unwrap_or_else(|| sqlstate.to_string());
+                (msg, c)
+            } else {
+                let c = db
+                    .hint()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| sqlstate.to_string());
+                (db.message().to_string(), c)
+            };
+            let mut extensions = serde_json::json!({ "code": code });
+            if let Some(hint) = db.hint() {
+                extensions["hint"] = serde_json::json!(hint);
+            }
+            return (
+                StatusCode::OK,
+                GraphQLError {
+                    message,
+                    path,
+                    extensions: Some(extensions),
+                },
+            );
+        }
+    }
+
     match err.violation(catalog) {
         Some(v) => {
             let extensions = serde_json::json!({
@@ -238,6 +316,8 @@ pub struct ServerState {
     /// Safety limits (page size, depth, cost, bulk rows, body size, groups): enforced on every
     /// plan, whichever API made it.
     pub limits: crate::config::models::LimitsConfig,
+    /// Custom error configurations and detail level.
+    pub errors: crate::config::models::ErrorsConfig,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -289,12 +369,19 @@ impl ServerState {
             introspection: false,
             mask_errors: true,
             limits: crate::config::models::LimitsConfig::default(),
+            errors: crate::config::models::ErrorsConfig::default(),
         }
     }
 
     /// Sets the safety limits (the defaults of [`LimitsConfig`](crate::config::models::LimitsConfig) otherwise).
     pub fn with_limits(mut self, limits: crate::config::models::LimitsConfig) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Sets custom error configurations.
+    pub fn with_errors(mut self, errors: crate::config::models::ErrorsConfig) -> Self {
+        self.errors = errors;
         self
     }
 
@@ -473,6 +560,7 @@ impl ServerState {
         self.scalar = config.openapi.ui;
         self.sql_comments = config.database.sql_comments;
         self.limits = config.limits.clone();
+        self.errors = config.errors.clone();
         let cat = self.current_catalog();
         let doc = OpenApiGenerator::generate_with_schema(
             &cat,
@@ -1040,7 +1128,8 @@ pub(crate) async fn graphql_handler(
             Ok(serde_json::Value::Object(map)) => sql_data = map,
             Ok(_) => {}
             Err(err) => {
-                let (status, error) = execution_error(&err, &catalog, state.mask_errors);
+                let (status, error) =
+                    execution_error(&err, &catalog, state.mask_errors, &state.errors);
                 return errors_response(status, vec![error], extensions_value(&extensions));
             }
         }

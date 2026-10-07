@@ -50,6 +50,7 @@ fn limits() -> LimitsConfig {
         groups: Some(2),
         request_body_bytes: Some(2048),
         statement_timeout: None,
+        count_threshold: Some(10_000),
     }
 }
 

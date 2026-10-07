@@ -705,7 +705,8 @@ impl OpenApiGenerator {
                         "Link": { "description": "RFC 8288 `next` / `prev` links (GET)", "schema": { "type": "string" } },
                         "X-Next-Cursor": { "description": "Cursor of the next page (POST)", "schema": { "type": "string" } },
                         "X-Previous-Cursor": { "description": "Cursor of the previous page (POST)", "schema": { "type": "string" } },
-                        "X-Total-Count": { "description": "Only with `Prefer: count=exact`", "schema": { "type": "integer" } }
+                        "X-Total-Count": { "description": "With `Prefer: count=exact`, `count=planned`, or `count=estimated`", "schema": { "type": "integer" } },
+                        "X-Total-Count-Estimate": { "description": "`true` if `X-Total-Count` is a planner estimate", "schema": { "type": "string" } }
                     });
                 }
                 json!({ "200": ok })

@@ -36,11 +36,26 @@ pub enum QueryKind {
     Item,
 }
 
+/// Count preference for collection responses (RFC 7240).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CountPreference {
+    #[default]
+    None,
+    /// `count=exact`: exact count scanning every matching row.
+    Exact,
+    /// `count=planned`: planner row estimate.
+    Planned,
+    /// `count=estimated`: exact count below `limits.count_threshold`, planner estimate above it.
+    Estimated,
+}
+
 /// Request preferences (RFC 7240) the API honours.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Preferences {
     /// `return=minimal`: write responses carry no body.
     pub return_minimal: bool,
+    /// Total count preference: `exact`, `planned`, or `estimated`.
+    pub count: CountPreference,
     /// `count=exact`: list responses carry `X-Total-Count`. Off by default because the count
     /// scans every matching row.
     pub count_exact: bool,
@@ -50,6 +65,11 @@ pub struct Preferences {
 }
 
 impl Preferences {
+    /// Whether any total count was requested.
+    pub fn count_requested(&self) -> bool {
+        self.count != CountPreference::None || self.count_exact
+    }
+
     /// The `Preference-Applied` header value for what was honoured.
     pub fn applied(
         &self,
@@ -61,8 +81,17 @@ impl Preferences {
         if honoured_return && self.return_minimal {
             parts.push("return=minimal");
         }
-        if honoured_count && self.count_exact {
-            parts.push("count=exact");
+        if honoured_count {
+            match self.count {
+                CountPreference::Exact => parts.push("count=exact"),
+                CountPreference::Planned => parts.push("count=planned"),
+                CountPreference::Estimated => parts.push("count=estimated"),
+                CountPreference::None => {
+                    if self.count_exact {
+                        parts.push("count=exact");
+                    }
+                }
+            }
         }
         if honoured_previous && self.previous {
             parts.push("previous");
@@ -94,7 +123,16 @@ pub fn parse_prefer_header(headers: &HeaderMap) -> Preferences {
                     prefs.return_minimal = false;
                 }
             } else if key.eq_ignore_ascii_case("count") {
-                prefs.count_exact = val.eq_ignore_ascii_case("exact");
+                if val.eq_ignore_ascii_case("exact") {
+                    prefs.count = CountPreference::Exact;
+                    prefs.count_exact = true;
+                } else if val.eq_ignore_ascii_case("planned") {
+                    prefs.count = CountPreference::Planned;
+                    prefs.count_exact = false;
+                } else if val.eq_ignore_ascii_case("estimated") {
+                    prefs.count = CountPreference::Estimated;
+                    prefs.count_exact = false;
+                }
             } else if key.eq_ignore_ascii_case("previous") {
                 prefs.previous = val.eq_ignore_ascii_case("true");
             }
@@ -784,9 +822,26 @@ mod tests {
         h.insert("prefer", "return=minimal, count=exact".parse().unwrap());
         let p = parse_prefer_header(&h);
         assert!(p.return_minimal && p.count_exact);
+        assert_eq!(p.count, CountPreference::Exact);
         assert_eq!(
             p.applied(true, true, true).as_deref(),
             Some("return=minimal, count=exact")
+        );
+        h.insert("prefer", "count=planned".parse().unwrap());
+        let p = parse_prefer_header(&h);
+        assert_eq!(p.count, CountPreference::Planned);
+        assert!(p.count_requested());
+        assert_eq!(
+            p.applied(false, true, false).as_deref(),
+            Some("count=planned")
+        );
+        h.insert("prefer", "count=estimated".parse().unwrap());
+        let p = parse_prefer_header(&h);
+        assert_eq!(p.count, CountPreference::Estimated);
+        assert!(p.count_requested());
+        assert_eq!(
+            p.applied(false, true, false).as_deref(),
+            Some("count=estimated")
         );
         h.insert("prefer", "previous".parse().unwrap());
         assert!(parse_prefer_header(&h).previous);

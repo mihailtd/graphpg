@@ -35,6 +35,10 @@ pub struct ProblemDetails {
     pub limit: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actual: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
     /// Response headers (such as `WWW-Authenticate`); not part of the body.
     #[serde(skip)]
     pub headers: Vec<(header::HeaderName, header::HeaderValue)>,
@@ -69,8 +73,25 @@ impl ProblemDetails {
             request_id: None,
             limit: None,
             actual: None,
+            hint: None,
+            extensions: serde_json::Map::new(),
             headers: Vec::new(),
         }
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    pub fn with_type(mut self, problem_type: impl Into<String>) -> Self {
+        self.problem_type = problem_type.into();
+        self
+    }
+
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
     }
 
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
@@ -197,15 +218,75 @@ impl ProblemDetails {
     }
 
     /// Maps an execution failure: typed constraint violations keep their stable code and
-    /// message; anything else is masked in production.
+    /// message; custom SQL errors (PTxxx or errors.map) keep their status and details unmasked;
+    /// anything else is masked in production.
     pub fn from_execution_error(
         err: &ExecutionError,
         catalog: &DatabaseCatalog,
         is_prod: bool,
+        errors_config: &crate::config::models::ErrorsConfig,
     ) -> Self {
         let mut root = err;
         while let ExecutionError::Mutation { source, .. } = root {
             root = source;
+        }
+
+        let db_error = match root {
+            ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => e.as_db_error(),
+            _ => None,
+        };
+
+        if let Some(db) = db_error {
+            let sqlstate = db.code().code();
+            let constraint = db.constraint();
+
+            // 1. Check errors.map configuration
+            let mapped = errors_config
+                .map
+                .get(sqlstate)
+                .or_else(|| constraint.and_then(|c| errors_config.map.get(c)));
+
+            if let Some(cfg) = mapped {
+                let status = cfg
+                    .status
+                    .and_then(|s| StatusCode::from_u16(s).ok())
+                    .unwrap_or(StatusCode::BAD_REQUEST);
+                let title = cfg
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| title_for(status).to_string());
+                let problem_type = cfg
+                    .problem_type
+                    .clone()
+                    .unwrap_or_else(|| "about:blank".to_string());
+                let code = cfg.code.clone().or_else(|| Some(sqlstate.to_string()));
+                let mut problem = Self::new(status, db.message())
+                    .with_title(title)
+                    .with_type(problem_type);
+                if let Some(c) = code {
+                    problem = problem.with_code(c);
+                }
+                if let Some(hint) = db.hint() {
+                    problem = problem.with_hint(hint);
+                }
+                if let Some(detail) = db.detail() {
+                    problem
+                        .extensions
+                        .insert("details".into(), serde_json::json!(detail));
+                }
+                return problem;
+            }
+
+            // 2. Check PostgREST PTxxx SQLSTATE error code (e.g. PT402)
+            if sqlstate.len() == 5
+                && sqlstate.starts_with("PT")
+                && sqlstate[2..].chars().all(|c| c.is_ascii_digit())
+            {
+                if let Ok(code_num) = sqlstate[2..].parse::<u16>() {
+                    let status = StatusCode::from_u16(code_num).unwrap_or(StatusCode::BAD_REQUEST);
+                    return Self::from_pt_error(status, sqlstate, db);
+                }
+            }
         }
 
         if let Some(v) = err.violation(catalog) {
@@ -249,6 +330,76 @@ impl ProblemDetails {
                 err,
                 is_prod,
             ),
+        }
+    }
+
+    fn from_pt_error(
+        status: StatusCode,
+        sqlstate: &str,
+        db: &tokio_postgres::error::DbError,
+    ) -> Self {
+        if let Ok(serde_json::Value::Object(map)) =
+            serde_json::from_str::<serde_json::Value>(db.message())
+        {
+            let detail = map
+                .get("detail")
+                .or_else(|| map.get("message"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(db.message())
+                .to_string();
+            let title = map
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| title_for(status).to_string());
+            let problem_type = map
+                .get("type")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "about:blank".to_string());
+            let code = map
+                .get("code")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .or_else(|| db.hint().map(ToString::to_string))
+                .unwrap_or_else(|| sqlstate.to_string());
+            let hint = map
+                .get("hint")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .or_else(|| db.hint().map(ToString::to_string));
+
+            let mut problem = Self::new(status, detail)
+                .with_title(title)
+                .with_type(problem_type)
+                .with_code(code);
+            if let Some(h) = hint {
+                problem = problem.with_hint(h);
+            }
+            for (k, v) in map {
+                if !matches!(
+                    k.as_str(),
+                    "type" | "title" | "status" | "detail" | "message" | "code" | "hint"
+                ) {
+                    problem.extensions.insert(k, v);
+                }
+            }
+            problem
+        } else {
+            let code = db
+                .hint()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| sqlstate.to_string());
+            let mut problem = Self::new(status, db.message()).with_code(code);
+            if let Some(hint) = db.hint() {
+                problem = problem.with_hint(hint);
+            }
+            if let Some(detail) = db.detail() {
+                problem
+                    .extensions
+                    .insert("details".into(), serde_json::json!(detail));
+            }
+            problem
         }
     }
 }
@@ -335,5 +486,31 @@ mod tests {
             false,
         );
         assert!(dev.detail.contains("secret"));
+    }
+
+    #[test]
+    fn custom_pt_and_mapped_errors_serialise_properly() {
+        // Plain PT error
+        let mut p = ProblemDetails::new(StatusCode::PAYMENT_REQUIRED, "Payment required")
+            .with_code("PT402")
+            .with_hint("Upgrade subscription");
+        p.extensions
+            .insert("extra".into(), serde_json::json!("val"));
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["status"], 402);
+        assert_eq!(json["code"], "PT402");
+        assert_eq!(json["hint"], "Upgrade subscription");
+        assert_eq!(json["extra"], "val");
+
+        // Custom mapped error
+        let p2 = ProblemDetails::new(StatusCode::CONFLICT, "Duplicate record")
+            .with_code("CUSTOM_CONFLICT")
+            .with_type("https://example.com/errors/conflict")
+            .with_title("Custom Conflict");
+        let json2 = serde_json::to_value(&p2).unwrap();
+        assert_eq!(json2["status"], 409);
+        assert_eq!(json2["code"], "CUSTOM_CONFLICT");
+        assert_eq!(json2["type"], "https://example.com/errors/conflict");
+        assert_eq!(json2["title"], "Custom Conflict");
     }
 }

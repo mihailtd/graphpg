@@ -228,3 +228,74 @@ async fn a_range_that_cannot_be_served_is_a_416() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn planned_and_estimated_counts_over_rest() {
+    let env = env().await;
+    env.client
+        .batch_execute(
+            "DELETE FROM rest_extras.people WHERE id BETWEEN 9321 AND 9325;
+             INSERT INTO rest_extras.people VALUES (9321,'a'),(9322,'b'),(9323,'c'),(9324,'d'),(9325,'e');
+             ANALYZE rest_extras.people;",
+        )
+        .await
+        .unwrap();
+    let uri = "/rest/people?filter[id][gte]=9321&filter[id][lte]=9325&order=id";
+
+    // 1. count=planned returns estimate and headers
+    let planned = env
+        .call("GET", uri, &[("prefer", "count=planned")], vec![])
+        .await;
+    assert_eq!(planned.status, StatusCode::OK);
+    assert_eq!(planned.header("preference-applied"), "count=planned");
+    assert_eq!(planned.header("x-total-count-estimate"), "true");
+    let total: i64 = planned
+        .header("x-total-count")
+        .parse()
+        .expect("total count is integer");
+    assert!(total > 0);
+
+    // 2. count=planned with Range sets Content-Range with estimated total
+    let range_planned = env
+        .call(
+            "GET",
+            uri,
+            &[("range", "items=0-1"), ("prefer", "count=planned")],
+            vec![],
+        )
+        .await;
+    assert_eq!(range_planned.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(range_planned.header("preference-applied"), "count=planned");
+    assert_eq!(range_planned.header("x-total-count-estimate"), "true");
+    assert!(range_planned
+        .header("content-range")
+        .starts_with("items 0-1/"));
+    assert!(!range_planned.header("content-range").ends_with("/*"));
+
+    // 3. count=estimated below threshold (5 rows <= 10,000 threshold) returns exact count
+    let estimated_below = env
+        .call("GET", uri, &[("prefer", "count=estimated")], vec![])
+        .await;
+    assert_eq!(estimated_below.status, StatusCode::OK);
+    assert_eq!(
+        estimated_below.header("preference-applied"),
+        "count=estimated"
+    );
+    // below threshold: exact count, so x-total-count-estimate is not set
+    assert_eq!(estimated_below.header("x-total-count-estimate"), "");
+    assert_eq!(estimated_below.header("x-total-count"), "5");
+
+    // 4. count=exact returns exact count without estimate header
+    let exact = env
+        .call("GET", uri, &[("prefer", "count=exact")], vec![])
+        .await;
+    assert_eq!(exact.status, StatusCode::OK);
+    assert_eq!(exact.header("preference-applied"), "count=exact");
+    assert_eq!(exact.header("x-total-count-estimate"), "");
+    assert_eq!(exact.header("x-total-count"), "5");
+
+    env.client
+        .batch_execute("DELETE FROM rest_extras.people WHERE id BETWEEN 9321 AND 9325")
+        .await
+        .unwrap();
+}
