@@ -3451,6 +3451,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/forumsAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -3539,6 +3544,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/forumsAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -6666,6 +6676,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/messagesAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -6754,6 +6769,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/messagesAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -9944,6 +9964,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/usersAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -10032,6 +10057,11 @@ expression: openapi
                       "items": {
                         "$ref": "#/components/schemas/usersAggregateGroup"
                       }
+                    },
+                    {
+                      "type": "object",
+                      "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                      "additionalProperties": true
                     }
                   ]
                 }
@@ -13335,6 +13365,144 @@ expression: openapi
           "fillGaps": {
             "type": "boolean",
             "description": "Include the empty groups between the first and the last"
+          },
+          "sets": {
+            "type": "object",
+            "description": "Aggregates side by side, by name: each set has the members above (an ungrouped set its own `filter`, a grouped one `group` and `having`), and the answer is an object of the same names. With `sets` only `filter` (for all of them) goes beside it",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "filter": {
+                  "$ref": "#/components/schemas/forumsFilter"
+                },
+                "group": {
+                  "type": "array",
+                  "maxItems": 4,
+                  "description": "What to group by: a column, `column:unit` (minute, hour, day, week, month, quarter, year) or `column:binned`",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "name",
+                      "archivedAt",
+                      "archivedAt:minute",
+                      "archivedAt:hour",
+                      "archivedAt:day",
+                      "archivedAt:week",
+                      "archivedAt:month",
+                      "archivedAt:quarter",
+                      "archivedAt:year",
+                      "archivedAt:binned"
+                    ]
+                  }
+                },
+                "min": {
+                  "type": "array",
+                  "description": "Columns to take the `min` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "name",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "max": {
+                  "type": "array",
+                  "description": "Columns to take the `max` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "name",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "distinctCount": {
+                  "type": "array",
+                  "description": "Columns to take the `distinctCount` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "name",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "having": {
+                  "type": "object",
+                  "description": "Conditions the groups must meet, all of them: `having[count][gt]=5`, `having[sum][total][gte]=100`",
+                  "properties": {
+                    "count": {
+                      "type": "object",
+                      "properties": {
+                        "equalTo": {
+                          "type": "integer"
+                        },
+                        "notEqualTo": {
+                          "type": "integer"
+                        },
+                        "greaterThan": {
+                          "type": "integer"
+                        },
+                        "greaterThanOrEqualTo": {
+                          "type": "integer"
+                        },
+                        "lessThan": {
+                          "type": "integer"
+                        },
+                        "lessThanOrEqualTo": {
+                          "type": "integer"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "sum": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "avg": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "min": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "max": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "timeZone": {
+                  "type": "string",
+                  "description": "Time zone dates are truncated in, such as `Europe/Paris`"
+                },
+                "binWidth": {
+                  "type": "string",
+                  "description": "Width of `:binned` groups, an ISO 8601 duration such as `PT15M`"
+                },
+                "binOrigin": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Where `:binned` groups start"
+                },
+                "fillGaps": {
+                  "type": "boolean",
+                  "description": "Include the empty groups between the first and the last"
+                }
+              },
+              "additionalProperties": false
+            }
           }
         },
         "additionalProperties": false
@@ -14390,6 +14558,168 @@ expression: openapi
           "fillGaps": {
             "type": "boolean",
             "description": "Include the empty groups between the first and the last"
+          },
+          "sets": {
+            "type": "object",
+            "description": "Aggregates side by side, by name: each set has the members above (an ungrouped set its own `filter`, a grouped one `group` and `having`), and the answer is an object of the same names. With `sets` only `filter` (for all of them) goes beside it",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "filter": {
+                  "$ref": "#/components/schemas/messagesFilter"
+                },
+                "group": {
+                  "type": "array",
+                  "maxItems": 4,
+                  "description": "What to group by: a column, `column:unit` (minute, hour, day, week, month, quarter, year) or `column:binned`",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "forumId",
+                      "authorId",
+                      "body",
+                      "featured",
+                      "createdAt",
+                      "createdAt:minute",
+                      "createdAt:hour",
+                      "createdAt:day",
+                      "createdAt:week",
+                      "createdAt:month",
+                      "createdAt:quarter",
+                      "createdAt:year",
+                      "createdAt:binned",
+                      "archivedAt",
+                      "archivedAt:minute",
+                      "archivedAt:hour",
+                      "archivedAt:day",
+                      "archivedAt:week",
+                      "archivedAt:month",
+                      "archivedAt:quarter",
+                      "archivedAt:year",
+                      "archivedAt:binned"
+                    ]
+                  }
+                },
+                "min": {
+                  "type": "array",
+                  "description": "Columns to take the `min` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "forumId",
+                      "authorId",
+                      "body",
+                      "featured",
+                      "createdAt",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "max": {
+                  "type": "array",
+                  "description": "Columns to take the `max` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "forumId",
+                      "authorId",
+                      "body",
+                      "featured",
+                      "createdAt",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "distinctCount": {
+                  "type": "array",
+                  "description": "Columns to take the `distinctCount` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "forumId",
+                      "authorId",
+                      "body",
+                      "featured",
+                      "createdAt",
+                      "archivedAt"
+                    ]
+                  }
+                },
+                "having": {
+                  "type": "object",
+                  "description": "Conditions the groups must meet, all of them: `having[count][gt]=5`, `having[sum][total][gte]=100`",
+                  "properties": {
+                    "count": {
+                      "type": "object",
+                      "properties": {
+                        "equalTo": {
+                          "type": "integer"
+                        },
+                        "notEqualTo": {
+                          "type": "integer"
+                        },
+                        "greaterThan": {
+                          "type": "integer"
+                        },
+                        "greaterThanOrEqualTo": {
+                          "type": "integer"
+                        },
+                        "lessThan": {
+                          "type": "integer"
+                        },
+                        "lessThanOrEqualTo": {
+                          "type": "integer"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "sum": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "avg": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "min": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "max": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "timeZone": {
+                  "type": "string",
+                  "description": "Time zone dates are truncated in, such as `Europe/Paris`"
+                },
+                "binWidth": {
+                  "type": "string",
+                  "description": "Width of `:binned` groups, an ISO 8601 duration such as `PT15M`"
+                },
+                "binOrigin": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Where `:binned` groups start"
+                },
+                "fillGaps": {
+                  "type": "boolean",
+                  "description": "Include the empty groups between the first and the last"
+                }
+              },
+              "additionalProperties": false
+            }
           }
         },
         "additionalProperties": false
@@ -15293,6 +15623,148 @@ expression: openapi
           "fillGaps": {
             "type": "boolean",
             "description": "Include the empty groups between the first and the last"
+          },
+          "sets": {
+            "type": "object",
+            "description": "Aggregates side by side, by name: each set has the members above (an ungrouped set its own `filter`, a grouped one `group` and `having`), and the answer is an object of the same names. With `sets` only `filter` (for all of them) goes beside it",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "filter": {
+                  "$ref": "#/components/schemas/usersFilter"
+                },
+                "group": {
+                  "type": "array",
+                  "maxItems": 4,
+                  "description": "What to group by: a column, `column:unit` (minute, hour, day, week, month, quarter, year) or `column:binned`",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "username",
+                      "gravatarUrl",
+                      "createdAt",
+                      "createdAt:minute",
+                      "createdAt:hour",
+                      "createdAt:day",
+                      "createdAt:week",
+                      "createdAt:month",
+                      "createdAt:quarter",
+                      "createdAt:year",
+                      "createdAt:binned"
+                    ]
+                  }
+                },
+                "min": {
+                  "type": "array",
+                  "description": "Columns to take the `min` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "username",
+                      "gravatarUrl",
+                      "createdAt"
+                    ]
+                  }
+                },
+                "max": {
+                  "type": "array",
+                  "description": "Columns to take the `max` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "username",
+                      "gravatarUrl",
+                      "createdAt"
+                    ]
+                  }
+                },
+                "distinctCount": {
+                  "type": "array",
+                  "description": "Columns to take the `distinctCount` of",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "id",
+                      "username",
+                      "gravatarUrl",
+                      "createdAt"
+                    ]
+                  }
+                },
+                "having": {
+                  "type": "object",
+                  "description": "Conditions the groups must meet, all of them: `having[count][gt]=5`, `having[sum][total][gte]=100`",
+                  "properties": {
+                    "count": {
+                      "type": "object",
+                      "properties": {
+                        "equalTo": {
+                          "type": "integer"
+                        },
+                        "notEqualTo": {
+                          "type": "integer"
+                        },
+                        "greaterThan": {
+                          "type": "integer"
+                        },
+                        "greaterThanOrEqualTo": {
+                          "type": "integer"
+                        },
+                        "lessThan": {
+                          "type": "integer"
+                        },
+                        "lessThanOrEqualTo": {
+                          "type": "integer"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "sum": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "avg": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "min": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    },
+                    "max": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "timeZone": {
+                  "type": "string",
+                  "description": "Time zone dates are truncated in, such as `Europe/Paris`"
+                },
+                "binWidth": {
+                  "type": "string",
+                  "description": "Width of `:binned` groups, an ISO 8601 duration such as `PT15M`"
+                },
+                "binOrigin": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Where `:binned` groups start"
+                },
+                "fillGaps": {
+                  "type": "boolean",
+                  "description": "Include the empty groups between the first and the last"
+                }
+              },
+              "additionalProperties": false
+            }
           }
         },
         "additionalProperties": false

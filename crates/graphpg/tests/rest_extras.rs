@@ -1803,3 +1803,44 @@ async fn rows_can_carry_their_cursor_and_window_values() {
         );
     }
 }
+
+#[tokio::test]
+async fn aggregates_can_be_side_by_side_with_filters_of_their_own() {
+    let app = app().await;
+    let r = post(
+        &app,
+        "/rest/orders/aggregate",
+        json!({
+            "filter": { "id": { "lessThan": 100 } },
+            "sets": {
+                "paid": { "filter": { "status": { "equalTo": "PAID" } }, "sum": ["total"], "max": ["createdAt"] },
+                "everything": { "sum": ["total"] },
+                "byCustomer": { "group": ["customer"], "sum": ["total"], "having": { "count": { "greaterThan": 1 } } }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let out = r.ok();
+    assert_eq!(number(&out["paid"]["sum"]["total"]), 425.75);
+    assert_eq!(number(&out["everything"]["sum"]["total"]), 455.75);
+    let groups = out["byCustomer"].as_array().unwrap();
+    assert_eq!(groups.len(), 3);
+    assert_eq!(groups[0]["keys"], json!({ "customer": "ada" }));
+    assert_eq!(number(&groups[0]["sum"]["total"]), 150.5);
+
+    for body in [
+        // members belong in a set
+        json!({ "sum": ["total"], "sets": { "a": { "sum": ["total"] } } }),
+        json!({ "sets": {} }),
+        json!({ "sets": { "a": {} } }),
+        json!({ "sets": { "1bad name": { "sum": ["total"] } } }),
+        json!({ "sets": { "a": { "sets": { "b": { "sum": ["total"] } }, "sum": ["total"] } } }),
+        json!({ "sets": { "a": { "group": ["customer"], "filter": {}, "sum": ["total"] } } }),
+        json!({ "sets": { "a": { "having": { "count": { "greaterThan": 1 } }, "sum": ["total"] } } }),
+        json!({ "sets": { "a": { "sum": ["customer"] } } }),
+    ] {
+        let r = post(&app, "/rest/orders/aggregate", body.clone()).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{body}: {}", r.body);
+    }
+}

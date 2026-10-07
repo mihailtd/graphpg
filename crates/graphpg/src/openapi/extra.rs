@@ -146,12 +146,23 @@ impl OpenApiGenerator {
         let name = &table.name;
         let groups = group_values(table);
         let request_properties = Self::aggregate_properties(table, &groups);
+        // The body can also ask for several aggregates side by side (`sets`), in one scan
+        let mut body_properties = request_properties.clone();
+        body_properties["sets"] = json!({
+            "type": "object",
+            "description": "Aggregates side by side, by name: each set has the members above (an ungrouped set its own `filter`, a grouped one `group` and `having`), and the answer is an object of the same names. With `sets` only `filter` (for all of them) goes beside it",
+            "additionalProperties": {
+                "type": "object",
+                "properties": request_properties,
+                "additionalProperties": false
+            }
+        });
         schemas.insert(
             format!("{name}AggregateRequest"),
             json!({
                 "type": "object",
                 "description": format!("Aggregate request for `{name}`; every member is optional, unknown members are a 400"),
-                "properties": request_properties,
+                "properties": body_properties,
                 "additionalProperties": false
             }),
         );
@@ -189,7 +200,12 @@ impl OpenApiGenerator {
         let result = json!({
             "oneOf": [
                 schema_ref(&format!("{name}Aggregates")),
-                { "type": "array", "maxItems": config.limits.groups, "items": schema_ref(&format!("{name}AggregateGroup")) }
+                { "type": "array", "maxItems": config.limits.groups, "items": schema_ref(&format!("{name}AggregateGroup")) },
+                {
+                    "type": "object",
+                    "description": "With `sets`: the result of each set by its name, totals or a list of groups",
+                    "additionalProperties": true
+                }
             ]
         });
         let describe = format!(

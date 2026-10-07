@@ -38,7 +38,7 @@ const FUNCTIONS: [&str; 10] = [
 pub const MAX_GROUP_KEYS: usize = 4;
 
 /// The members of an aggregate request.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(super) struct AggregateBody {
     filter: Option<serde_json::Value>,
@@ -60,6 +60,9 @@ pub(super) struct AggregateBody {
     bin_width: Option<String>,
     bin_origin: Option<String>,
     fill_gaps: Option<bool>,
+    /// Several aggregates side by side, each with its own filter or grouping, in one scan:
+    /// `{"deposits": {"filter": …, "sum": ["amount"]}, "byMonth": {"group": ["createdAt:month"]}}`.
+    sets: Option<std::collections::BTreeMap<String, AggregateBody>>,
 }
 
 impl AggregateBody {
@@ -304,12 +307,241 @@ fn function_selections(
     Ok(out)
 }
 
+/// The members of a request that has `sets`: only `filter` (for every set) and `sets`.
+fn only_filter_and_sets(body: &AggregateBody) -> Result<(), ProblemDetails> {
+    let others = body.functions().first().map(|(n, _)| *n).or_else(|| {
+        [
+            ("group", body.group.is_some()),
+            ("having", body.having.is_some()),
+            ("timeZone", body.time_zone.is_some()),
+            ("binWidth", body.bin_width.is_some()),
+            ("binOrigin", body.bin_origin.is_some()),
+            ("fillGaps", body.fill_gaps.is_some()),
+            ("fraction", body.fraction.is_some()),
+        ]
+        .into_iter()
+        .find_map(|(n, present)| present.then_some(n))
+    });
+    match others {
+        Some(name) => Err(ProblemDetails::invalid(
+            format!(
+                "With `sets`, `{name}` goes in a set: only `filter` and `sets` are for the request"
+            ),
+            name,
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Aggregates side by side (`sets`), in the one scan of a single connection: each set is an
+/// aliased `aggregates(filter:)` or `groupedAggregates` of it.
+async fn aggregate_sets(
+    ctx: &Ctx,
+    table: &TableMetadata,
+    body: AggregateBody,
+    method: &str,
+) -> Result<serde_json::Value, ProblemDetails> {
+    ctx.allow(table, Operation::Read)?;
+    if !table.operations.connection {
+        return Err(ProblemDetails::forbidden(format!(
+            "Aggregates of `{}` are not available",
+            table.name
+        )));
+    }
+    only_filter_and_sets(&body)?;
+    let sets = body.sets.clone().unwrap_or_default();
+    if sets.is_empty() {
+        return Err(ProblemDetails::invalid("`sets` names no set", "sets"));
+    }
+    let root = table.connection_field.as_str();
+    let schema = ctx.state.current_schema();
+    let connection_type = validate::root_field_type_name(&schema, Root::Query, root);
+    let aggregates_type = connection_type
+        .as_deref()
+        .and_then(|c| validate::field_type_name(&schema, c, "aggregates"));
+    let mut args = HashMap::new();
+    if let Some(filter) = &body.filter {
+        let filter = normalize_filter_json(filter.clone());
+        ctx.validate(Root::Query, root, "filter", &filter, "filter")?;
+        args.insert("filter".to_string(), filter);
+    }
+
+    let mut children = Vec::new();
+    let mut grouped_sets: HashMap<String, Vec<String>> = HashMap::new();
+    for (name, set) in &sets {
+        if name.is_empty()
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || name.starts_with(|c: char| c.is_ascii_digit())
+        {
+            return Err(ProblemDetails::invalid(
+                format!("`{name}` is not a name for a set: letters, digits and `_`"),
+                "sets",
+            ));
+        }
+        if set.sets.is_some() {
+            return Err(ProblemDetails::invalid(
+                format!("A set cannot have sets of its own (`{name}`)"),
+                "sets",
+            ));
+        }
+        let functions = function_selections(ctx, table, aggregates_type.as_deref(), set)?;
+        match set.group.as_ref().filter(|g| !g.is_empty()) {
+            None => {
+                if set.group.is_some() {
+                    return Err(ProblemDetails::invalid(
+                        format!("`group` of `{name}` names no value"),
+                        "group",
+                    ));
+                }
+                for (member, present) in [
+                    ("having", set.having.is_some()),
+                    ("timeZone", set.time_zone.is_some()),
+                    ("binWidth", set.bin_width.is_some()),
+                    ("binOrigin", set.bin_origin.is_some()),
+                    ("fillGaps", set.fill_gaps.is_some()),
+                ] {
+                    if present {
+                        return Err(ProblemDetails::invalid(
+                            format!("`{member}` of `{name}` needs `group`"),
+                            member,
+                        ));
+                    }
+                }
+                if functions.is_empty() {
+                    return Err(ProblemDetails::invalid(
+                        format!(
+                            "The set `{name}` aggregates nothing: name columns (`sum`, `max`, …)"
+                        ),
+                        name.clone(),
+                    ));
+                }
+                let mut field = RequestField::new("aggregates")
+                    .with_alias(name)
+                    .with_children(functions);
+                if let Some(filter) = &set.filter {
+                    let filter = normalize_filter_json(filter.clone());
+                    if let Some(connection_type) = &connection_type {
+                        validate::validate_field_argument(
+                            &schema,
+                            connection_type,
+                            "aggregates",
+                            "filter",
+                            &filter,
+                            &format!("sets.{name}.filter"),
+                        )?;
+                    }
+                    field = field.with_argument("filter", filter);
+                }
+                children.push(field);
+            }
+            Some(groups) => {
+                if set.filter.is_some() {
+                    return Err(ProblemDetails::invalid(
+                        format!("`filter` of the grouped set `{name}`: filter the request, or use an ungrouped set"),
+                        "filter",
+                    ));
+                }
+                if groups.len() > MAX_GROUP_KEYS {
+                    return Err(ProblemDetails::invalid(
+                        format!("`group` of `{name}` accepts at most {MAX_GROUP_KEYS} values"),
+                        "group",
+                    ));
+                }
+                let values = groups
+                    .iter()
+                    .map(|g| group_value(table, g).map(serde_json::Value::String))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut field = RequestField::new("groupedAggregates")
+                    .with_alias(name)
+                    .with_argument("groupBy", serde_json::Value::Array(values));
+                if let Some(having) = &set.having {
+                    if let Some(connection_type) = &connection_type {
+                        validate::validate_field_argument(
+                            &schema,
+                            connection_type,
+                            "groupedAggregates",
+                            "having",
+                            having,
+                            &format!("sets.{name}.having"),
+                        )?;
+                    }
+                    field = field.with_argument("having", having.clone());
+                }
+                for (member, value) in [
+                    ("timeZone", set.time_zone.clone()),
+                    ("binWidth", set.bin_width.clone()),
+                    ("binOrigin", set.bin_origin.clone()),
+                ] {
+                    if let Some(value) = value {
+                        field = field.with_argument(member, serde_json::Value::String(value));
+                    }
+                }
+                if let Some(fill) = set.fill_gaps {
+                    field = field.with_argument("fillGaps", serde_json::json!(fill));
+                }
+                let mut grouped = vec![RequestField::new("keys"), RequestField::new("count")];
+                grouped.extend(functions);
+                children.push(field.with_children(grouped));
+                grouped_sets.insert(name.clone(), groups.clone());
+            }
+        }
+    }
+    let request = RequestField::new(root)
+        .with_arguments(args)
+        .with_children(children);
+    let data = ctx
+        .execute(
+            &table.schema,
+            RequestOperation::query(vec![request]),
+            method,
+            false,
+        )
+        .await?;
+    let connection =
+        ResponseShaper::unwrap_single(&data, root).map_err(|e| shaping_error(e, ctx.is_prod))?;
+    let mut out = serde_json::Map::new();
+    for name in sets.keys() {
+        let mut value = connection.get(name).cloned().unwrap_or_default();
+        if let (Some(groups), serde_json::Value::Array(rows)) = (grouped_sets.get(name), &mut value)
+        {
+            if let Some(max) = ctx.state.limits.groups.filter(|max| rows.len() > *max) {
+                return Err(ProblemDetails::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    format!("The set `{name}` has more than {max} groups; narrow the filter or group by fewer or coarser values"),
+                )
+                .with_code("TOO_MANY_GROUPS"));
+            }
+            for group in rows.iter_mut() {
+                if let Some(obj) = group.as_object_mut() {
+                    let keys = obj.remove("keys").and_then(|k| match k {
+                        serde_json::Value::Array(values) => Some(values),
+                        _ => None,
+                    });
+                    let keyed: serde_json::Map<String, serde_json::Value> = groups
+                        .iter()
+                        .zip(keys.unwrap_or_default())
+                        .map(|(g, v)| (g.clone(), v))
+                        .collect();
+                    let rest = std::mem::take(obj);
+                    obj.insert("keys".to_string(), serde_json::Value::Object(keyed));
+                    obj.extend(rest);
+                }
+            }
+        }
+        out.insert(name.clone(), value);
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
 async fn aggregate(
     ctx: &Ctx,
     table: &TableMetadata,
     body: AggregateBody,
     method: &str,
 ) -> Result<serde_json::Value, ProblemDetails> {
+    if body.sets.is_some() {
+        return aggregate_sets(ctx, table, body, method).await;
+    }
     ctx.allow(table, Operation::Read)?;
     if !table.operations.connection {
         return Err(ProblemDetails::forbidden(format!(
