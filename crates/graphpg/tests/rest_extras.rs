@@ -505,6 +505,33 @@ async fn functions_returning_values() {
             .ok(),
         &json!(0)
     );
+    // single json/jsonb argument: body can be raw json or {"args": {"payload": ...}}
+    assert_eq!(
+        post(
+            &app,
+            "/rest/rpc/echo_json",
+            json!({ "msg": "hello", "count": 42 })
+        )
+        .await
+        .ok(),
+        &json!({ "msg": "hello", "count": 42 })
+    );
+    assert_eq!(
+        post(&app, "/rest/rpc/echo_json", json!([1, 2, "three"]))
+            .await
+            .ok(),
+        &json!([1, 2, "three"])
+    );
+    assert_eq!(
+        post(
+            &app,
+            "/rest/rpc/echo_json",
+            json!({ "args": { "payload": { "nested": true } } })
+        )
+        .await
+        .ok(),
+        &json!({ "nested": true })
+    );
     // enums, composites, arrays and sets of values
     assert_eq!(
         get(&app, "/rest/rpc/statuses").await.ok(),

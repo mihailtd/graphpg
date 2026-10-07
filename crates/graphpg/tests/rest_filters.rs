@@ -302,6 +302,29 @@ async fn array_and_json_operators_in_the_query_string() {
         .await
         .contains(&1));
 
+    // Range operators on span int4range: [1, 5)
+    assert!(ids(&env, &tags("filter[span][contains]=3"))
+        .await
+        .contains(&1));
+    assert!(!ids(&env, &tags("filter[span][contains]=10"))
+        .await
+        .contains(&1));
+    assert!(ids(&env, &tags("filter[span][strictlyLeftOf]=[10,20)"))
+        .await
+        .contains(&1));
+    assert!(ids(&env, &tags("filter[span][strictlyRightOf]=[0,1)"))
+        .await
+        .contains(&1));
+    assert!(ids(&env, &tags("filter[span][overlaps]=[4,10)"))
+        .await
+        .contains(&1));
+    assert!(ids(&env, &tags("filter[span][adjacentTo]=[5,10)"))
+        .await
+        .contains(&1));
+    assert!(ids(&env, &tags("filter[span][containedBy]=[0,10)"))
+        .await
+        .contains(&1));
+
     // a bad value names the parameter
     let bad = env
         .call("GET", "/rest/people?filter[id][gtAny]=x", &[], vec![])

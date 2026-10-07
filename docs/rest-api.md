@@ -14,7 +14,7 @@ Anything the API does not understand is a **400**, never ignored: an unknown que
 | :--- | :--- |
 | `GET /rest/{resource}` | A list of rows (a plain JSON array) |
 | `POST /rest/{resource}/search` | The same, with the options in a JSON body |
-| `GET /rest/{resource}/{key}` | One row, with an `ETag` if the table has a row version |
+| `GET /rest/{resource}/{key}` | One row, with an `ETag` if the table has a row version; conditional `GET` or `HEAD` with `If-None-Match` answers `304 Not Modified` with no body |
 
 The key is the primary key (composite keys: the values separated by commas). The Relay global ID of the row is accepted for uuid and numeric keys.
 
@@ -43,6 +43,7 @@ A single-row `GET` accepts only `fields` and `include`.
 | `filter[id][gtAny]=1,2`, `[gtAll]`, `[ltAny]`, `[lteAll]`, ... | A comparison against any or all of a list (`> ANY (...)`, `<= ALL (...)`); `gt`, `gte`, `lt`, `lte`, with `Any` or `All` |
 | `filter[name][likeAny]=a%25,b%25` | `like`, `ilike` against any (`likeAny`) or all (`likeAll`) of a list of patterns |
 | `filter[tags][contains]=a,b`, `[containedBy]`, `[overlaps]` | Array operators; the cells are typed by the element type |
+| `filter[span][contains]=3`, `[strictlyLeftOf]=[10,20)`, `[strictlyRightOf]`, `[adjacentTo]`, `[overlaps]`, `[containedBy]` | Range operators (`contains` takes an element; others take `[lower,upper)` bounds or JSON objects) |
 | `filter[doc][contains]={"a":1}`, `[hasKey]`, `[hasAnyKeys]`, `[hasAllKeys]`, `[matchesPath]`, `[existsPath]` | `json` / `jsonb` operators (`contains` takes JSON, `matchesPath` and `existsPath` a JSON path) |
 | `filter[or][0][age][lt]=18&filter[or][1][age][gt]=65` | A group: `or` (or `and`) with its members numbered. Groups nest (`filter[or][1][and][0]…`) and sit next to plain conditions, which must all hold as well |
 | `filter[not][status][eq]=draft` | The condition does not hold |
@@ -144,7 +145,7 @@ The bytes of a `bytea` column have their own URL, `/rest/<table>/<key>/<column>`
 
 Every SQL function the GraphQL schema exposes as a root field is callable at `/rest/rpc/{function}` by its SQL name (`/rest/rpc/search_orders`). Computed columns (functions of a row) are fields of that row, not endpoints. `STABLE` and `IMMUTABLE` functions answer `GET` and `POST`; `VOLATILE` ones, which change data, answer `POST` only (`GET` is a 405 with `Allow: POST`) and run in a write transaction.
 
-- **Arguments** use the GraphQL names (`camelCase`). `GET`: query parameters (`?a=1&b=5`; arrays as `ids=1,2,3` or a JSON array). `POST`: the body's `args` object (`{"args": {"a": 1}}`). Arguments with a default are optional; a missing, unknown or mistyped one is a 400, and key-like arguments also take Relay IDs.
+- **Arguments** use the GraphQL names (`camelCase`). `GET`: query parameters (`?a=1&b=5`; arrays as `ids=1,2,3` or a JSON array). `POST`: the body's `args` object (`{"args": {"a": 1}}`), or for functions with a single `json` or `jsonb` argument, the raw JSON payload directly (`{"msg": "hi"}` or `[1, 2]`). Arguments with a default are optional; a missing, unknown or mistyped one is a 400, and key-like arguments also take Relay IDs.
 - **Rows of a table, as a set** (`RETURNS SETOF orders`): a list like the table's own (`filter`, `order`, `first`, `after`, `fields`, `include`, `Prefer: count=exact`, `Link` headers for `GET`, `X-Next-Cursor` for `POST`). Without `order`, rows keep the order the function returns them in.
 - **One row of a table**: the row, or `null`; `fields` and `include` only.
 - **A value** (base type, enum, composite, array) or **columns of its own** (`RETURNS TABLE`, `OUT`): the JSON value, or a list for a set.
@@ -230,3 +231,12 @@ The limits are the deployment's [`limits:`](configuration.md#safety-limits), sha
 { "type": "about:blank", "title": "Bad Request", "status": 400, "code": "PAGE_SIZE_EXCEEDED",
   "detail": "`first` is 5000, more than the maximum page size of 1000", "limit": 1000, "actual": 5000 }
 ```
+
+## Observability and health probes
+
+- **`X-Request-Id`**: Every request echoes the incoming `X-Request-Id` header (or generates a random UUIDv4 if omitted) on the response, linking logs, client metrics and problem details.
+- **`Server-Timing`**: In development mode (`server.mode: dev`), responses include a `Server-Timing: total;dur=...` header detailing the request processing latency in milliseconds.
+- **Probes**:
+  - `GET /live`: Liveness probe answering `200 OK` (`{"status":"ok"}`) indicating the HTTP server is alive and accepting connections.
+  - `GET /ready`: Readiness probe verifying database pool health by executing `SELECT 1`. Answers `200 OK` (`{"status":"ok","database":"connected"}`) or `503 Service Unavailable` (`{"status":"error","database":"unreachable"}`) if the connection pool cannot reach PostgreSQL.
+  - `GET /health`: Combined health check returning detailed status and timestamp.

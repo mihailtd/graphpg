@@ -256,6 +256,11 @@ pub(crate) fn geojson(value: Value, label: &str) -> Value {
 /// A range input `{ start: { value, inclusive }, end: { ... } }` as a range literal: a missing
 /// bound is unbounded, `inclusive` defaults to true for `start` and false for `end`.
 pub(crate) fn range_literal(element: &PgType, value: &Value, label: &str) -> Value {
+    if let Value::String(s) = value {
+        if (s.starts_with('[') || s.starts_with('(')) && (s.ends_with(']') || s.ends_with(')')) {
+            return Value::String(s.clone());
+        }
+    }
     let Value::Object(obj) = value else {
         return report(label, value, "a range");
     };

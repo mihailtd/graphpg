@@ -466,19 +466,34 @@ impl OpenApiGenerator {
                 Self::include_param(table, catalog),
             ];
             params.retain(|p| !p.is_null());
+            if table.has_row_version() {
+                params.push(json!({
+                    "name": "If-None-Match",
+                    "in": "header",
+                    "description": "Row version: returns 304 without a body when it matches",
+                    "schema": { "type": "string" }
+                }));
+            }
             let links = Self::links_of(table, catalog, config);
+            let mut ok_map = json!({
+                "200": {
+                    "description": format!("The requested {name} row"),
+                    "headers": { "ETag": { "description": "Row version", "schema": { "type": "string" } } },
+                    "content": json_content(row.clone())
+                }
+            });
+            if table.has_row_version() {
+                ok_map["304"] = json!({
+                    "description": "Not Modified: the row has not changed since the version in `If-None-Match`",
+                    "headers": { "ETag": { "description": "Row version", "schema": { "type": "string" } } }
+                });
+            }
             let mut get = json!({
                 "summary": format!("Get {name} by key"),
                 "description": format!("Retrieve a single row from `{name}` by primary key"),
                 "operationId": format!("get_{name}_by_key"),
                 "parameters": params,
-                "responses": responses(json!({
-                    "200": {
-                        "description": format!("The requested {name} row"),
-                        "headers": { "ETag": { "description": "Row version", "schema": { "type": "string" } } },
-                        "content": json_content(row.clone())
-                    }
-                }), &[("404", "Not Found")]),
+                "responses": responses(ok_map, &[("404", "Not Found")]),
             });
             if !links.is_empty() {
                 get["responses"]["200"]["links"] = Value::Object(links);
@@ -1092,6 +1107,21 @@ impl OpenApiGenerator {
             if let PgType::Array(_) = &col.pg_type {
                 for op in ["contains", "containedBy", "overlaps"] {
                     ops.insert(op.to_string(), ty.clone());
+                }
+            }
+            if col.pg_type.is_range() {
+                for op in [
+                    "containedBy",
+                    "overlaps",
+                    "strictlyLeftOf",
+                    "strictlyRightOf",
+                    "adjacentTo",
+                ] {
+                    ops.insert(op.to_string(), ty.clone());
+                }
+                if let Some((elem, _)) = col.pg_type.range_element() {
+                    let elem_schema = Self::pg_type_to_json_schema(&elem, catalog);
+                    ops.insert("contains".to_string(), elem_schema);
                 }
             }
             if matches!(col.pg_type, PgType::Json | PgType::Jsonb) {

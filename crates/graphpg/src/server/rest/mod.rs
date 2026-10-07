@@ -1325,6 +1325,23 @@ pub async fn rest_item_handler(
         let mut out = HeaderMap::new();
         if let Some(etag) = extract_etag(&mut row, table) {
             set_header(&mut out, header::ETAG, &etag);
+            if let Some(inm) = headers
+                .get(header::IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok())
+            {
+                let matches_etag = inm.trim() == "*"
+                    || inm.split(',').any(|part| {
+                        let part = part.trim();
+                        let unquoted_part =
+                            part.strip_prefix("W/").unwrap_or(part).trim_matches('"');
+                        let unquoted_etag =
+                            etag.strip_prefix("W/").unwrap_or(&etag).trim_matches('"');
+                        part == etag || unquoted_part == unquoted_etag
+                    });
+                if matches_etag {
+                    return Ok((StatusCode::NOT_MODIFIED, out).into_response());
+                }
+            }
         }
         Ok((StatusCode::OK, out, Json(row)).into_response())
     })
