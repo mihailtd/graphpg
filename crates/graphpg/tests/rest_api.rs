@@ -1209,3 +1209,84 @@ async fn openapi_describes_the_change_events_of_a_table_as_webhooks() {
     );
     assert!(plain.get("webhooks").is_none());
 }
+
+#[tokio::test]
+async fn openapi_documents_what_the_api_accepts() {
+    let state = state().await;
+    let doc = (*state.current_openapi_document()).clone();
+    let app = create_router(Arc::new(state));
+
+    // `order`: relation counts, the columns of to-one relations and computed columns, in the
+    // spelling the API takes (camel case)
+    let params = doc["paths"]["/rest/forums"]["get"]["parameters"]
+        .as_array()
+        .unwrap();
+    let order = params.iter().find(|p| p["name"] == "order").unwrap();
+    let pattern = order["schema"]["items"]["pattern"].as_str().unwrap();
+    for name in ["messagesCount", "uniqueAuthorCount", "natural", "name"] {
+        assert!(pattern.contains(name), "{name} in {pattern}");
+    }
+    let messages = doc["paths"]["/rest/messages"]["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "order")
+        .unwrap()["schema"]["items"]["pattern"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(messages.contains(r"author\.username"), "{messages}");
+    for uri in [
+        "/rest/forums?order=-messagesCount&fields=name",
+        "/rest/forums?order=messages_count&fields=name",
+        "/rest/forums?order=uniqueAuthorCount&fields=name",
+        "/rest/messages?order=author.username&fields=body",
+    ] {
+        assert_eq!(get(&app, uri).await.status, StatusCode::OK, "{uri}");
+    }
+
+    // The codes a write can fail with, per table
+    let codes = &doc["components"]["schemas"]["forumsErrorCode"]["oneOf"];
+    let codes: Vec<&str> = codes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["const"].as_str().unwrap())
+        .collect();
+    assert!(
+        codes.contains(&"NAME_REQUIRED") && codes.contains(&"STALE_VERSION"),
+        "{codes:?}"
+    );
+    let post_409 = &doc["paths"]["/rest/forums"]["post"]["responses"]["409"]["content"]
+        ["application/problem+json"]["schema"];
+    assert_eq!(post_409["$ref"], "#/components/schemas/forumsProblem");
+    assert!(
+        doc["paths"]["/rest/forums/{key}"]["patch"]["responses"]["422"]["content"]
+            ["application/problem+json"]["schema"]["$ref"]
+            .as_str()
+            .unwrap()
+            .ends_with("forumsProblem")
+    );
+
+    // The relations a row can carry, when embedded
+    let forums = &doc["components"]["schemas"]["forums"]["properties"];
+    assert_eq!(forums["messages"]["type"], "array");
+    assert_eq!(
+        forums["messages"]["items"]["$ref"],
+        "#/components/schemas/messages"
+    );
+    assert!(forums["randomUser"]["anyOf"].is_array());
+    assert!(!doc["components"]["schemas"]["forums"]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("messages")));
+
+    // The streaming endpoints of the GraphQL router
+    let export = &doc["paths"]["/export"]["post"];
+    assert!(export["responses"]["200"]["content"]["application/x-ndjson"].is_object());
+    let import = &doc["paths"]["/import/{type}"]["post"];
+    let types = import["parameters"][0]["schema"]["enum"]
+        .as_array()
+        .unwrap();
+    assert!(types.contains(&json!("Forum")), "{types:?}");
+}

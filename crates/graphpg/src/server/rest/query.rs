@@ -675,10 +675,10 @@ pub fn parse_order_string(
                 .map(|(n, _)| n.clone())
         }) {
             items.push(format!("{opt_name}_{dir}"));
-        } else if let Some((opt_name, _)) = options
-            .into_iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-        {
+        } else if let Some((opt_name, _)) = options.into_iter().find(|(n, _)| {
+            // `messages_count`, `MESSAGES_COUNT` and `messagesCount` are the same option
+            n.eq_ignore_ascii_case(name) || *n == crate::catalog::models::enum_value_name(name)
+        }) {
             items.push(format!("{opt_name}_{dir}"));
         } else {
             return Err(format!(
