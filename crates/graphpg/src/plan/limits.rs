@@ -38,6 +38,9 @@ pub struct Limits {
     pub cost: Option<u64>,
     /// Most rows one write inserts.
     pub bulk_rows: Option<usize>,
+    /// An update or delete by `where` must have a condition: `where: {}` (every row) needs
+    /// `unfiltered: true`.
+    pub require_filter: bool,
 }
 
 impl Limits {
@@ -51,6 +54,7 @@ impl Limits {
             depth: None,
             cost: None,
             bulk_rows: None,
+            require_filter: false,
         }
     }
 }
@@ -448,6 +452,7 @@ mod tests {
             depth: Some(3),
             cost: Some(1_000_000),
             bulk_rows: Some(5),
+            require_filter: false,
         }
     }
 

@@ -241,7 +241,12 @@ pub async fn rest_collection_update_handler(
         )?;
         ctx.validate(Root::Mutation, &m.name, "where", &filter, "filter")?;
         ctx.validate(Root::Mutation, &m.name, "set", &set, "body")?;
-        let args = HashMap::from([("where".to_string(), filter), ("set".to_string(), set)]);
+        // The request has its own guard (`FILTER_REQUIRED`): the planner's is for GraphQL
+        let args = HashMap::from([
+            ("where".to_string(), filter),
+            ("set".to_string(), set),
+            ("unfiltered".to_string(), serde_json::Value::Bool(true)),
+        ]);
         let (rows, count) = run_many(&ctx, table, &m, args, "PATCH").await?;
         Ok(rows_response(&ctx, rows, count))
     })
@@ -268,7 +273,10 @@ pub async fn rest_collection_delete_handler(
             "Deleting by filter",
         )?;
         ctx.validate(Root::Mutation, &m.name, "where", &filter, "filter")?;
-        let args = HashMap::from([("where".to_string(), filter)]);
+        let args = HashMap::from([
+            ("where".to_string(), filter),
+            ("unfiltered".to_string(), serde_json::Value::Bool(true)),
+        ]);
         let (rows, count) = run_many(&ctx, table, &m, args, "DELETE").await?;
         Ok(rows_response(&ctx, rows, count))
     })

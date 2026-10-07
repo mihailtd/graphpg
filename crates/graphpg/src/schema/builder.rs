@@ -1449,7 +1449,7 @@ impl SchemaBuilder {
             connection_types_sdl.push_str(&format!("  nodes: [{}!]!\n", type_name));
             connection_types_sdl.push_str("  pageInfo: PageInfo!\n");
             connection_types_sdl.push_str(
-                "  \"\"\"Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly).\"\"\"\n  totalCount(estimate: Boolean = false): Int!\n",
+                "  \"\"\"Number of matching rows (before paging). With `estimate`, the planner's estimate instead, from table statistics, or `EXPLAIN` for filtered rows: cheap on large tables, approximate (connections of a parent row always count exactly). With `exactBelow` too, the rows are counted exactly when the estimate is at most that many (an exact total for a small result, an estimate for a large one).\"\"\"\n  totalCount(estimate: Boolean = false, exactBelow: Int): Int!\n",
             );
             if has_aggregates {
                 connection_types_sdl.push_str(&format!(
@@ -1836,14 +1836,14 @@ impl SchemaBuilder {
                     ),
                     MutationAction::UpdateMany => (
                         format!("Update every `{type_name}` matching `where`."),
-                        format!("where: {type_name}Filter!, set: Update{type_name}Input!"),
+                        format!("where: {type_name}Filter!, set: Update{type_name}Input!, \"\"\"Allow a `where` without conditions, which updates every row (see `limits.require_filter`).\"\"\" unfiltered: Boolean = false"),
                     ),
                     MutationAction::Delete => (
                         if unique_key.is_empty() { String::new() } else { format!("Delete the `{type_name}` with the given {key_names}.") },
                         format!("{}{expected_version}", key_args.unwrap_or_default()),
                     ),
                     MutationAction::DeleteMany => {
-                        (format!("Delete every `{type_name}` matching `where`."), format!("where: {type_name}Filter!"))
+                        (format!("Delete every `{type_name}` matching `where`."), format!("where: {type_name}Filter!, \"\"\"Allow a `where` without conditions, which deletes every row (see `limits.require_filter`).\"\"\" unfiltered: Boolean = false"))
                     }
                 };
                 mutation_fields.push(Self::format_docstring(

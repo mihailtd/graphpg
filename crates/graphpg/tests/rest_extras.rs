@@ -1877,3 +1877,42 @@ async fn graphql_states_the_constraints_the_document_states() {
     // The schema is valid with them
     SchemaBuilder::build(&catalog).unwrap();
 }
+
+#[tokio::test]
+async fn an_estimated_total_can_be_exact_when_the_estimate_is_small() {
+    let app = app().await;
+    let count = |args: &'static str| {
+        let app = app.clone();
+        async move {
+            let query = format!(
+                "{{ ordersConnection(filter: {{ status: {{ equalTo: PAID }}, total: {{ greaterThan: 60 }} }}) {{ totalCount{args} }} }}"
+            );
+            let r = post(&app, "/graphql", json!({ "query": query })).await;
+            assert!(r.body.get("errors").is_none(), "{}", r.body);
+            r.body["data"]["ordersConnection"]["totalCount"]
+                .as_i64()
+                .unwrap()
+        }
+    };
+    // Few rows: the count is exact; the estimate can be off, and may be anything
+    assert_eq!(count("(estimate: true, exactBelow: 1000)").await, 3);
+    assert_eq!(count("").await, 3);
+    assert!((0..=6).contains(&count("(estimate: true)").await));
+    // Above the threshold the estimate is the answer, as without `exactBelow`
+    assert_eq!(
+        count("(estimate: true, exactBelow: 0)").await,
+        count("(estimate: true)").await
+    );
+    // Without a filter too, and beside rows
+    let r = post(
+        &app,
+        "/graphql",
+        json!({ "query": "{ ordersConnection(first: 2) { totalCount(estimate: true, exactBelow: 100) nodes { id } } }" }),
+    )
+    .await;
+    assert_eq!(
+        r.body["data"]["ordersConnection"]["totalCount"], 6,
+        "{}",
+        r.body
+    );
+}
