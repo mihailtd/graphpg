@@ -5,15 +5,23 @@
 //! Uses the `interfaces_and_unions` fixture schema (tests/fixtures) plus a small
 //! `polymorphism_fixture` schema created on demand.
 mod common;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
 use base64::Engine;
 use graphpg::catalog::{CatalogInspector, CtiKind};
 use graphpg::compiler::SqlCompiler;
+use graphpg::config::Config;
 use graphpg::execution::ExecutionEngine;
+use graphpg::openapi::OpenApiGenerator;
 use graphpg::planner::QueryPlanner;
 use graphpg::schema::SchemaBuilder;
+use graphpg::server::{create_pool, create_router, DebugOptions, ServerState};
 use graphpg::DatabaseCatalog;
-use serde_json::json;
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use std::sync::Arc;
 use tokio_postgres::NoTls;
+use tower::ServiceExt;
 
 /// Created once (serialised by an advisory lock, since tests run concurrently).
 const FIXTURE_SQL: &str = r#"
@@ -532,5 +540,156 @@ async fn test_exclusive_arc_with_polymorphic_target() {
             json!({ "body": "Good boy", "target": { "__typename": "Dog", "name": "Rex", "breed": "Beagle" } }),
             json!({ "body": "Nice staff", "target": { "__typename": "Shelter", "name": "Happy Paws" } }),
         ]
+    );
+}
+
+#[tokio::test]
+async fn test_cti_rest_and_openapi() {
+    let (_client, schema, catalog) = setup("polymorphism_fixture").await;
+    let state = ServerState::new(
+        create_pool(common::db_url(), 4).unwrap(),
+        schema,
+        catalog.clone(),
+        "polymorphism_fixture".to_string(),
+        DebugOptions::default(),
+    );
+    let app = create_router(Arc::new(state));
+
+    // 1. REST GET /rest/vehicles returns __typename and child columns
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/vehicles?order=id")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body,
+        json!([
+            { "__typename": "GenericVehicle", "id": 1, "name": "Bike" },
+            { "__typename": "Car", "id": 2, "name": "Mini", "seats": 4 },
+            { "__typename": "Truck", "id": 3, "name": "Hauler", "payloadKg": 9000 }
+        ])
+    );
+
+    // 2. REST GET with field selection
+    let req = Request::builder()
+        .method("GET")
+        .uri("/rest/vehicles?fields=name,seats&order=id")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body,
+        json!([
+            { "__typename": "GenericVehicle", "name": "Bike" },
+            { "__typename": "Car", "name": "Mini", "seats": 4 },
+            { "__typename": "Truck", "name": "Hauler" }
+        ])
+    );
+
+    // 2b. Filter and order by the columns of the subtypes
+    let get = |uri: &'static str| {
+        let app = app.clone();
+        async move {
+            let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            let status = res.status();
+            let body: Value =
+                serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            (status, body)
+        }
+    };
+    let (status, body) = get("/rest/vehicles?filter[seats][gte]=4&fields=name").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!([{ "__typename": "Car", "name": "Mini" }]));
+    let (_, body) = get("/rest/vehicles?filter[payloadKg][gt]=100&fields=name").await;
+    assert_eq!(body, json!([{ "__typename": "Truck", "name": "Hauler" }]));
+    let (_, body) = get(
+        "/rest/vehicles?filter[or][0][seats][gte]=4&filter[or][1][payloadKg][gte]=1&order=id&fields=name",
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!([
+            { "__typename": "Car", "name": "Mini" },
+            { "__typename": "Truck", "name": "Hauler" }
+        ])
+    );
+    let (_, body) = get("/rest/vehicles?filter[not][seats][gte]=4&order=id&fields=name").await;
+    assert_eq!(
+        body,
+        json!([
+            { "__typename": "GenericVehicle", "name": "Bike" },
+            { "__typename": "Truck", "name": "Hauler" }
+        ])
+    );
+    // A parent without a subtype row sorts as NULL: last ascending, first descending
+    let (status, body) = get("/rest/vehicles?order=seats&fields=name").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body[0]["name"], "Mini");
+    let (_, body) = get("/rest/vehicles?order=-payloadKg&fields=name").await;
+    assert_eq!(body[2]["name"], "Hauler");
+    let (status, _) = get("/rest/vehicles?filter[nope][eq]=1").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 3. OpenAPI generator describes CTI as oneOf with discriminator on __typename
+    let doc = OpenApiGenerator::generate_for(&catalog, &Config::default(), "polymorphism_fixture");
+    let schemas = &doc["components"]["schemas"];
+    assert!(schemas["vehiclesFilter"]["properties"]
+        .get("seats")
+        .is_some());
+    assert!(schemas["vehiclesFilter"]["properties"]
+        .get("payloadKg")
+        .is_some());
+    let vehicles = &schemas["vehicles"];
+    assert_eq!(vehicles["discriminator"]["propertyName"], "__typename");
+    let mapping = vehicles["discriminator"]["mapping"].as_object().unwrap();
+    assert_eq!(mapping.len(), 3);
+    assert_eq!(mapping["Car"], "#/components/schemas/vehicles.Car");
+    assert_eq!(mapping["Truck"], "#/components/schemas/vehicles.Truck");
+    assert_eq!(
+        mapping["GenericVehicle"],
+        "#/components/schemas/vehicles.GenericVehicle"
+    );
+
+    let car_schema = &schemas["vehicles.Car"];
+    assert_eq!(
+        car_schema["allOf"][0]["$ref"],
+        "#/components/schemas/vehicles.Base"
+    );
+    assert_eq!(
+        car_schema["allOf"][1]["properties"]["__typename"]["const"],
+        "Car"
+    );
+    assert!(car_schema["allOf"][1]["properties"].get("seats").is_some());
+
+    let truck_schema = &schemas["vehicles.Truck"];
+    assert_eq!(
+        truck_schema["allOf"][0]["$ref"],
+        "#/components/schemas/vehicles.Base"
+    );
+    assert_eq!(
+        truck_schema["allOf"][1]["properties"]["__typename"]["const"],
+        "Truck"
+    );
+    assert!(truck_schema["allOf"][1]["properties"]
+        .get("payloadKg")
+        .is_some());
+
+    let fallback_schema = &schemas["vehicles.GenericVehicle"];
+    assert_eq!(
+        fallback_schema["allOf"][0]["$ref"],
+        "#/components/schemas/vehicles.Base"
+    );
+    assert_eq!(
+        fallback_schema["allOf"][1]["properties"]["__typename"]["const"],
+        "GenericVehicle"
     );
 }

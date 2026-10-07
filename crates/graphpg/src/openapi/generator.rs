@@ -63,8 +63,8 @@ pub(super) fn prefer_param(write: bool) -> Value {
     } else {
         json!({
             "name": "Prefer", "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
-            "schema": { "type": "string", "enum": ["count=exact"] }
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
+            "schema": { "type": "string", "enum": ["count=exact", "count=planned", "count=estimated"] }
         })
     }
 }
@@ -328,8 +328,12 @@ impl OpenApiGenerator {
                                 "schema": { "type": "string" }
                             },
                             "X-Total-Count": {
-                                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                                "description": "Number of matching rows; with `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                                 "schema": { "type": "integer" }
+                            },
+                            "X-Total-Count-Estimate": {
+                                "description": "`true` if `X-Total-Count` is a planner estimate",
+                                "schema": { "type": "string" }
                             },
                             "Preference-Applied": { "schema": { "type": "string" } }
                         },
@@ -342,11 +346,16 @@ impl OpenApiGenerator {
                         "description": "Partial Content: the rows of `Range: items=A-B`",
                         "headers": {
                             "Content-Range": {
-                                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=...` asked for the count",
                                 "schema": { "type": "string" }
                             },
                             "Link": { "schema": { "type": "string" } },
-                            "X-Total-Count": { "schema": { "type": "integer" } }
+                            "X-Total-Count": { "schema": { "type": "integer" } },
+                            "X-Total-Count-Estimate": {
+                                "description": "`true` if `X-Total-Count` is a planner estimate",
+                                "schema": { "type": "string" }
+                            },
+                            "Preference-Applied": { "schema": { "type": "string" } }
                         },
                         "content": {
                             "application/json": { "schema": rows.clone() },
@@ -438,7 +447,11 @@ impl OpenApiGenerator {
                         "200": {
                             "description": format!("Search results for {name}"),
                             "headers": {
-                                "X-Total-Count": { "description": "Only with `Prefer: count=exact`", "schema": { "type": "integer" } },
+                                "X-Total-Count": { "description": "With `Prefer: count=exact`, `count=planned`, or `count=estimated`", "schema": { "type": "integer" } },
+                                "X-Total-Count-Estimate": {
+                                    "description": "`true` if `X-Total-Count` is a planner estimate",
+                                    "schema": { "type": "string" }
+                                },
                                 "X-Next-Cursor": { "description": "Cursor of the next page, if there is one", "schema": { "type": "string" } },
                                 "X-Previous-Cursor": { "description": "Cursor of the previous page, if there is one", "schema": { "type": "string" } },
                                 "Preference-Applied": { "schema": { "type": "string" } }
@@ -462,7 +475,7 @@ impl OpenApiGenerator {
         if read {
             let mut params = vec![
                 key_param.clone(),
-                Self::fields_param(table),
+                Self::fields_param(table, catalog),
                 Self::include_param(table, catalog),
             ];
             params.retain(|p| !p.is_null());
@@ -781,18 +794,21 @@ impl OpenApiGenerator {
         json!({ "name": "key", "in": "path", "required": true, "description": description, "schema": schema })
     }
 
-    pub(super) fn visible_fields(table: &TableMetadata) -> Vec<String> {
+    /// The fields of a row: its columns, and the columns of the subtypes of a table-per-type
+    /// hierarchy.
+    pub(super) fn visible_fields(table: &TableMetadata, catalog: &DatabaseCatalog) -> Vec<String> {
         table
             .visible_columns()
             .map(|c| c.field_name.clone())
+            .chain(catalog.cti_columns(table).into_iter().map(|(name, _)| name))
             .collect()
     }
 
-    pub(super) fn fields_param(table: &TableMetadata) -> Value {
+    pub(super) fn fields_param(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
         json!({
             "name": "fields", "in": "query", "style": "form", "explode": false,
             "description": "Columns to return (default: all)",
-            "schema": { "type": "array", "items": { "type": "string", "enum": Self::visible_fields(table) } }
+            "schema": { "type": "array", "items": { "type": "string", "enum": Self::visible_fields(table, catalog) } }
         })
     }
 
@@ -852,7 +868,7 @@ impl OpenApiGenerator {
         };
         let (first_text, first_schema) = page("Page size for forward keyset pagination");
         let (last_text, last_schema) = page("Page size for backward keyset pagination");
-        let columns = Self::visible_fields(table);
+        let columns = Self::visible_fields(table, catalog);
         let order_item = format!("^[+-]?{}(:(asc|desc))?$", alternation(&columns));
         let mut params = vec![
             json!({
@@ -890,7 +906,7 @@ impl OpenApiGenerator {
                 "description": "Rows to skip (offset pagination)",
                 "schema": { "type": "integer", "minimum": 0 }
             }),
-            Self::fields_param(table),
+            Self::fields_param(table, catalog),
             Self::include_param(table, catalog),
             prefer_param(false),
         ];
@@ -918,7 +934,7 @@ impl OpenApiGenerator {
         catalog: &DatabaseCatalog,
         limits: &LimitsConfig,
     ) -> Value {
-        let columns = Self::visible_fields(table);
+        let columns = Self::visible_fields(table, catalog);
         let relations = Self::relation_names(table, catalog);
         let mut properties = json!({
             "filter": schema_ref(&format!("{}Filter", table.name)),
@@ -1051,7 +1067,12 @@ impl OpenApiGenerator {
         served: &[&TableMetadata],
     ) -> Value {
         let mut properties = BTreeMap::new();
-        for col in table.visible_columns() {
+        // Subtype columns: some subtype row matching is a match
+        let subtype_columns = catalog.cti_columns(table);
+        for col in table
+            .visible_columns()
+            .chain(subtype_columns.iter().map(|(_, members)| members[0].1))
+        {
             let mut ty = Self::pg_type_to_json_schema(&col.pg_type, catalog);
             // Exact numbers are strings in responses, but a filter may be given either way
             if matches!(col.pg_type, PgType::Int8 | PgType::Numeric | PgType::Money) {
@@ -1255,17 +1276,110 @@ impl OpenApiGenerator {
         schema
     }
 
-    /// Maps a column's PostgreSQL type to an OpenAPI 3.1 JSON Schema.
-    /// The row schemas of a Single Table Inheritance table: `<table>.Base` (the plain object),
-    /// one `<table>.<Variant>` per discriminator value (the base, and the discriminator fixed to
-    /// that value) and `<table>` itself as the `oneOf` of them with a `discriminator`. `None`
-    /// for any other table. (Table-per-type hierarchies have no discriminator in a row, and a
-    /// row carries only the parent's columns, so they stay one schema.)
+    /// The row schemas of a polymorphic table:
+    /// - For Single Table Inheritance (STI): `<table>.Base` (the plain object), one `<table>.<Variant>`
+    ///   per discriminator value, and `<table>` as the `oneOf` with a `discriminator` on the column.
+    /// - For table-per-type (CTI): `<table>.Base` (parent columns), one `<table>.<Child>`
+    ///   per subtype with child columns, `<table>.<Fallback>` for parent rows without a child,
+    ///   and `<table>` as the `oneOf` with a `discriminator` on `__typename`.
+    ///
+    /// Returns `None` for any non-polymorphic table.
     fn polymorphic_row_schemas(
         table: &TableMetadata,
         catalog: &DatabaseCatalog,
         base: &Value,
     ) -> Option<Vec<(String, Value)>> {
+        if let Some(cti) = catalog.find_cti(&table.schema, &table.name) {
+            let name = &table.name;
+            let base_name = format!("{name}.Base");
+            let mut out = vec![(base_name.clone(), base.clone())];
+            let mut members = Vec::new();
+            let mut mapping = serde_json::Map::new();
+
+            for child in &cti.children {
+                let variant_name = format!("{name}.{}", child.type_name);
+                let mut props = serde_json::Map::new();
+                props.insert(
+                    "__typename".to_string(),
+                    json!({ "const": child.type_name }),
+                );
+                let mut required = vec!["__typename".to_string()];
+
+                if let Some(child_table) = catalog.find_table(&child.schema, &child.table) {
+                    for col in child_table.visible_columns() {
+                        if !table
+                            .visible_columns()
+                            .any(|pc| pc.name == col.name || pc.field_name == col.field_name)
+                        {
+                            props.insert(
+                                col.field_name.clone(),
+                                Self::constrained_schema(child_table, col, catalog),
+                            );
+                            if !col.is_nullable {
+                                required.push(col.field_name.clone());
+                            }
+                        }
+                    }
+                }
+
+                out.push((
+                    variant_name.clone(),
+                    json!({
+                        "description": format!("A `{name}` row of subtype `{}`", child.type_name),
+                        "allOf": [
+                            schema_ref(&base_name),
+                            {
+                                "properties": props,
+                                "required": required
+                            }
+                        ]
+                    }),
+                ));
+                mapping.insert(
+                    child.type_name.clone(),
+                    json!(format!("#/components/schemas/{variant_name}")),
+                );
+                members.push(schema_ref(&variant_name));
+            }
+
+            let fallback_type_name = if !cti.fallback_type_name.is_empty() {
+                &cti.fallback_type_name
+            } else {
+                "Fallback"
+            };
+            let fallback_name = format!("{name}.{fallback_type_name}");
+            out.push((
+                fallback_name.clone(),
+                json!({
+                    "description": format!("A `{name}` row whose subtype is none of the above"),
+                    "allOf": [
+                        schema_ref(&base_name),
+                        {
+                            "properties": {
+                                "__typename": { "const": fallback_type_name }
+                            },
+                            "required": ["__typename"]
+                        }
+                    ]
+                }),
+            ));
+            mapping.insert(
+                fallback_type_name.to_string(),
+                json!(format!("#/components/schemas/{fallback_name}")),
+            );
+            members.push(schema_ref(&fallback_name));
+
+            let mut row = json!({
+                "oneOf": members,
+                "discriminator": { "propertyName": "__typename", "mapping": mapping }
+            });
+            if let Some(description) = &table.description {
+                row["description"] = json!(description);
+            }
+            out.push((name.clone(), row));
+            return Some(out);
+        }
+
         let sti = catalog.find_sti(&table.schema, &table.name)?;
         let column = table
             .visible_columns()

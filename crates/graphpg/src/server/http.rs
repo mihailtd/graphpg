@@ -4,6 +4,7 @@ use crate::execution::{ExecutionEngine, ExecutionError};
 use crate::openapi::OpenApiGenerator;
 use crate::planner::{PlannerError, QueryPlanner};
 use crate::server::cache::RequestCache;
+use crate::server::sql_errors;
 use apollo_compiler::executable::Operation;
 use apollo_compiler::response::JsonMap;
 use apollo_compiler::validation::Valid;
@@ -83,6 +84,7 @@ pub(crate) fn execution_error(
     err: &ExecutionError,
     catalog: &DatabaseCatalog,
     mask_errors: bool,
+    errors_config: &crate::config::models::ErrorsConfig,
 ) -> (StatusCode, GraphQLError) {
     let path = match err {
         ExecutionError::Mutation { field, .. } => {
@@ -90,6 +92,24 @@ pub(crate) fn execution_error(
         }
         _ => None,
     };
+
+    if let Some(custom) =
+        sql_errors::db_error(err).and_then(|db| sql_errors::resolve(db, errors_config, mask_errors))
+    {
+        let mut extensions = serde_json::json!({ "code": custom.code });
+        if let Some(hint) = custom.hint {
+            extensions["hint"] = serde_json::json!(hint);
+        }
+        return (
+            StatusCode::OK,
+            GraphQLError {
+                message: custom.detail,
+                path,
+                extensions: Some(extensions),
+            },
+        );
+    }
+
     match err.violation(catalog) {
         Some(v) => {
             let extensions = serde_json::json!({
@@ -238,6 +258,8 @@ pub struct ServerState {
     /// Safety limits (page size, depth, cost, bulk rows, body size, groups): enforced on every
     /// plan, whichever API made it.
     pub limits: crate::config::models::LimitsConfig,
+    /// Custom error configurations and detail level.
+    pub errors: crate::config::models::ErrorsConfig,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -289,12 +311,19 @@ impl ServerState {
             introspection: false,
             mask_errors: true,
             limits: crate::config::models::LimitsConfig::default(),
+            errors: crate::config::models::ErrorsConfig::default(),
         }
     }
 
     /// Sets the safety limits (the defaults of [`LimitsConfig`](crate::config::models::LimitsConfig) otherwise).
     pub fn with_limits(mut self, limits: crate::config::models::LimitsConfig) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Sets custom error configurations.
+    pub fn with_errors(mut self, errors: crate::config::models::ErrorsConfig) -> Self {
+        self.errors = errors;
         self
     }
 
@@ -473,6 +502,7 @@ impl ServerState {
         self.scalar = config.openapi.ui;
         self.sql_comments = config.database.sql_comments;
         self.limits = config.limits.clone();
+        self.errors = config.errors.clone();
         let cat = self.current_catalog();
         let doc = OpenApiGenerator::generate_with_schema(
             &cat,
@@ -1040,7 +1070,8 @@ pub(crate) async fn graphql_handler(
             Ok(serde_json::Value::Object(map)) => sql_data = map,
             Ok(_) => {}
             Err(err) => {
-                let (status, error) = execution_error(&err, &catalog, state.mask_errors);
+                let (status, error) =
+                    execution_error(&err, &catalog, state.mask_errors, &state.errors);
                 return errors_response(status, vec![error], extensions_value(&extensions));
             }
         }

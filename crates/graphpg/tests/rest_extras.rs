@@ -1431,3 +1431,234 @@ async fn every_column_is_read_in_the_shape_the_document_gives_it() {
         }
     }
 }
+
+#[tokio::test]
+async fn test_custom_sql_problem_responses() {
+    common::ensure_rest_extras_fixture().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .expect("connect");
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    client
+        .batch_execute(
+            "CREATE OR REPLACE FUNCTION rest_extras.raise_custom(code text, msg text, hint text DEFAULT NULL)
+             RETURNS void LANGUAGE plpgsql VOLATILE AS $$
+             BEGIN
+                 IF hint IS NOT NULL THEN
+                     RAISE EXCEPTION '%', msg USING ERRCODE = code, HINT = hint;
+                 ELSE
+                     RAISE EXCEPTION '%', msg USING ERRCODE = code;
+                 END IF;
+             END $$;
+             CREATE OR REPLACE FUNCTION rest_extras.raise_constraint(msg text)
+             RETURNS void LANGUAGE plpgsql VOLATILE AS $$
+             BEGIN
+                 RAISE EXCEPTION '%', msg USING ERRCODE = '23514', CONSTRAINT = 'balance_check',
+                     HINT = 'a database hint', DETAIL = 'Key (id)=(1) is secret';
+             END $$;",
+        )
+        .await
+        .unwrap();
+
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema("rest_extras")
+        .await
+        .unwrap();
+    let schema = SchemaBuilder::build(&catalog).unwrap();
+
+    let mut custom_map = std::collections::BTreeMap::new();
+    custom_map.insert(
+        "23514".to_string(),
+        graphpg::config::models::CustomErrorConfig {
+            status: Some(422),
+            title: Some("Check Constraint Failed".to_string()),
+            code: Some("CHECK_FAILED".to_string()),
+            problem_type: Some("https://example.com/errors/check".to_string()),
+        },
+    );
+    custom_map.insert(
+        "balance_check".to_string(),
+        graphpg::config::models::CustomErrorConfig {
+            status: Some(409),
+            title: Some("Balance".to_string()),
+            code: Some("BALANCE".to_string()),
+            problem_type: None,
+        },
+    );
+    let errors_config = graphpg::config::models::ErrorsConfig {
+        detail: graphpg::config::models::ErrorDetail::Masked,
+        map: custom_map,
+    };
+
+    let state = ServerState::new(
+        create_pool(common::db_url(), 4).unwrap(),
+        schema,
+        catalog,
+        "rest_extras".to_string(),
+        DebugOptions::default(),
+    )
+    .with_mode(graphpg::config::Mode::Prod)
+    .with_errors(errors_config.clone());
+
+    let app = create_router(Arc::new(state));
+
+    // 1. PostgREST PT402 error with plain text and hint (never masked in prod)
+    let reply = post(
+        &app,
+        "/rest/rpc/raise_custom",
+        json!({
+            "args": {
+                "code": "PT402",
+                "msg": "Payment required for premium feature",
+                "hint": "UPGRADE_PLAN"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(reply.body["code"], "UPGRADE_PLAN");
+    assert_eq!(reply.body["detail"], "Payment required for premium feature");
+    assert_eq!(reply.body["hint"], "UPGRADE_PLAN");
+
+    // 2. PostgREST PT422 error with JSON body
+    let json_msg = json!({
+        "code": "INSUFFICIENT_FUNDS",
+        "title": "Payment Failed",
+        "detail": "Account balance is negative",
+        "extra_field": 123
+    })
+    .to_string();
+    let reply = post(
+        &app,
+        "/rest/rpc/raise_custom",
+        json!({
+            "args": {
+                "code": "PT422",
+                "msg": json_msg
+            }
+        }),
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "body: {}",
+        reply.body
+    );
+    assert_eq!(reply.body["code"], "INSUFFICIENT_FUNDS");
+    assert_eq!(reply.body["title"], "Payment Failed");
+    assert_eq!(reply.body["detail"], "Account balance is negative");
+    assert_eq!(reply.body["extra_field"], 123);
+
+    // 3. Custom errors.map mapping SQLSTATE 23514
+    let reply = post(
+        &app,
+        "/rest/rpc/raise_custom",
+        json!({
+            "args": {
+                "code": "23514",
+                "msg": "value out of bounds"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(reply.body["code"], "CHECK_FAILED");
+    assert_eq!(reply.body["title"], "Check Constraint Failed");
+    assert_eq!(reply.body["type"], "https://example.com/errors/check");
+    // A mapped error is a built-in failure: in prod it says what its title says
+    assert_eq!(reply.body["detail"], "Check Constraint Failed");
+
+    // 3b. A mapped constraint name wins over a mapped SQLSTATE, and its hint and DETAIL line
+    // stay out of a prod response
+    let reply = post(
+        &app,
+        "/rest/rpc/raise_constraint",
+        json!({ "args": { "msg": "balance below zero" } }),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::CONFLICT);
+    assert_eq!(reply.body["code"], "BALANCE");
+    assert!(reply.body.get("hint").is_none(), "body: {}", reply.body);
+    assert!(reply.body.get("databaseDetail").is_none());
+
+    // 3c. A PTxxx below 400 is a 400, not a success
+    let reply = post(
+        &app,
+        "/rest/rpc/raise_custom",
+        json!({ "args": { "code": "PT200", "msg": "fine, really" } }),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+    assert_eq!(reply.body["detail"], "fine, really");
+
+    // 3d. In dev the mapped error carries the database's message, hint and DETAIL
+    let dev_state = ServerState::new(
+        create_pool(common::db_url(), 4).unwrap(),
+        SchemaBuilder::build(
+            &CatalogInspector::new(&client)
+                .inspect_schema("rest_extras")
+                .await
+                .unwrap(),
+        )
+        .unwrap(),
+        CatalogInspector::new(&client)
+            .inspect_schema("rest_extras")
+            .await
+            .unwrap(),
+        "rest_extras".to_string(),
+        DebugOptions::default(),
+    )
+    .with_mode(graphpg::config::Mode::Dev)
+    .with_errors(errors_config);
+    let dev = create_router(Arc::new(dev_state));
+    let reply = post(
+        &dev,
+        "/rest/rpc/raise_constraint",
+        json!({ "args": { "msg": "balance below zero" } }),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::CONFLICT);
+    assert_eq!(reply.body["detail"], "balance below zero");
+    assert_eq!(reply.body["hint"], "a database hint");
+    assert_eq!(reply.body["databaseDetail"], "Key (id)=(1) is secret");
+
+    // 4. GraphQL mutation execution exposes code in extensions.code and unmasked in prod
+    let gql_req = Request::builder()
+        .method("POST")
+        .uri("/graphql")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "query": "mutation { raiseCustom(code: \"PT402\", msg: \"GraphQL payment required\") }"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(gql_req).await.unwrap();
+    let gql_body: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(gql_body["errors"][0]["extensions"]["code"], "PT402");
+    assert_eq!(gql_body["errors"][0]["message"], "GraphQL payment required");
+
+    // 5. A mapped error over GraphQL: the mapped code, the message masked in prod
+    let gql_req = Request::builder()
+        .method("POST")
+        .uri("/graphql")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "query": "mutation { raiseCustom(code: \"23514\", msg: \"raw database words\") }"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(gql_req).await.unwrap();
+    let gql_body: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(gql_body["errors"][0]["extensions"]["code"], "CHECK_FAILED");
+    assert_eq!(gql_body["errors"][0]["message"], "Check Constraint Failed");
+}

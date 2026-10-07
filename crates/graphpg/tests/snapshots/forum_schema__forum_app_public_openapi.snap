@@ -150,11 +150,13 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           },
@@ -186,9 +188,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                "description": "Number of matching rows; with `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               },
               "Preference-Applied": {
@@ -217,7 +225,7 @@ expression: openapi
             "description": "Partial Content: the rows of `Range: items=A-B`",
             "headers": {
               "Content-Range": {
-                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=...` asked for the count",
                 "schema": {
                   "type": "string"
                 }
@@ -230,6 +238,17 @@ expression: openapi
               "X-Total-Count": {
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -617,11 +636,13 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           },
@@ -653,9 +674,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                "description": "Number of matching rows; with `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               },
               "Preference-Applied": {
@@ -669,7 +696,7 @@ expression: openapi
             "description": "Partial Content: the rows of `Range: items=A-B`",
             "headers": {
               "Content-Range": {
-                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=...` asked for the count",
                 "schema": {
                   "type": "string"
                 }
@@ -682,6 +709,17 @@ expression: openapi
               "X-Total-Count": {
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -779,11 +817,13 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           }
@@ -803,9 +843,15 @@ expression: openapi
             "description": "Search results for forums",
             "headers": {
               "X-Total-Count": {
-                "description": "Only with `Prefer: count=exact`",
+                "description": "With `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               },
               "X-Next-Cursor": {
@@ -2177,11 +2223,13 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           },
@@ -2213,9 +2261,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                "description": "Number of matching rows; with `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               },
               "Preference-Applied": {
@@ -2244,7 +2298,7 @@ expression: openapi
             "description": "Partial Content: the rows of `Range: items=A-B`",
             "headers": {
               "Content-Range": {
-                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=...` asked for the count",
                 "schema": {
                   "type": "string"
                 }
@@ -2257,6 +2311,17 @@ expression: openapi
               "X-Total-Count": {
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -2667,11 +2732,13 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           },
@@ -2703,9 +2770,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                "description": "Number of matching rows; with `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               },
               "Preference-Applied": {
@@ -2719,7 +2792,7 @@ expression: openapi
             "description": "Partial Content: the rows of `Range: items=A-B`",
             "headers": {
               "Content-Range": {
-                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=...` asked for the count",
                 "schema": {
                   "type": "string"
                 }
@@ -2732,6 +2805,17 @@ expression: openapi
               "X-Total-Count": {
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -2829,11 +2913,13 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           }
@@ -2853,9 +2939,15 @@ expression: openapi
             "description": "Search results for messages",
             "headers": {
               "X-Total-Count": {
-                "description": "Only with `Prefer: count=exact`",
+                "description": "With `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               },
               "X-Next-Cursor": {
@@ -4278,11 +4370,13 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           },
@@ -4314,9 +4408,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                "description": "Number of matching rows; with `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               },
               "Preference-Applied": {
@@ -4345,7 +4445,7 @@ expression: openapi
             "description": "Partial Content: the rows of `Range: items=A-B`",
             "headers": {
               "Content-Range": {
-                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=...` asked for the count",
                 "schema": {
                   "type": "string"
                 }
@@ -4358,6 +4458,17 @@ expression: openapi
               "X-Total-Count": {
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -4750,11 +4861,13 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           },
@@ -4786,9 +4899,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Number of matching rows; only with `Prefer: count=exact`",
+                "description": "Number of matching rows; with `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               },
               "Preference-Applied": {
@@ -4802,7 +4921,7 @@ expression: openapi
             "description": "Partial Content: the rows of `Range: items=A-B`",
             "headers": {
               "Content-Range": {
-                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=exact` asked for the count",
+                "description": "`items A-B/N`, with `*` for `N` unless `Prefer: count=...` asked for the count",
                 "schema": {
                   "type": "string"
                 }
@@ -4815,6 +4934,17 @@ expression: openapi
               "X-Total-Count": {
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Preference-Applied": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -4912,11 +5042,13 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           }
@@ -4936,9 +5068,15 @@ expression: openapi
             "description": "Search results for users",
             "headers": {
               "X-Total-Count": {
-                "description": "Only with `Prefer: count=exact`",
+                "description": "With `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               },
               "X-Next-Cursor": {
@@ -6320,22 +6458,26 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           },
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           }
@@ -6373,9 +6515,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Only with `Prefer: count=exact`",
+                "description": "With `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -6548,9 +6696,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Only with `Prefer: count=exact`",
+                "description": "With `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -7417,22 +7571,26 @@ expression: openapi
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           },
           {
             "name": "Prefer",
             "in": "header",
-            "description": "`count=exact` adds `X-Total-Count`; it costs a scan of every matching row, so it is off by default",
+            "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
             "schema": {
               "type": "string",
               "enum": [
-                "count=exact"
+                "count=exact",
+                "count=planned",
+                "count=estimated"
               ]
             }
           }
@@ -7470,9 +7628,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Only with `Prefer: count=exact`",
+                "description": "With `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -7642,9 +7806,15 @@ expression: openapi
                 }
               },
               "X-Total-Count": {
-                "description": "Only with `Prefer: count=exact`",
+                "description": "With `Prefer: count=exact`, `count=planned`, or `count=estimated`",
                 "schema": {
                   "type": "integer"
+                }
+              },
+              "X-Total-Count-Estimate": {
+                "description": "`true` if `X-Total-Count` is a planner estimate",
+                "schema": {
+                  "type": "string"
                 }
               }
             }

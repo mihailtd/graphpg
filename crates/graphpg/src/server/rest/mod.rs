@@ -374,25 +374,80 @@ fn select_fields(
     fields: Option<&Vec<String>>,
     include: Option<&Vec<String>>,
 ) -> Result<Vec<RequestField>, ProblemDetails> {
+    let cti = catalog.find_cti(&table.schema, &table.name);
     let mut out = match fields.filter(|f| !f.is_empty()) {
-        None => column_fields(catalog, table),
+        None => {
+            let mut selected = column_fields(catalog, table);
+            if let Some(cti) = cti {
+                if !selected.iter().any(|f| f.response_key() == "__typename") {
+                    selected.push(RequestField::new("__typename"));
+                }
+                for child in &cti.children {
+                    if let Some(child_table) = catalog.find_table(&child.schema, &child.table) {
+                        for col in child_table.visible_columns() {
+                            if !table
+                                .visible_columns()
+                                .any(|pc| pc.name == col.name || pc.field_name == col.field_name)
+                            {
+                                selected.push(
+                                    column_field(catalog, child_table, col)
+                                        .with_type_condition(&child.type_name),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            selected
+        }
         Some(requested) => {
-            let mut selected = Vec::new();
+            let mut selected: Vec<RequestField> = Vec::new();
+            if cti.is_some() && !selected.iter().any(|f| f.response_key() == "__typename") {
+                selected.push(RequestField::new("__typename"));
+            }
             for name in requested {
-                let col = table
+                if name == "__typename" {
+                    if !selected.iter().any(|f| f.response_key() == "__typename") {
+                        selected.push(RequestField::new("__typename"));
+                    }
+                    continue;
+                }
+                if let Some(col) = table
                     .visible_columns()
                     .find(|c| &c.field_name == name || &c.name == name)
-                    .ok_or_else(|| {
-                        ProblemDetails::invalid(
+                {
+                    if !selected.iter().any(|f: &RequestField| {
+                        f.response_key() == col.field_name && f.type_condition.is_none()
+                    }) {
+                        selected.push(column_field(catalog, table, col));
+                    }
+                } else if let Some(cti) = cti {
+                    let mut found = false;
+                    for child in &cti.children {
+                        if let Some(child_table) = catalog.find_table(&child.schema, &child.table) {
+                            if let Some(col) = child_table
+                                .visible_columns()
+                                .find(|c| &c.field_name == name || &c.name == name)
+                            {
+                                selected.push(
+                                    column_field(catalog, child_table, col)
+                                        .with_type_condition(&child.type_name),
+                                );
+                                found = true;
+                            }
+                        }
+                    }
+                    if !found {
+                        return Err(ProblemDetails::invalid(
                             format!("Unknown field `{name}` for resource `{}`", table.name),
                             "fields",
-                        )
-                    })?;
-                if !selected
-                    .iter()
-                    .any(|f: &RequestField| f.response_key() == col.field_name)
-                {
-                    selected.push(column_field(catalog, table, col));
+                        ));
+                    }
+                } else {
+                    return Err(ProblemDetails::invalid(
+                        format!("Unknown field `{name}` for resource `{}`", table.name),
+                        "fields",
+                    ));
                 }
             }
             selected
@@ -548,8 +603,14 @@ impl Ctx {
                 self.is_prod,
             )
         })?;
-        result
-            .map_err(|err| ProblemDetails::from_execution_error(&err, &self.catalog, self.is_prod))
+        result.map_err(|err| {
+            ProblemDetails::from_execution_error(
+                &err,
+                &self.catalog,
+                self.is_prod,
+                &self.state.errors,
+            )
+        })
     }
 }
 
@@ -849,6 +910,7 @@ struct Listing {
     rows: Vec<serde_json::Value>,
     total: Option<i64>,
     page_info: Option<RestPageInfo>,
+    is_estimate: bool,
 }
 
 /// Where a list reads from: a table's own list or connection field, or a function returning
@@ -902,8 +964,9 @@ async fn list_rows(
         table,
         root,
         connection,
-        mut args,
+        args: initial_args,
     } = target;
+    let mut args = initial_args.clone();
     let row_fields = select_fields(
         &ctx.catalog,
         table,
@@ -931,11 +994,26 @@ async fn list_rows(
         }
     }
 
+    let count_pref = ctx.prefs.count;
+    let (include_total, estimate_total) = match count_pref {
+        query::CountPreference::Planned => (true, true),
+        query::CountPreference::Estimated => (true, true),
+        query::CountPreference::Exact => (true, false),
+        query::CountPreference::None => (false, false),
+    };
+
     let request = if connection {
-        ResponseShaper::build_list_request(root, args, row_fields, true, ctx.prefs.count_exact)
+        ResponseShaper::build_list_request_ext(
+            root,
+            args.clone(),
+            row_fields,
+            true,
+            include_total,
+            estimate_total,
+        )
     } else {
         RequestField::new(root)
-            .with_arguments(args)
+            .with_arguments(args.clone())
             .with_children(row_fields)
     };
     let data = ctx
@@ -948,21 +1026,92 @@ async fn list_rows(
         .await?;
     let shaped =
         ResponseShaper::unwrap_list(&data, root).map_err(|e| shaping_error(e, ctx.is_prod))?;
+
+    let mut total = shaped.total_count;
+    let mut is_estimate = false;
+
+    if include_total && connection {
+        match count_pref {
+            query::CountPreference::Planned => {
+                is_estimate = true;
+            }
+            query::CountPreference::Exact => {
+                is_estimate = false;
+            }
+            query::CountPreference::Estimated => {
+                let has_next = shaped
+                    .page_info
+                    .as_ref()
+                    .map(|p| p.has_next_page)
+                    .unwrap_or(false);
+                let is_start = query.offset.unwrap_or(0) == 0
+                    && query.after.is_none()
+                    && query.before.is_none();
+                if !has_next && is_start {
+                    total = Some(shaped.rows.len() as i64);
+                    is_estimate = false;
+                } else {
+                    let est = total.unwrap_or(0);
+                    let threshold = ctx.state.limits.count_threshold.unwrap_or(10_000) as i64;
+                    if est <= threshold {
+                        let mut count_args = initial_args;
+                        if let Some(filter) = &query.filter {
+                            count_args.insert("filter".into(), filter.clone());
+                        }
+                        let count_req = ResponseShaper::build_list_request_ext(
+                            root,
+                            count_args,
+                            vec![],
+                            false,
+                            true,
+                            false,
+                        );
+                        let count_data = ctx
+                            .execute(
+                                &table.schema,
+                                RequestOperation::query(vec![count_req]),
+                                method,
+                                false,
+                            )
+                            .await?;
+                        let count_shaped = ResponseShaper::unwrap_list(&count_data, root)
+                            .map_err(|e| shaping_error(e, ctx.is_prod))?;
+                        total = count_shaped.total_count;
+                        is_estimate = false;
+                    } else {
+                        is_estimate = true;
+                    }
+                }
+            }
+            query::CountPreference::None => {
+                is_estimate = false;
+            }
+        }
+    }
+
     Ok(Listing {
         rows: shaped.rows,
-        total: shaped.total_count,
+        total,
         page_info: shaped.page_info,
+        is_estimate,
     })
 }
 
 fn list_headers(listing: &Listing, prefs: Preferences) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    if let Some(total) = listing.total.filter(|_| prefs.count_exact) {
+    if let Some(total) = listing.total.filter(|_| prefs.count_requested()) {
         set_header(
             &mut headers,
             header::HeaderName::from_static("x-total-count"),
             &total.to_string(),
         );
+        if listing.is_estimate {
+            set_header(
+                &mut headers,
+                header::HeaderName::from_static("x-total-count-estimate"),
+                "true",
+            );
+        }
         if let Some(applied) = prefs.applied(false, true, false) {
             set_header(
                 &mut headers,
@@ -1116,7 +1265,7 @@ pub async fn rest_list_handler(
             if listing.rows.is_empty() && range.first > 0 {
                 // Past the end: the answer names the size of the whole
                 let mut counting = Ctx::new(&state, &headers, table.name.clone()).await?;
-                counting.prefs.count_exact = true;
+                counting.prefs.count = query::CountPreference::Exact;
                 let first_row = RestQuery {
                     first: Some(1),
                     offset: None,
@@ -1129,7 +1278,7 @@ pub async fn rest_list_handler(
                 ));
             }
             // Only a requested count is known: `Content-Range` has `*` otherwise
-            listing.total = listing.total.filter(|_| ctx.prefs.count_exact);
+            listing.total = listing.total.filter(|_| ctx.prefs.count_requested());
         }
 
         let link = build_link_header(

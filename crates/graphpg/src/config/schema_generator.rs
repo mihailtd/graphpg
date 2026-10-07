@@ -342,9 +342,38 @@ impl ConfigSchemaGenerator {
                     "bulk_rows": limit("Most rows one write inserts, nested writes included (default 1000)."),
                     "groups": limit("Most groups an aggregate request may return (default 10000)."),
                     "request_body_bytes": limit("Largest request body in bytes (default 1048576)."),
+                    "count_threshold": limit("`Prefer: count=estimated` counts exactly up to this many estimated rows, and uses the planner estimate above (default 10000)."),
                     "statement_timeout": {
                         "type": "string",
                         "description": "`statement_timeout` of every connection, with a unit: `500ms`, `30s`, `2m`, `1h`; `off` for none (default 30s)"
+                    }
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
+            "errors".to_string(),
+            json!({
+                "type": "object",
+                "description": "How database errors reach clients, over GraphQL and REST",
+                "properties": {
+                    "detail": {
+                        "enum": ["masked", "full"],
+                        "description": "`masked` (default in prod) hides the database's message; `full` (default in dev) shows it"
+                    },
+                    "map": {
+                        "type": "object",
+                        "description": "SQLSTATE codes or constraint names -> the problem they become. A constraint name wins over a SQLSTATE. In prod a mapped error shows only its title",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "status": { "type": "integer", "minimum": 400, "maximum": 599, "description": "HTTP status of the REST problem (default 400)" },
+                                "title": { "type": "string", "description": "Problem title (default: the status's reason phrase)" },
+                                "code": { "type": "string", "description": "Machine-readable code, `errors[].extensions.code` in GraphQL (default: the SQLSTATE)" },
+                                "type": { "type": "string", "description": "RFC 9457 problem type URI (default `about:blank`)" }
+                            },
+                            "additionalProperties": false
+                        }
                     }
                 },
                 "additionalProperties": false

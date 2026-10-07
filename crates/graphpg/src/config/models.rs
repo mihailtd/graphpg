@@ -246,6 +246,10 @@ pub struct LimitsConfig {
     /// first when it is lower.
     #[serde(default = "default_timeout", deserialize_with = "timeout")]
     pub statement_timeout: Option<Timeout>,
+    /// Threshold for `Prefer: count=estimated`. When the estimated row count is at or below this
+    /// threshold, an exact count is computed; above this threshold, the planner estimate is used.
+    #[serde(default = "default_count_threshold", deserialize_with = "limit")]
+    pub count_threshold: Option<u64>,
 }
 
 /// Page sizes.
@@ -285,6 +289,9 @@ fn default_body() -> Option<usize> {
 fn default_timeout() -> Option<Timeout> {
     Some(Timeout(std::time::Duration::from_secs(30)))
 }
+fn default_count_threshold() -> Option<u64> {
+    Some(10_000)
+}
 
 impl Default for PageSizeConfig {
     fn default() -> Self {
@@ -305,6 +312,7 @@ impl Default for LimitsConfig {
             groups: default_groups(),
             request_body_bytes: default_body(),
             statement_timeout: default_timeout(),
+            count_threshold: default_count_threshold(),
         }
     }
 }
@@ -372,13 +380,34 @@ pub enum ErrorDetail {
     Full,
 }
 
+/// Custom error mapping for a SQLSTATE code or constraint name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CustomErrorConfig {
+    /// HTTP status code (e.g. 400, 404, 409, 422).
+    #[serde(default)]
+    pub status: Option<u16>,
+    /// Problem title (defaults to canonical reason phrase for the status).
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Machine-readable code (e.g. `PAYMENT_REQUIRED`).
+    #[serde(default)]
+    pub code: Option<String>,
+    /// RFC 9457 type URI (defaults to `about:blank`).
+    #[serde(default, rename = "type")]
+    pub problem_type: Option<String>,
+}
+
 /// Error detail, for GraphQL and REST alike. Typed constraint errors (`EMAIL_TAKEN`) and
 /// invalid input are always shown: the client can act on them.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ErrorsConfig {
     #[serde(default)]
     pub detail: ErrorDetail,
+    /// Maps SQLSTATE error codes or constraint names to custom HTTP status and problem responses.
+    #[serde(default)]
+    pub map: BTreeMap<String, CustomErrorConfig>,
 }
 
 /// Which security headers are sent.

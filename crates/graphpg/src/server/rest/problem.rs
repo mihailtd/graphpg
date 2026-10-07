@@ -1,7 +1,8 @@
 //! RFC 9457 `application/problem+json` error responses for the REST API.
 //!
-//! The `type` member is always `about:blank`: the status code carries the meaning and the
-//! stable, machine-readable `code` member (such as `EMAIL_TAKEN`) identifies the problem.
+//! The `type` member is `about:blank` unless an error was given one (`errors.map`, or a JSON
+//! `PTxxx` message): the status code carries the meaning and the stable, machine-readable
+//! `code` member (such as `EMAIL_TAKEN`) identifies the problem.
 //! Raw PostgreSQL messages never reach the client in production; the client gets a request ID
 //! that is also written to the server log together with the real error.
 
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::DatabaseCatalog;
 use crate::execution::ExecutionError;
 use crate::server::auth::AuthError;
+use crate::server::sql_errors;
 
 /// RFC 9457 Problem Details object.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -35,6 +37,10 @@ pub struct ProblemDetails {
     pub limit: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actual: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
     /// Response headers (such as `WWW-Authenticate`); not part of the body.
     #[serde(skip)]
     pub headers: Vec<(header::HeaderName, header::HeaderValue)>,
@@ -69,8 +75,25 @@ impl ProblemDetails {
             request_id: None,
             limit: None,
             actual: None,
+            hint: None,
+            extensions: serde_json::Map::new(),
             headers: Vec::new(),
         }
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    pub fn with_type(mut self, problem_type: impl Into<String>) -> Self {
+        self.problem_type = problem_type.into();
+        self
+    }
+
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
     }
 
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
@@ -197,15 +220,23 @@ impl ProblemDetails {
     }
 
     /// Maps an execution failure: typed constraint violations keep their stable code and
-    /// message; anything else is masked in production.
+    /// message; custom SQL errors keep their status (`PTxxx` messages unmasked, `errors.map`
+    /// ones masked); anything else is masked in production.
     pub fn from_execution_error(
         err: &ExecutionError,
         catalog: &DatabaseCatalog,
         is_prod: bool,
+        errors_config: &crate::config::models::ErrorsConfig,
     ) -> Self {
         let mut root = err;
         while let ExecutionError::Mutation { source, .. } = root {
             root = source;
+        }
+
+        if let Some(db) = sql_errors::db_error(root) {
+            if let Some(custom) = sql_errors::resolve(db, errors_config, is_prod) {
+                return Self::from_custom(custom);
+            }
         }
 
         if let Some(v) = err.violation(catalog) {
@@ -250,6 +281,27 @@ impl ProblemDetails {
                 is_prod,
             ),
         }
+    }
+
+    fn from_custom(custom: sql_errors::CustomError) -> Self {
+        let mut problem = Self::new(custom.status, custom.detail).with_code(custom.code);
+        if let Some(title) = custom.title {
+            problem = problem.with_title(title);
+        }
+        if let Some(problem_type) = custom.problem_type {
+            problem = problem.with_type(problem_type);
+        }
+        if let Some(hint) = custom.hint {
+            problem = problem.with_hint(hint);
+        }
+        problem.extensions = custom.extensions;
+        if let Some(detail) = custom.db_detail {
+            problem
+                .extensions
+                .entry("databaseDetail")
+                .or_insert(serde_json::json!(detail));
+        }
+        problem
     }
 }
 
@@ -335,5 +387,31 @@ mod tests {
             false,
         );
         assert!(dev.detail.contains("secret"));
+    }
+
+    #[test]
+    fn custom_pt_and_mapped_errors_serialise_properly() {
+        // Plain PT error
+        let mut p = ProblemDetails::new(StatusCode::PAYMENT_REQUIRED, "Payment required")
+            .with_code("PT402")
+            .with_hint("Upgrade subscription");
+        p.extensions
+            .insert("extra".into(), serde_json::json!("val"));
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["status"], 402);
+        assert_eq!(json["code"], "PT402");
+        assert_eq!(json["hint"], "Upgrade subscription");
+        assert_eq!(json["extra"], "val");
+
+        // Custom mapped error
+        let p2 = ProblemDetails::new(StatusCode::CONFLICT, "Duplicate record")
+            .with_code("CUSTOM_CONFLICT")
+            .with_type("https://example.com/errors/conflict")
+            .with_title("Custom Conflict");
+        let json2 = serde_json::to_value(&p2).unwrap();
+        assert_eq!(json2["status"], 409);
+        assert_eq!(json2["code"], "CUSTOM_CONFLICT");
+        assert_eq!(json2["type"], "https://example.com/errors/conflict");
+        assert_eq!(json2["title"], "Custom Conflict");
     }
 }

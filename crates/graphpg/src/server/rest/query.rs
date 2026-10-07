@@ -36,20 +36,38 @@ pub enum QueryKind {
     Item,
 }
 
+/// Count preference for collection responses (RFC 7240).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CountPreference {
+    #[default]
+    None,
+    /// `count=exact`: exact count scanning every matching row.
+    Exact,
+    /// `count=planned`: planner row estimate.
+    Planned,
+    /// `count=estimated`: exact count below `limits.count_threshold`, planner estimate above it.
+    Estimated,
+}
+
 /// Request preferences (RFC 7240) the API honours.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Preferences {
     /// `return=minimal`: write responses carry no body.
     pub return_minimal: bool,
-    /// `count=exact`: list responses carry `X-Total-Count`. Off by default because the count
-    /// scans every matching row.
-    pub count_exact: bool,
+    /// Total count preference: list responses carry `X-Total-Count`. Off by default because an
+    /// exact count scans every matching row.
+    pub count: CountPreference,
     /// `previous`: an update or upsert answers with the row as it was before the write too
     /// (`RETURNING OLD`, PostgreSQL 18).
     pub previous: bool,
 }
 
 impl Preferences {
+    /// Whether any total count was requested.
+    pub fn count_requested(&self) -> bool {
+        self.count != CountPreference::None
+    }
+
     /// The `Preference-Applied` header value for what was honoured.
     pub fn applied(
         &self,
@@ -61,8 +79,13 @@ impl Preferences {
         if honoured_return && self.return_minimal {
             parts.push("return=minimal");
         }
-        if honoured_count && self.count_exact {
-            parts.push("count=exact");
+        if honoured_count {
+            match self.count {
+                CountPreference::Exact => parts.push("count=exact"),
+                CountPreference::Planned => parts.push("count=planned"),
+                CountPreference::Estimated => parts.push("count=estimated"),
+                CountPreference::None => {}
+            }
         }
         if honoured_previous && self.previous {
             parts.push("previous");
@@ -94,7 +117,15 @@ pub fn parse_prefer_header(headers: &HeaderMap) -> Preferences {
                     prefs.return_minimal = false;
                 }
             } else if key.eq_ignore_ascii_case("count") {
-                prefs.count_exact = val.eq_ignore_ascii_case("exact");
+                prefs.count = if val.eq_ignore_ascii_case("exact") {
+                    CountPreference::Exact
+                } else if val.eq_ignore_ascii_case("planned") {
+                    CountPreference::Planned
+                } else if val.eq_ignore_ascii_case("estimated") {
+                    CountPreference::Estimated
+                } else {
+                    CountPreference::None
+                };
             } else if key.eq_ignore_ascii_case("previous") {
                 prefs.previous = val.eq_ignore_ascii_case("true");
             }
@@ -584,6 +615,15 @@ pub fn parse_order_string(
             .find(|c| c.field_name == name || c.name == name)
         {
             items.push(format!("{}_{dir}", col.order_by_name()));
+        } else if let Some(opt_name) = catalog
+            .cti_columns(table_meta)
+            .into_iter()
+            .find(|(field, members)| field == name || members[0].1.name == name)
+            .map(|(_, members)| members[0].1.order_by_name())
+            .filter(|n| options.iter().any(|(o, _)| o == n))
+        {
+            // A column of a subtype of a table-per-type hierarchy
+            items.push(format!("{opt_name}_{dir}"));
         } else if let Some((opt_name, _)) = options
             .into_iter()
             .find(|(n, _)| n.eq_ignore_ascii_case(name))
@@ -783,10 +823,27 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("prefer", "return=minimal, count=exact".parse().unwrap());
         let p = parse_prefer_header(&h);
-        assert!(p.return_minimal && p.count_exact);
+        assert!(p.return_minimal);
+        assert_eq!(p.count, CountPreference::Exact);
         assert_eq!(
             p.applied(true, true, true).as_deref(),
             Some("return=minimal, count=exact")
+        );
+        h.insert("prefer", "count=planned".parse().unwrap());
+        let p = parse_prefer_header(&h);
+        assert_eq!(p.count, CountPreference::Planned);
+        assert!(p.count_requested());
+        assert_eq!(
+            p.applied(false, true, false).as_deref(),
+            Some("count=planned")
+        );
+        h.insert("prefer", "count=estimated".parse().unwrap());
+        let p = parse_prefer_header(&h);
+        assert_eq!(p.count, CountPreference::Estimated);
+        assert!(p.count_requested());
+        assert_eq!(
+            p.applied(false, true, false).as_deref(),
+            Some("count=estimated")
         );
         h.insert("prefer", "previous".parse().unwrap());
         assert!(parse_prefer_header(&h).previous);

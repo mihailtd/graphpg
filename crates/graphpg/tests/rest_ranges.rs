@@ -18,6 +18,10 @@ struct Env {
 }
 
 async fn env() -> Env {
+    env_with_threshold(None).await
+}
+
+async fn env_with_threshold(threshold: Option<u64>) -> Env {
     common::ensure_rest_extras_fixture().await;
     let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
         .await
@@ -37,6 +41,10 @@ async fn env() -> Env {
         "rest_extras".to_string(),
         DebugOptions::default(),
     );
+    let mut state = state;
+    if threshold.is_some() {
+        state.limits.count_threshold = threshold;
+    }
     Env {
         app: create_router(Arc::new(state)),
         client,
@@ -225,6 +233,117 @@ async fn a_range_that_cannot_be_served_is_a_416() {
     assert_eq!(mixed.status, StatusCode::BAD_REQUEST);
     env.client
         .batch_execute("DELETE FROM rest_extras.people WHERE id BETWEEN 9311 AND 9312")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn planned_and_estimated_counts_over_rest() {
+    let env = env().await;
+    env.client
+        .batch_execute(
+            "DELETE FROM rest_extras.people WHERE id BETWEEN 9321 AND 9325;
+             INSERT INTO rest_extras.people VALUES (9321,'a'),(9322,'b'),(9323,'c'),(9324,'d'),(9325,'e');
+             ANALYZE rest_extras.people;",
+        )
+        .await
+        .unwrap();
+    let uri = "/rest/people?filter[id][gte]=9321&filter[id][lte]=9325&order=id";
+
+    // 1. count=planned returns estimate and headers
+    let planned = env
+        .call("GET", uri, &[("prefer", "count=planned")], vec![])
+        .await;
+    assert_eq!(planned.status, StatusCode::OK);
+    assert_eq!(planned.header("preference-applied"), "count=planned");
+    assert_eq!(planned.header("x-total-count-estimate"), "true");
+    let total: i64 = planned
+        .header("x-total-count")
+        .parse()
+        .expect("total count is integer");
+    assert!(total > 0);
+
+    // 2. count=planned with Range sets Content-Range with estimated total
+    let range_planned = env
+        .call(
+            "GET",
+            uri,
+            &[("range", "items=0-1"), ("prefer", "count=planned")],
+            vec![],
+        )
+        .await;
+    assert_eq!(range_planned.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(range_planned.header("preference-applied"), "count=planned");
+    assert_eq!(range_planned.header("x-total-count-estimate"), "true");
+    assert!(range_planned
+        .header("content-range")
+        .starts_with("items 0-1/"));
+    assert!(!range_planned.header("content-range").ends_with("/*"));
+
+    // 3. count=estimated below threshold (5 rows <= 10,000 threshold) returns exact count
+    let estimated_below = env
+        .call("GET", uri, &[("prefer", "count=estimated")], vec![])
+        .await;
+    assert_eq!(estimated_below.status, StatusCode::OK);
+    assert_eq!(
+        estimated_below.header("preference-applied"),
+        "count=estimated"
+    );
+    // below threshold: exact count, so x-total-count-estimate is not set
+    assert_eq!(estimated_below.header("x-total-count-estimate"), "");
+    assert_eq!(estimated_below.header("x-total-count"), "5");
+
+    // 4. count=exact returns exact count without estimate header
+    let exact = env
+        .call("GET", uri, &[("prefer", "count=exact")], vec![])
+        .await;
+    assert_eq!(exact.status, StatusCode::OK);
+    assert_eq!(exact.header("preference-applied"), "count=exact");
+    assert_eq!(exact.header("x-total-count-estimate"), "");
+    assert_eq!(exact.header("x-total-count"), "5");
+
+    env.client
+        .batch_execute("DELETE FROM rest_extras.people WHERE id BETWEEN 9321 AND 9325")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn estimated_count_above_the_threshold_is_the_planner_estimate() {
+    let env = env_with_threshold(Some(1)).await;
+    env.client
+        .batch_execute(
+            "DELETE FROM rest_extras.people WHERE id BETWEEN 9331 AND 9335;
+             INSERT INTO rest_extras.people VALUES (9331,'a'),(9332,'b'),(9333,'c'),(9334,'d'),(9335,'e');
+             ANALYZE rest_extras.people;",
+        )
+        .await
+        .unwrap();
+    let uri = "/rest/people?filter[id][gte]=9331&filter[id][lte]=9335&order=id&first=2";
+
+    // The estimate is above the threshold of 1: it is the answer, and says so
+    let estimated = env
+        .call("GET", uri, &[("prefer", "count=estimated")], vec![])
+        .await;
+    assert_eq!(estimated.status, StatusCode::OK);
+    assert_eq!(estimated.header("preference-applied"), "count=estimated");
+    assert_eq!(estimated.header("x-total-count-estimate"), "true");
+    assert!(estimated.header("x-total-count").parse::<i64>().unwrap() > 1);
+
+    // A range past the end names the exact size, whichever count was asked for
+    let past = env
+        .call(
+            "GET",
+            "/rest/people?filter[id][gte]=9331&filter[id][lte]=9335&order=id",
+            &[("range", "items=100-"), ("prefer", "count=planned")],
+            vec![],
+        )
+        .await;
+    assert_eq!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.header("content-range"), "items */5");
+
+    env.client
+        .batch_execute("DELETE FROM rest_extras.people WHERE id BETWEEN 9331 AND 9335")
         .await
         .unwrap();
 }
