@@ -74,106 +74,109 @@ fn shape_results(
 /// `POST /rest/{resource}/search/{method}`.
 pub async fn rest_search_method_handler(
     State(state): State<Arc<ServerState>>,
-    Path((resource, method)): Path<(String, String)>,
+    Scoped(schema, (resource, method)): Scoped<(String, String)>,
     RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    respond(format!("{REST_PREFIX}/{resource}/search/{method}"), async {
-        let ctx = Ctx::new(&state, &headers, resource).await?;
-        let table = ctx.table()?;
-        ctx.allow(table, Operation::Read)?;
-        if raw_query.as_deref().is_some_and(|q| !q.is_empty()) {
-            return Err(ProblemDetails::bad_request(
-                "Search takes its parameters in the JSON body, not the query string",
-            ));
-        }
-
-        let available = ctx.catalog.search_fields(table);
-        let (root, _) = available
-            .iter()
-            .find(|(_, m)| method_segment(*m) == method)
-            .ok_or_else(|| {
-                let offered: Vec<&str> =
-                    available.iter().map(|(_, m)| method_segment(*m)).collect();
-                ProblemDetails::not_found(format!(
-                    "`{}` has no `{method}` search; it offers: {}",
-                    table.name,
-                    if offered.is_empty() {
-                        "none".to_string()
-                    } else {
-                        offered.join(", ")
-                    }
-                ))
-            })?;
-
-        let mut body = if body.is_empty() {
-            serde_json::Map::new()
-        } else {
-            json_object(parse_json_body(&body)?)?
-        };
-        let fields = take_string_list(&mut body, "fields")?;
-        let include = take_string_list(&mut body, "include")?;
-
-        let schema = ctx.state.current_schema();
-        let accepted = validate::root_argument_names(&schema, Root::Query, root);
-        let mut args = HashMap::new();
-        for (name, value) in body {
-            if !accepted.contains(&name) || name == "condition" {
-                let mut offered: Vec<&str> = accepted
-                    .iter()
-                    .map(String::as_str)
-                    .filter(|a| *a != "condition")
-                    .collect();
-                offered.extend(["fields", "include"]);
-                return Err(ProblemDetails::invalid(
-                    format!(
-                        "Unknown member `{name}` for a `{method}` search; it takes: {}",
-                        offered.join(", ")
-                    ),
-                    name,
+    respond(
+        format!("{}/{resource}/search/{method}", rest_base(&schema)),
+        async {
+            let ctx = Ctx::new(&state, &headers, schema.clone(), resource).await?;
+            let table = ctx.table()?;
+            ctx.allow(table, Operation::Read)?;
+            if raw_query.as_deref().is_some_and(|q| !q.is_empty()) {
+                return Err(ProblemDetails::bad_request(
+                    "Search takes its parameters in the JSON body, not the query string",
                 ));
             }
-            let value = if name == "filter" {
-                normalize_filter_json(value)
+
+            let available = ctx.catalog.search_fields(table);
+            let (root, _) = available
+                .iter()
+                .find(|(_, m)| method_segment(*m) == method)
+                .ok_or_else(|| {
+                    let offered: Vec<&str> =
+                        available.iter().map(|(_, m)| method_segment(*m)).collect();
+                    ProblemDetails::not_found(format!(
+                        "`{}` has no `{method}` search; it offers: {}",
+                        table.name,
+                        if offered.is_empty() {
+                            "none".to_string()
+                        } else {
+                            offered.join(", ")
+                        }
+                    ))
+                })?;
+
+            let mut body = if body.is_empty() {
+                serde_json::Map::new()
             } else {
-                value
+                json_object(parse_json_body(&body)?)?
             };
-            ctx.validate(Root::Query, root, &name, &value, &name)?;
-            args.insert(name, value);
-        }
-        for required in validate::required_arguments(&schema, Root::Query, root) {
-            if !args.contains_key(&required) && !COMMON_ARGUMENTS.contains(&required.as_str()) {
-                return Err(ProblemDetails::invalid(
-                    format!("A `{method}` search needs `{required}`"),
-                    required,
-                ));
-            }
-        }
+            let fields = take_string_list(&mut body, "fields")?;
+            let include = take_string_list(&mut body, "include")?;
 
-        let row_fields = select_fields(&ctx.catalog, table, fields.as_ref(), include.as_ref())?;
-        let request = RequestField::new(root)
-            .with_arguments(args)
-            .with_children(vec![
-                RequestField::new("hits").with_children(vec![
-                    RequestField::new("score"),
-                    RequestField::new("node").with_children(row_fields),
-                ]),
-                RequestField::new("hasMore"),
-            ]);
-        let data = ctx
-            .execute(
-                &table.schema,
-                RequestOperation::query(vec![request]),
-                "POST",
-                false,
-            )
-            .await?;
-        let result = ResponseShaper::unwrap_single(&data, root)
-            .map_err(|e| shaping_error(e, ctx.is_prod))?;
-        let out = shape_results(&result, |node| Some((None, node.clone())));
-        Ok((StatusCode::OK, Json(out)).into_response())
-    })
+            let schema = ctx.state.current_schema();
+            let accepted = validate::root_argument_names(&schema, Root::Query, root);
+            let mut args = HashMap::new();
+            for (name, value) in body {
+                if !accepted.contains(&name) || name == "condition" {
+                    let mut offered: Vec<&str> = accepted
+                        .iter()
+                        .map(String::as_str)
+                        .filter(|a| *a != "condition")
+                        .collect();
+                    offered.extend(["fields", "include"]);
+                    return Err(ProblemDetails::invalid(
+                        format!(
+                            "Unknown member `{name}` for a `{method}` search; it takes: {}",
+                            offered.join(", ")
+                        ),
+                        name,
+                    ));
+                }
+                let value = if name == "filter" {
+                    normalize_filter_json(value)
+                } else {
+                    value
+                };
+                ctx.validate(Root::Query, root, &name, &value, &name)?;
+                args.insert(name, value);
+            }
+            for required in validate::required_arguments(&schema, Root::Query, root) {
+                if !args.contains_key(&required) && !COMMON_ARGUMENTS.contains(&required.as_str()) {
+                    return Err(ProblemDetails::invalid(
+                        format!("A `{method}` search needs `{required}`"),
+                        required,
+                    ));
+                }
+            }
+
+            let row_fields = select_fields(&ctx.catalog, table, fields.as_ref(), include.as_ref())?;
+            let request = RequestField::new(root)
+                .with_arguments(args)
+                .with_children(vec![
+                    RequestField::new("hits").with_children(vec![
+                        RequestField::new("score"),
+                        RequestField::new("node").with_children(row_fields),
+                    ]),
+                    RequestField::new("hasMore"),
+                ]);
+            let data = ctx
+                .execute(
+                    &table.schema,
+                    RequestOperation::query(vec![request]),
+                    "POST",
+                    false,
+                )
+                .await?;
+            let result = ResponseShaper::unwrap_single(&data, root)
+                .map_err(|e| shaping_error(e, ctx.is_prod))?;
+            let out = shape_results(&result, |node| Some((None, node.clone())));
+            Ok((StatusCode::OK, Json(out)).into_response())
+        },
+    )
     .await
 }
 
@@ -211,7 +214,7 @@ pub async fn rest_global_search_handler(
     body: axum::body::Bytes,
 ) -> Response {
     respond(format!("{REST_PREFIX}/{GLOBAL_SEARCH_RESOURCE}"), async {
-        let ctx = Ctx::new(&state, &headers, GLOBAL_SEARCH_RESOURCE.to_string()).await?;
+        let ctx = Ctx::new(&state, &headers, None, GLOBAL_SEARCH_RESOURCE.to_string()).await?;
         let mut params = serde_json::Map::new();
         if method == axum::http::Method::GET {
             for pair in raw_query
