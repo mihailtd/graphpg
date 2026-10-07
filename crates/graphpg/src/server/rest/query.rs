@@ -34,6 +34,13 @@ pub struct RestQuery {
     /// Controls of the embedded relations, by `include` path (`posts`, `posts.comments`).
     #[serde(default)]
     pub embed: BTreeMap<String, EmbedControls>,
+    /// `asOf`: the point in time a temporal table is read at.
+    #[serde(default)]
+    pub as_of: Option<String>,
+    /// `args[field][argument]=value`: the arguments of the computed fields (functions of a row)
+    /// selected, by the field's path (`uniqueAuthorCount`, or `posts.score` in an embedding).
+    #[serde(default)]
+    pub field_args: BTreeMap<String, BTreeMap<String, String>>,
     /// `path[column]`: the JSON path (`$.a.b`) a `json` column is read through, by column
     /// (`meta`) or, in an embedded relation, by `include` path and column (`posts.meta`).
     #[serde(default)]
@@ -55,6 +62,12 @@ pub struct EmbedControls {
     pub order_by: Option<serde_json::Value>,
     pub first: Option<usize>,
     pub offset: Option<usize>,
+    /// `depth[rel]`: how many levels of a hierarchy (`ancestors`, `descendants`).
+    #[serde(default)]
+    pub depth: Option<usize>,
+    /// `asOf[rel]`: the point in time the rows of a temporal table are read at.
+    #[serde(default)]
+    pub as_of: Option<String>,
 }
 
 impl EmbedControls {
@@ -724,31 +737,51 @@ fn page_size(key: &str, val: &str) -> Result<usize, String> {
 const PARENT_RELATION_FILTERS: [&str; 8] =
     ["some", "every", "none", "count", "sum", "avg", "min", "max"];
 
-/// What `include` can embed: a relation, or a function mounted on the table that returns rows
-/// of a table and needs no argument of its own (a computed relationship).
+/// What kind of field `include` embeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EmbedKind {
+    /// A foreign-key relation (or the `history` of a temporal row).
+    Relation,
+    /// A function mounted on the table that returns rows of a table (a computed relationship).
+    Mounted,
+    /// `ancestors` / `descendants` of a hierarchy.
+    Tree,
+    /// The `target` of an exclusive arc: one row of one of several tables.
+    Arc,
+}
+
+/// What `include` can embed.
 pub(crate) struct Embeddable<'a> {
     /// The field of the table's type.
     pub name: String,
-    /// A list of rows (a to-many relation, a function returning a set).
+    /// A list of rows (a to-many relation, a function returning a set, a hierarchy).
     pub many: bool,
+    /// The table of the rows (of the first target of an arc).
     pub target: &'a TableMetadata,
+    pub kind: EmbedKind,
     /// A foreign-key relation, which `inner`, `anti` and the parent filters can follow.
     pub relation: bool,
+    /// The tables an arc leads to, with the GraphQL type of each.
+    pub arc_targets: Vec<(String, &'a TableMetadata)>,
 }
 
-/// Whether a mounted function can be selected without arguments of the request's own.
-pub(super) fn needs_no_arguments(f: &crate::catalog::FunctionMetadata) -> bool {
-    !f.volatile
-        && f.arguments
-            .iter()
-            .skip(usize::from(f.row_argument))
-            .all(|a| a.has_default || f.parent_column_for(&a.name).is_some())
+/// The arguments of a function field of a table, the ones the request fills: those after the row,
+/// apart from those the table's columns fill.
+pub(crate) fn field_arguments(
+    f: &crate::catalog::FunctionMetadata,
+) -> Vec<&crate::catalog::FunctionArgument> {
+    f.arguments
+        .iter()
+        .skip(usize::from(f.row_argument))
+        .filter(|a| f.parent_column_for(&a.name).is_none())
+        .collect()
 }
 
-/// The relation or computed relationship `name` of `table`, matched case-insensitively.
+/// The relation, computed relationship, hierarchy or arc `name` of `table`, matched
+/// case-insensitively.
 pub(crate) fn find_embeddable<'a>(
     catalog: &'a DatabaseCatalog,
-    table: &TableMetadata,
+    table: &'a TableMetadata,
     name: &str,
 ) -> Option<Embeddable<'a>> {
     catalog
@@ -760,19 +793,53 @@ pub(crate) fn find_embeddable<'a>(
                 name: f.name.clone(),
                 many: rel.is_many,
                 target: catalog.find_table(&rel.target_schema, &rel.target_table)?,
+                kind: EmbedKind::Relation,
                 relation: true,
+                arc_targets: Vec::new(),
             }),
             crate::catalog::FieldKind::Function(i) => {
                 let func = &catalog.functions[*i];
                 let crate::catalog::FunctionReturn::Table { schema, table } = &func.returns else {
                     return None;
                 };
-                (catalog.function_is_exposed(func) && needs_no_arguments(func)).then_some(())?;
+                (catalog.function_is_exposed(func) && !func.volatile).then_some(())?;
                 Some(Embeddable {
                     name: f.name.clone(),
                     many: func.returns_set,
                     target: catalog.find_table(schema, table)?,
+                    kind: EmbedKind::Mounted,
                     relation: false,
+                    arc_targets: Vec::new(),
+                })
+            }
+            crate::catalog::FieldKind::Tree(_) => Some(Embeddable {
+                name: f.name.clone(),
+                many: true,
+                target: table,
+                kind: EmbedKind::Tree,
+                relation: false,
+                arc_targets: Vec::new(),
+            }),
+            crate::catalog::FieldKind::ArcTarget => {
+                let arc = catalog
+                    .exclusive_arcs
+                    .iter()
+                    .find(|a| a.table_name == table.name)?;
+                let targets: Vec<(String, &TableMetadata)> = arc
+                    .branches(&table.schema)
+                    .enumerate()
+                    .filter_map(|(i, (_, schema, name, _))| {
+                        Some((arc.target_type_name(i), catalog.find_table(schema, name)?))
+                    })
+                    .collect();
+                let first = targets.first()?.1;
+                Some(Embeddable {
+                    name: f.name.clone(),
+                    many: false,
+                    target: first,
+                    kind: EmbedKind::Arc,
+                    relation: false,
+                    arc_targets: targets,
                 })
             }
             _ => None,
@@ -832,7 +899,62 @@ pub(super) fn finish_embeds(
                 "`{path}` is a to-one relation: it has no rows to filter, order or page, only `fields`"
             ));
         }
+        match rel.kind {
+            EmbedKind::Tree if controls.first.is_some() || controls.offset.is_some() => {
+                return Err(format!(
+                    "`{path}` is a hierarchy: it takes `depth`, `filter` and `order`, not a page"
+                ));
+            }
+            EmbedKind::Tree => {}
+            _ if controls.depth.is_some() => {
+                return Err(format!(
+                    "`depth[{path}]` is for a hierarchy (`ancestors`, `descendants`)"
+                ));
+            }
+            EmbedKind::Arc if controls.as_of.is_some() => {
+                return Err(format!(
+                    "`{path}` is a union of tables: `asOf` is for a table"
+                ));
+            }
+            _ => {}
+        }
         controls.filter = controls.filter.take().map(arrayify_groups);
+    }
+    for (key, given) in &query.field_args {
+        let (relation, field) = key.rsplit_once('.').unwrap_or(("", key));
+        let owner = if relation.is_empty() {
+            table
+        } else {
+            if !included.contains(relation) {
+                return Err(format!(
+                    "`args[{key}]` is not in `include`: add `include={relation}`"
+                ));
+            }
+            walk_relation(catalog, table, relation)?.target
+        };
+        let func = catalog
+            .object_fields(&owner.schema, &owner.name)
+            .iter()
+            .find_map(|f| match &f.kind {
+                crate::catalog::FieldKind::Function(i) if f.name == field => {
+                    Some(&catalog.functions[*i])
+                }
+                _ => None,
+            })
+            .ok_or_else(|| {
+                format!(
+                    "`args[{key}]`: `{field}` is not a computed field of `{}`",
+                    owner.name
+                )
+            })?;
+        let declared = field_arguments(func);
+        for name in given.keys() {
+            if !declared.iter().any(|a| a.graphql_name() == *name) {
+                return Err(format!(
+                    "`args[{key}][{name}]`: `{field}` has no argument `{name}`"
+                ));
+            }
+        }
     }
     for (key, path) in &query.json_paths {
         let (relation, column) = key.rsplit_once('.').unwrap_or(("", key));
@@ -1007,6 +1129,9 @@ pub fn parse_query_params(
                     None => query.filter = Some(norm),
                 }
             }
+            "asOf" => {
+                query.as_of = Some(val);
+            }
             "inner" | "anti" => {
                 collection_only(&key)?;
                 let paths = split_list(&val);
@@ -1037,6 +1162,28 @@ pub fn parse_query_params(
                 }
                 Some((root, segments)) if root == "path" && segments.len() == 1 => {
                     query.json_paths.insert(segments[0].clone(), val);
+                }
+                Some((root, segments)) if root == "args" && segments.len() == 2 => {
+                    query
+                        .field_args
+                        .entry(segments[0].clone())
+                        .or_default()
+                        .insert(segments[1].clone(), val);
+                }
+                Some((root, segments))
+                    if segments.len() == 1 && matches!(root.as_str(), "asOf" | "depth") =>
+                {
+                    let path = segments[0].clone();
+                    walk_relation(catalog, table_meta, &path)?;
+                    let controls = query.embed.entry(path).or_default();
+                    if root == "asOf" {
+                        controls.as_of = Some(val);
+                    } else {
+                        controls.depth =
+                            Some(val.parse::<usize>().ok().filter(|d| *d > 0).ok_or_else(
+                                || format!("`depth` must be a positive integer, got `{val}`"),
+                            )?);
+                    }
                 }
                 Some((root, segments))
                     if segments.len() == 1

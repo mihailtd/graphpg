@@ -391,6 +391,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -1612,6 +1621,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -2142,6 +2160,15 @@ expression: openapi
                   "createdAt"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -2982,6 +3009,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "If-None-Match",
             "in": "header",
             "description": "Row version: returns 304 without a body when it matches",
@@ -3633,6 +3669,15 @@ expression: openapi
                   "uniqueAuthorCount"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -4791,6 +4836,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -5232,6 +5286,15 @@ expression: openapi
                   "uniqueAuthorCount"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -6005,6 +6068,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "If-None-Match",
             "in": "header",
             "description": "Row version: returns 304 without a body when it matches",
@@ -6704,6 +6776,15 @@ expression: openapi
                   "uniqueAuthorCount"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -7869,6 +7950,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "inner",
             "in": "query",
             "style": "form",
@@ -8345,6 +8435,15 @@ expression: openapi
                   "uniqueAuthorCount"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -9157,6 +9256,15 @@ expression: openapi
             }
           },
           {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "If-None-Match",
             "in": "header",
             "description": "Row version: returns 304 without a body when it matches",
@@ -9812,6 +9920,15 @@ expression: openapi
                   "uniqueAuthorCount"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[forum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=forum`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -10801,6 +10918,15 @@ expression: openapi
                 ]
               }
             }
+          },
+          {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -11181,6 +11307,15 @@ expression: openapi
                   "uniqueAuthorCount"
                 ]
               }
+            }
+          },
+          {
+            "name": "args[mostRecentForum.uniqueAuthorCount][featured]",
+            "in": "query",
+            "required": false,
+            "description": "Argument `featured` of the computed field `uniqueAuthorCount` of `forums` (select it with `fields=uniqueAuthorCount` or `include=mostRecentForum`)",
+            "schema": {
+              "type": "boolean"
             }
           },
           {

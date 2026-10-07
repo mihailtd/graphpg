@@ -78,6 +78,12 @@ fn object_field<'a>(
 
 /// Name of the named type of field `field` of object type `type_name` (lists and non-null
 /// stripped).
+/// Whether field `field` of object type `type_name` takes the argument `arg`.
+pub fn field_has_argument(schema: &Schema, type_name: &str, field: &str, arg: &str) -> bool {
+    object_field(schema, type_name, field)
+        .is_some_and(|f| f.arguments.iter().any(|a| a.name.as_str() == arg))
+}
+
 pub fn field_type_name(schema: &Schema, type_name: &str, field: &str) -> Option<String> {
     object_field(schema, type_name, field).map(|f| f.ty.inner_named_type().to_string())
 }

@@ -1444,13 +1444,21 @@ impl OpenApiGenerator {
     }
 
     pub(super) fn embeddables<'a>(
-        table: &TableMetadata,
+        table: &'a TableMetadata,
         catalog: &'a DatabaseCatalog,
     ) -> Vec<crate::server::rest::Embeddable<'a>> {
         catalog
             .object_fields(&table.schema, &table.name)
             .iter()
-            .filter(|f| matches!(f.kind, FieldKind::Relation(_) | FieldKind::Function(_)))
+            .filter(|f| {
+                matches!(
+                    f.kind,
+                    FieldKind::Relation(_)
+                        | FieldKind::Function(_)
+                        | FieldKind::Tree(_)
+                        | FieldKind::ArcTarget
+                )
+            })
             .filter_map(|f| crate::server::rest::find_embeddable(catalog, table, &f.name))
             .collect()
     }
@@ -1465,6 +1473,13 @@ impl OpenApiGenerator {
         collection: bool,
     ) -> Vec<Value> {
         let mut params = Vec::new();
+        if table.period_key().is_some() {
+            params.push(json!({
+                "name": "asOf", "in": "query",
+                "description": "Read the table as it was at this time: the versions whose period contains it",
+                "schema": { "type": "string", "format": "date-time" }
+            }));
+        }
         let json_path = |column: &str, owner: &str| {
             json!({
                 "name": format!("path[{column}]"), "in": "query",
@@ -1492,13 +1507,42 @@ impl OpenApiGenerator {
                     &col.field_name,
                 ));
             }
+            let columns = if e.kind == crate::server::rest::EmbedKind::Arc {
+                // The union of the columns of the tables an arc leads to
+                let mut all: Vec<String> = Vec::new();
+                for (_, t) in &e.arc_targets {
+                    for c in t.visible_columns() {
+                        if !all.contains(&c.field_name) {
+                            all.push(c.field_name.clone());
+                        }
+                    }
+                }
+                all
+            } else {
+                columns
+            };
             params.push(json!({
                 "name": format!("fields[{name}]"), "in": "query", "style": "form", "explode": false,
                 "description": format!("Columns of the embedded `{name}` (default: all); `include={name}` first"),
                 "schema": { "type": "array", "items": { "type": "string", "enum": columns } }
             }));
+            // Temporal tables are read at a point in time
+            if e.kind != crate::server::rest::EmbedKind::Arc && e.target.period_key().is_some() {
+                params.push(json!({
+                    "name": format!("asOf[{name}]"), "in": "query",
+                    "description": format!("Read the embedded `{name}` as it was at this time: the versions whose period contains it"),
+                    "schema": { "type": "string", "format": "date-time" }
+                }));
+            }
             if !e.many {
                 continue;
+            }
+            if e.kind == crate::server::rest::EmbedKind::Tree {
+                params.push(json!({
+                    "name": format!("depth[{name}]"), "in": "query",
+                    "description": format!("How many levels of the hierarchy `{name}` walks (default: all, cycles end it)"),
+                    "schema": { "type": "integer", "minimum": 1 }
+                }));
             }
             params.push(json!({
                 "name": format!("filter[{name}]"), "in": "query", "style": "deepObject", "explode": true,
@@ -1510,16 +1554,50 @@ impl OpenApiGenerator {
                 "description": format!("Order of the embedded `{name}` rows: `column`, `-column` or `column:desc`"),
                 "schema": { "type": "array", "items": { "type": "string", "pattern": format!("^[+-]?{}(:(asc|desc))?$", alternation(&columns)) } }
             }));
-            params.push(json!({
-                "name": format!("first[{name}]"), "in": "query",
-                "description": format!("Number of embedded `{name}` rows (at most `limits.page_size.max`)"),
-                "schema": Self::page_schema(limits)
-            }));
-            params.push(json!({
-                "name": format!("offset[{name}]"), "in": "query",
-                "description": format!("Embedded `{name}` rows to skip"),
-                "schema": { "type": "integer", "minimum": 0 }
-            }));
+            // A hierarchy is walked to its depth, not paged
+            if e.kind != crate::server::rest::EmbedKind::Tree {
+                params.push(json!({
+                    "name": format!("first[{name}]"), "in": "query",
+                    "description": format!("Number of embedded `{name}` rows (at most `limits.page_size.max`)"),
+                    "schema": Self::page_schema(limits)
+                }));
+                params.push(json!({
+                    "name": format!("offset[{name}]"), "in": "query",
+                    "description": format!("Embedded `{name}` rows to skip"),
+                    "schema": { "type": "integer", "minimum": 0 }
+                }));
+            }
+        }
+        // Computed fields (functions of a row) take arguments: `args[field][argument]`
+        let mut owners: Vec<(String, &TableMetadata)> = vec![(String::new(), table)];
+        owners.extend(
+            embeddables
+                .iter()
+                .map(|e| (format!("{}.", e.name), e.target)),
+        );
+        for (prefix, owner) in owners {
+            for field in catalog.object_fields(&owner.schema, &owner.name) {
+                let FieldKind::Function(i) = &field.kind else {
+                    continue;
+                };
+                let f = &catalog.functions[*i];
+                if !catalog.function_is_exposed(f) || f.volatile {
+                    continue;
+                }
+                for arg in crate::server::rest::field_arguments(f) {
+                    params.push(json!({
+                        "name": format!("args[{prefix}{}][{}]", field.name, arg.graphql_name()),
+                        "in": "query",
+                        "required": !arg.has_default,
+                        "description": format!(
+                            "Argument `{}` of the computed field `{}` of `{}` (select it with `fields={}`{})",
+                            arg.graphql_name(), field.name, owner.name, field.name,
+                            if prefix.is_empty() { String::new() } else { format!(" or `include={}`", prefix.trim_end_matches('.')) }
+                        ),
+                        "schema": Self::pg_type_to_json_schema(&arg.pg_type, catalog)
+                    }));
+                }
+            }
         }
         let relations: Vec<String> = embeddables
             .iter()
@@ -2087,7 +2165,12 @@ impl OpenApiGenerator {
         // The relations `include` embeds: present only when asked for
         let mut properties = properties;
         for e in Self::embeddables(table, catalog) {
-            let target = schema_ref(&e.target.name);
+            let target = if e.kind == crate::server::rest::EmbedKind::Arc {
+                // One row of one of several tables, told apart by `__typename`
+                json!({ "oneOf": e.arc_targets.iter().map(|(_, t)| schema_ref(&t.name)).collect::<Vec<_>>() })
+            } else {
+                schema_ref(&e.target.name)
+            };
             let (schema, text) = if e.many {
                 (json!({ "type": "array", "items": target }), "rows")
             } else {

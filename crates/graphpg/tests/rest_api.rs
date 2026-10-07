@@ -790,6 +790,7 @@ async fn openapi_matches_the_behaviour() {
             "Range",
             "after",
             "anti",
+            "args[uniqueAuthorCount][featured]",
             "before",
             "fields",
             "fields[featuredMessages]",

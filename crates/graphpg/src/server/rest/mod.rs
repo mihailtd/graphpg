@@ -24,7 +24,7 @@ pub use collection::{
 };
 pub use functions::{rest_rpc_handler, rpc_functions, RPC_RESOURCE};
 pub use problem::ProblemDetails;
-pub(crate) use query::{find_embeddable, Embeddable};
+pub(crate) use query::{field_arguments, find_embeddable, EmbedKind, Embeddable};
 pub use query::{
     merge_json, normalize_filter_json, normalize_operator, parse_order_string, parse_prefer_header,
     parse_query_params, EmbedControls, Preferences, QueryKind, RestQuery,
@@ -558,26 +558,27 @@ fn build_include_tree(include: &[String]) -> Result<IncludeTree, ProblemDetails>
     Ok(root)
 }
 
-/// Embedded relation `name` of `table`: its field, the relation, the table it leads to and the
-/// controls the request gave it (`path` is the dotted `include` path).
+/// Embedded field `name` of `table`: what it is, the table it leads to and the controls the
+/// request gave it (`path` is the dotted `include` path).
 struct Embed<'a> {
     field: String,
+    kind: query::EmbedKind,
     target: &'a TableMetadata,
+    arc_targets: Vec<(String, &'a TableMetadata)>,
     controls: Option<&'a EmbedControls>,
     /// Read as a connection (`postsConnection { nodes }`), whose rows are filtered, ordered
     /// or paged; the answer is unwrapped to the plain list.
     connection: bool,
-    /// A function mounted on the table, not a relation.
-    mounted: bool,
 }
 
 fn resolve_embed<'a>(
     catalog: &'a DatabaseCatalog,
-    table: &TableMetadata,
+    table: &'a TableMetadata,
     name: &str,
     path: &str,
     embed: &'a BTreeMap<String, EmbedControls>,
 ) -> Result<Embed<'a>, ProblemDetails> {
+    use query::EmbedKind;
     let found = query::find_embeddable(catalog, table, name).ok_or_else(|| {
         ProblemDetails::invalid(
             format!("Unknown relation `{name}` for resource `{}`", table.name),
@@ -588,8 +589,12 @@ fn resolve_embed<'a>(
     let paged = found.many && controls.is_some_and(EmbedControls::paged);
     // A relation is read as its connection when its rows are filtered, ordered or paged; a
     // function returning a set is a connection field already
-    let connection = if found.relation { paged } else { found.many };
-    if found.relation
+    let connection = match found.kind {
+        EmbedKind::Relation => paged,
+        EmbedKind::Mounted => found.many,
+        EmbedKind::Tree | EmbedKind::Arc => false,
+    };
+    if found.kind == EmbedKind::Relation
         && paged
         && !catalog
             .object_fields(&table.schema, &table.name)
@@ -603,36 +608,171 @@ fn resolve_embed<'a>(
     }
     Ok(Embed {
         field: found.name,
+        kind: found.kind,
         target: found.target,
+        arc_targets: found.arc_targets,
         controls,
         connection,
-        mounted: !found.relation,
     })
 }
 
-/// The columns of an embedded relation: `fields[path]`, else all.
+/// A computed field (a function of a row) selected by name: with the arguments the request
+/// gave it (`args[field][argument]=value`), checked against the function. `None` for a field
+/// that is not one, or returns rows of a table (that is `include`).
+fn computed_field(
+    catalog: &DatabaseCatalog,
+    table: &TableMetadata,
+    name: &str,
+    path: &str,
+    args: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Result<Option<RequestField>, ProblemDetails> {
+    use crate::catalog::FunctionReturn;
+    let Some(field) = catalog
+        .object_fields(&table.schema, &table.name)
+        .iter()
+        .find(|f| f.name == name)
+    else {
+        return Ok(None);
+    };
+    let FieldKind::Function(i) = &field.kind else {
+        return Ok(None);
+    };
+    let func = &catalog.functions[*i];
+    if !catalog.function_is_exposed(func) || func.volatile {
+        return Ok(None);
+    }
+    let children = match &func.returns {
+        FunctionReturn::Value(pg_type) => value_selection(catalog, pg_type, 0),
+        FunctionReturn::Record => func
+            .return_columns
+            .iter()
+            .map(|c| {
+                RequestField::new(crate::catalog::models::to_camel_case(&c.name))
+                    .with_children(value_selection(catalog, &c.pg_type, 0))
+            })
+            .collect(),
+        _ => return Ok(None),
+    };
+    let arguments = field_function_arguments(func, path, args)?;
+    Ok(Some(
+        RequestField::new(&field.name)
+            .with_arguments(arguments)
+            .with_children(children),
+    ))
+}
+
+/// The arguments of a function field from `args[path][name]=value`: typed from the function,
+/// and every one without a default is required.
+fn field_function_arguments(
+    func: &crate::catalog::FunctionMetadata,
+    path: &str,
+    args: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Result<HashMap<String, serde_json::Value>, ProblemDetails> {
+    let given = args.get(path);
+    let declared = query::field_arguments(func);
+    let mut out = HashMap::new();
+    for (name, text) in given.into_iter().flatten() {
+        let argument = declared
+            .iter()
+            .find(|a| a.graphql_name() == *name)
+            .ok_or_else(|| {
+                let names: Vec<String> = declared.iter().map(|a| a.graphql_name()).collect();
+                ProblemDetails::invalid(
+                    format!(
+                        "`{path}` has no argument `{name}`; it takes: {}",
+                        if names.is_empty() {
+                            "none".to_string()
+                        } else {
+                            names.join(", ")
+                        }
+                    ),
+                    format!("args[{path}][{name}]"),
+                )
+            })?;
+        out.insert(
+            name.clone(),
+            functions::parse_argument_text(text, argument)?,
+        );
+    }
+    for argument in declared.iter().filter(|a| !a.has_default) {
+        if !out.contains_key(&argument.graphql_name()) {
+            return Err(ProblemDetails::invalid(
+                format!(
+                    "`{path}` needs the argument `{}`: `args[{path}][{}]=…`",
+                    argument.graphql_name(),
+                    argument.graphql_name()
+                ),
+                format!("args[{path}][{}]", argument.graphql_name()),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// The columns of an embedded relation: `fields[path]`, else all. A name that is not a column
+/// can be a computed field.
 fn embedded_columns(
     catalog: &DatabaseCatalog,
     target: &TableMetadata,
     path: &str,
     fields: Option<&Vec<String>>,
+    args: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> Result<Vec<RequestField>, ProblemDetails> {
     let Some(requested) = fields.filter(|f| !f.is_empty()) else {
         return Ok(column_fields(catalog, target));
     };
     let mut out: Vec<RequestField> = Vec::new();
     for name in requested {
-        let col = target
+        let found = target
             .visible_columns()
-            .find(|c| &c.field_name == name || &c.name == name)
-            .ok_or_else(|| {
-                ProblemDetails::invalid(
-                    format!("Unknown field `{name}` for `{path}` ({})", target.name),
-                    format!("fields[{path}]"),
-                )
-            })?;
-        if !out.iter().any(|f| f.response_key() == col.field_name) {
-            out.push(column_field(catalog, target, col));
+            .find(|c| &c.field_name == name || &c.name == name);
+        let field = match found {
+            Some(col) => column_field(catalog, target, col),
+            None => computed_field(catalog, target, name, &format!("{path}.{name}"), args)?
+                .ok_or_else(|| {
+                    ProblemDetails::invalid(
+                        format!("Unknown field `{name}` for `{path}` ({})", target.name),
+                        format!("fields[{path}]"),
+                    )
+                })?,
+        };
+        if !out.iter().any(|f| f.response_key() == field.response_key()) {
+            out.push(field);
+        }
+    }
+    Ok(out)
+}
+
+/// What an exclusive arc's `target` selects: `__typename` and, for each table it can lead to,
+/// the requested columns it has (all, without `fields[…]`).
+fn arc_fields(
+    catalog: &DatabaseCatalog,
+    targets: &[(String, &TableMetadata)],
+    path: &str,
+    fields: Option<&Vec<String>>,
+) -> Result<Vec<RequestField>, ProblemDetails> {
+    let mut out = vec![RequestField::new("__typename")];
+    let requested = fields.filter(|f| !f.is_empty());
+    if let Some(requested) = requested {
+        if let Some(unknown) = requested.iter().find(|name| {
+            !targets.iter().any(|(_, t)| {
+                t.visible_columns()
+                    .any(|c| &c.field_name == *name || &c.name == *name)
+            })
+        }) {
+            return Err(ProblemDetails::invalid(
+                format!("No table `{path}` leads to has a field `{unknown}`"),
+                format!("fields[{path}]"),
+            ));
+        }
+    }
+    for (type_name, target) in targets {
+        for col in target.visible_columns() {
+            let wanted =
+                requested.is_none_or(|r| r.iter().any(|n| *n == col.field_name || *n == col.name));
+            if wanted {
+                out.push(column_field(catalog, target, col).with_type_condition(type_name));
+            }
         }
     }
     Ok(out)
@@ -645,8 +785,10 @@ fn include_fields(
     query: &RestQuery,
     prefix: &str,
 ) -> Result<Vec<RequestField>, ProblemDetails> {
+    use query::EmbedKind;
     let embed = &query.embed;
     let catalog = &ctx.catalog;
+    let schema = ctx.state.current_schema();
     let mut out = Vec::new();
     for (name, sub) in &tree.0 {
         let path = if prefix.is_empty() {
@@ -655,28 +797,28 @@ fn include_fields(
             format!("{prefix}.{name}")
         };
         let embedded = resolve_embed(catalog, table, name, &path, embed)?;
-        let mut children = embedded_columns(
-            catalog,
-            embedded.target,
-            &path,
-            embedded.controls.and_then(|c| c.fields.as_ref()),
-        )?;
-        apply_json_paths(&mut children, embedded.target, &path, &query.json_paths);
-        children.extend(include_fields(ctx, embedded.target, sub, query, &path)?);
-        if !embedded.connection {
-            out.push(RequestField::new(&embedded.field).with_children(children));
-            continue;
-        }
-        // Filtered, ordered or paged rows: the relation's connection, under the relation's name
         let controls = embedded.controls.cloned().unwrap_or_default();
-        let connection = if embedded.mounted {
-            embedded.field.clone()
-        } else {
+
+        // The arguments of the field: the controls, and a function's own
+        let mut arguments: HashMap<String, serde_json::Value> = HashMap::new();
+        if embedded.kind == EmbedKind::Mounted {
+            let func = catalog
+                .object_fields(&table.schema, &table.name)
+                .iter()
+                .find_map(|f| match &f.kind {
+                    FieldKind::Function(i) if f.name == embedded.field => {
+                        Some(&catalog.functions[*i])
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| ProblemDetails::bad_request("Unknown function field"))?;
+            arguments = field_function_arguments(func, &path, &query.field_args)?;
+        }
+        let field_name = if embedded.connection && embedded.kind == EmbedKind::Relation {
             format!("{}Connection", embedded.field)
+        } else {
+            embedded.field.clone()
         };
-        let mut arguments = HashMap::new();
-        let schema = ctx.state.current_schema();
-        let source = &table.type_name;
         for (arg, value, label) in [
             ("filter", controls.filter.clone(), "filter"),
             ("orderBy", controls.order_by.clone(), "order"),
@@ -690,12 +832,28 @@ fn include_fields(
                 controls.offset.map(|n| serde_json::json!(n)),
                 "offset",
             ),
+            (
+                "maxDepth",
+                controls.depth.map(|n| serde_json::json!(n)),
+                "depth",
+            ),
+            (
+                "asOf",
+                controls.as_of.clone().map(serde_json::Value::String),
+                "asOf",
+            ),
         ] {
             if let Some(value) = value {
+                if !validate::field_has_argument(&schema, &table.type_name, &field_name, arg) {
+                    return Err(ProblemDetails::invalid(
+                        format!("`{label}[{path}]` does not apply to `{path}`"),
+                        format!("{label}[{path}]"),
+                    ));
+                }
                 validate::validate_field_argument(
                     &schema,
-                    source,
-                    &connection,
+                    &table.type_name,
+                    &field_name,
                     arg,
                     &value,
                     &format!("{label}[{path}]"),
@@ -703,8 +861,37 @@ fn include_fields(
                 arguments.insert(arg.to_string(), value);
             }
         }
+
+        if embedded.kind == EmbedKind::Arc {
+            let children = arc_fields(
+                catalog,
+                &embedded.arc_targets,
+                &path,
+                controls.fields.as_ref(),
+            )?;
+            out.push(RequestField::new(&embedded.field).with_children(children));
+            continue;
+        }
+        let mut children = embedded_columns(
+            catalog,
+            embedded.target,
+            &path,
+            controls.fields.as_ref(),
+            &query.field_args,
+        )?;
+        apply_json_paths(&mut children, embedded.target, &path, &query.json_paths);
+        children.extend(include_fields(ctx, embedded.target, sub, query, &path)?);
+        if !embedded.connection {
+            out.push(
+                RequestField::new(&embedded.field)
+                    .with_arguments(arguments)
+                    .with_children(children),
+            );
+            continue;
+        }
+        // Filtered, ordered or paged rows: the relation's connection, under the relation's name
         out.push(
-            RequestField::new(connection)
+            RequestField::new(field_name)
                 .with_alias(&embedded.field)
                 .with_arguments(arguments)
                 .with_children(vec![RequestField::new("nodes").with_children(children)]),
@@ -771,48 +958,29 @@ fn finish_rows(
     }
 }
 
-/// A function mounted on `table` that returns a value (a computed column): selected by name in
-/// `fields` when it needs no argument of the request's own. Functions returning rows of a table
-/// are embedded with `include`.
-fn computed_field(
-    catalog: &DatabaseCatalog,
-    table: &TableMetadata,
-    name: &str,
-) -> Option<RequestField> {
-    use crate::catalog::FunctionReturn;
-    let field = catalog
-        .object_fields(&table.schema, &table.name)
-        .iter()
-        .find(|f| f.name == name)?;
-    let FieldKind::Function(i) = &field.kind else {
-        return None;
-    };
-    let func = &catalog.functions[*i];
-    if !catalog.function_is_exposed(func) || !query::needs_no_arguments(func) {
-        return None;
-    }
-    let children = match &func.returns {
-        FunctionReturn::Value(pg_type) => value_selection(catalog, pg_type, 0),
-        FunctionReturn::Record => func
-            .return_columns
-            .iter()
-            .map(|c| {
-                RequestField::new(crate::catalog::models::to_camel_case(&c.name))
-                    .with_children(value_selection(catalog, &c.pg_type, 0))
-            })
-            .collect(),
-        _ => return None,
-    };
-    Some(RequestField::new(&field.name).with_children(children))
-}
-
-/// Whether `name` is a computed column of `table` that `fields` can select.
+/// Whether `name` is a computed column of `table` that `fields` can select: a function of the
+/// row that returns a value or columns of its own.
 pub(crate) fn computed_value_exists(
     catalog: &DatabaseCatalog,
     table: &TableMetadata,
     name: &str,
 ) -> bool {
-    computed_field(catalog, table, name).is_some()
+    catalog
+        .object_fields(&table.schema, &table.name)
+        .iter()
+        .any(|f| match &f.kind {
+            FieldKind::Function(i) if f.name == name => {
+                let func = &catalog.functions[*i];
+                catalog.function_is_exposed(func)
+                    && !func.volatile
+                    && matches!(
+                        func.returns,
+                        crate::catalog::FunctionReturn::Value(_)
+                            | crate::catalog::FunctionReturn::Record
+                    )
+            }
+            _ => false,
+        })
 }
 
 /// The fields of one row: the requested `fields` (default: all visible columns) and the
@@ -893,7 +1061,9 @@ fn select_fields(
                             "fields",
                         ));
                     }
-                } else if let Some(field) = computed_field(catalog, table, name) {
+                } else if let Some(field) =
+                    computed_field(catalog, table, name, name, &query.field_args)?
+                {
                     if !selected
                         .iter()
                         .any(|f: &RequestField| f.response_key() == field.name)
@@ -1575,6 +1745,21 @@ async fn list_rows(
         }
     }
 
+    if let Some(as_of) = &query.as_of {
+        if !ctx.has_argument(Root::Query, root, "asOf") {
+            return Err(ProblemDetails::invalid(
+                format!(
+                    "`{}` has no temporal key: `asOf` does not apply",
+                    table.name
+                ),
+                "asOf",
+            ));
+        }
+        let value = serde_json::Value::String(as_of.clone());
+        ctx.validate(Root::Query, root, "asOf", &value, "asOf")?;
+        args.insert("asOf".into(), value);
+    }
+
     let count_pref = ctx.prefs.count;
     let (include_total, estimate_total) = match count_pref {
         query::CountPreference::Planned => (true, true),
@@ -2132,8 +2317,23 @@ pub async fn rest_item_handler(
             fields.push(RequestField::new("rowVersion"));
         }
         let root = address.read_root(table);
+        let mut arguments = address.args.clone();
+        if let Some(as_of) = &query.as_of {
+            if !ctx.has_argument(Root::Query, &root, "asOf") {
+                return Err(ProblemDetails::invalid(
+                    format!(
+                        "`{}` has no temporal key: `asOf` does not apply",
+                        table.name
+                    ),
+                    "asOf",
+                ));
+            }
+            let value = serde_json::Value::String(as_of.clone());
+            ctx.validate(Root::Query, &root, "asOf", &value, "asOf")?;
+            arguments.insert("asOf".into(), value);
+        }
         let request = RequestField::new(&root)
-            .with_arguments(address.args.clone())
+            .with_arguments(arguments)
             .with_children(fields);
         let data = ctx
             .execute(

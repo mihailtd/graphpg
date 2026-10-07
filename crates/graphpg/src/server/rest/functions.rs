@@ -75,7 +75,7 @@ fn shape<'a>(
 }
 
 /// A query-string value as the JSON the argument takes.
-fn parse_argument_text(
+pub(super) fn parse_argument_text(
     text: &str,
     arg: &FunctionArgument,
 ) -> Result<serde_json::Value, ProblemDetails> {
