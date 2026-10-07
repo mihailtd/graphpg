@@ -1710,6 +1710,131 @@ async fn list(
     list_rows(ctx, ListTarget::of_table(table)?, query, method).await
 }
 
+/// Reads the rows through the connection's `edges` instead of its `nodes`, for what an edge
+/// has: its cursor and the window values of its row.
+fn edges_request(
+    ctx: &Ctx,
+    table: &TableMetadata,
+    query: &RestQuery,
+    root: &str,
+    request: &mut RequestField,
+) -> Result<(), ProblemDetails> {
+    let schema = ctx.state.current_schema();
+    let connection_type = validate::root_field_type_name(&schema, Root::Query, root);
+    let edge_type = connection_type
+        .as_deref()
+        .and_then(|c| validate::field_type_name(&schema, c, "edges"));
+    let has = |field: &str| {
+        edge_type.as_deref().is_some_and(|t| {
+            validate::object_field_names(&schema, t)
+                .iter()
+                .any(|f| f == field)
+        })
+    };
+    let partition = query
+        .partition
+        .iter()
+        .map(|g| aggregates::group_value(table, g).map(serde_json::Value::String))
+        .collect::<Result<Vec<_>, _>>()?;
+    let windowed = |mut field: RequestField| {
+        if !partition.is_empty() {
+            field = field.with_argument("partitionBy", serde_json::Value::Array(partition.clone()));
+        }
+        field
+    };
+    let Some(position) = request.children.iter().position(|c| c.name == "nodes") else {
+        return Ok(());
+    };
+    let nodes = request.children.remove(position);
+    let mut edge = Vec::new();
+    if query.cursors {
+        edge.push(RequestField::new("cursor"));
+    }
+    for name in &query.window {
+        if !has(name) {
+            return Err(ProblemDetails::invalid(
+                format!("`{name}` is not available for `{}`", table.name),
+                "window",
+            ));
+        }
+        edge.push(windowed(RequestField::new(name)));
+    }
+    if !query.running.is_empty() {
+        if !has("runningSum") {
+            return Err(ProblemDetails::invalid(
+                format!("`{}` has no numbers to sum", table.name),
+                "running",
+            ));
+        }
+        let columns = query
+            .running
+            .iter()
+            .filter_map(|name| {
+                table
+                    .visible_columns()
+                    .find(|c| &c.field_name == name || &c.name == name)
+            })
+            .map(|c| RequestField::new(&c.field_name))
+            .collect();
+        edge.push(windowed(
+            RequestField::new("runningSum").with_children(columns),
+        ));
+    }
+    edge.push(RequestField::new("node").with_children(nodes.children));
+    request
+        .children
+        .insert(position, RequestField::new("edges").with_children(edge));
+    Ok(())
+}
+
+/// Turns the `edges` of an answer into `nodes`: each row with its `_cursor` and `_window`.
+fn rows_from_edges(data: &mut serde_json::Value, root: &str, query: &RestQuery) {
+    let connection = match data.get_mut("data") {
+        Some(inner) => inner.get_mut(root),
+        None => data.get_mut(root),
+    };
+    let Some(connection) = connection.and_then(serde_json::Value::as_object_mut) else {
+        return;
+    };
+    let Some(serde_json::Value::Array(edges)) = connection.remove("edges") else {
+        return;
+    };
+    let rows: Vec<serde_json::Value> = edges
+        .into_iter()
+        .map(|mut edge| {
+            let mut row = edge
+                .get_mut("node")
+                .map(serde_json::Value::take)
+                .unwrap_or_default();
+            if let Some(object) = row.as_object_mut() {
+                if query.cursors {
+                    object.insert(
+                        "_cursor".into(),
+                        edge.get("cursor").cloned().unwrap_or_default(),
+                    );
+                }
+                let mut window = serde_json::Map::new();
+                for name in query
+                    .window
+                    .iter()
+                    .map(String::as_str)
+                    .chain((!query.running.is_empty()).then_some("runningSum"))
+                {
+                    window.insert(
+                        name.to_string(),
+                        edge.get(name).cloned().unwrap_or_default(),
+                    );
+                }
+                if !window.is_empty() {
+                    object.insert("_window".into(), serde_json::Value::Object(window));
+                }
+            }
+            row
+        })
+        .collect();
+    connection.insert("nodes".into(), serde_json::Value::Array(rows));
+}
+
 async fn list_rows(
     ctx: &Ctx,
     target: ListTarget<'_>,
@@ -1768,7 +1893,13 @@ async fn list_rows(
         query::CountPreference::None => (false, false),
     };
 
-    let request = if connection {
+    let edges = query.cursors || !query.window.is_empty() || !query.running.is_empty();
+    if edges && !connection {
+        return Err(ProblemDetails::bad_request(
+            "`cursors`, `window` and `running` are for lists that are connections",
+        ));
+    }
+    let mut request = if connection {
         ResponseShaper::build_list_request_ext(
             root,
             args.clone(),
@@ -1782,7 +1913,10 @@ async fn list_rows(
             .with_arguments(args.clone())
             .with_children(row_fields)
     };
-    let data = ctx
+    if edges {
+        edges_request(ctx, table, query, root, &mut request)?;
+    }
+    let mut data = ctx
         .execute(
             &table.schema,
             RequestOperation::query(vec![request]),
@@ -1790,6 +1924,9 @@ async fn list_rows(
             false,
         )
         .await?;
+    if edges {
+        rows_from_edges(&mut data, root, query);
+    }
     let mut shaped =
         ResponseShaper::unwrap_list(&data, root).map_err(|e| shaping_error(e, ctx.is_prod))?;
     finish_rows(&ctx.catalog, table, query, &mut shaped.rows);

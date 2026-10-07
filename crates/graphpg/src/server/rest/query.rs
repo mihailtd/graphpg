@@ -34,6 +34,19 @@ pub struct RestQuery {
     /// Controls of the embedded relations, by `include` path (`posts`, `posts.comments`).
     #[serde(default)]
     pub embed: BTreeMap<String, EmbedControls>,
+    /// `window`: window values of each row among all the matching rows, in the list's order
+    /// (`rowNumber`, `rank`, `denseRank`, `percentRank`), in the row's `_window`.
+    #[serde(default)]
+    pub window: Vec<String>,
+    /// `running`: columns whose running sums (a ledger's balance) the rows carry.
+    #[serde(default)]
+    pub running: Vec<String>,
+    /// `partition`: group the window values within the rows sharing these values.
+    #[serde(default)]
+    pub partition: Vec<String>,
+    /// `cursors=true`: each row carries its own cursor, in `_cursor`.
+    #[serde(default)]
+    pub cursors: bool,
     /// `asOf`: the point in time a temporal table is read at.
     #[serde(default)]
     pub as_of: Option<String>,
@@ -732,6 +745,9 @@ fn page_size(key: &str, val: &str) -> Result<usize, String> {
     check_page_size(key, n)
 }
 
+/// The window values a row can carry (`window=rank`).
+pub(super) const WINDOW_VALUES: [&str; 4] = ["rowNumber", "rank", "denseRank", "percentRank"];
+
 /// Keys of a relation filter that filter the parent (`filter[posts][some][…]`), not the rows
 /// embedded through the relation.
 const PARENT_RELATION_FILTERS: [&str; 8] =
@@ -919,6 +935,28 @@ pub(super) fn finish_embeds(
             _ => {}
         }
         controls.filter = controls.filter.take().map(arrayify_groups);
+    }
+    for name in &query.window {
+        if !WINDOW_VALUES.contains(&name.as_str()) {
+            return Err(format!(
+                "Unknown window value `{name}`; the values are: {}",
+                WINDOW_VALUES.join(", ")
+            ));
+        }
+    }
+    for name in &query.running {
+        let numeric = table
+            .visible_columns()
+            .any(|c| (c.field_name == *name || c.name == *name) && c.pg_type.is_numeric());
+        if !numeric {
+            return Err(format!(
+                "`running={name}`: a running sum needs a number column of `{}`",
+                table.name
+            ));
+        }
+    }
+    if !query.partition.is_empty() && query.window.is_empty() && query.running.is_empty() {
+        return Err("`partition` needs `window` or `running`".to_string());
     }
     for (key, given) in &query.field_args {
         let (relation, field) = key.rsplit_once('.').unwrap_or(("", key));
@@ -1131,6 +1169,21 @@ pub fn parse_query_params(
             }
             "asOf" => {
                 query.as_of = Some(val);
+            }
+            "window" | "running" | "partition" | "cursors" => {
+                collection_only(&key)?;
+                match key.as_str() {
+                    "window" => query.window = split_list(&val),
+                    "running" => query.running = split_list(&val),
+                    "partition" => query.partition = split_list(&val),
+                    _ => {
+                        query.cursors = match val.as_str() {
+                            "true" | "1" => true,
+                            "false" | "0" => false,
+                            _ => return Err("`cursors` must be true or false".to_string()),
+                        }
+                    }
+                }
             }
             "inner" | "anti" => {
                 collection_only(&key)?;

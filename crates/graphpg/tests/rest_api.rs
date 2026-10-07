@@ -792,6 +792,7 @@ async fn openapi_matches_the_behaviour() {
             "anti",
             "args[uniqueAuthorCount][featured]",
             "before",
+            "cursors",
             "fields",
             "fields[featuredMessages]",
             "fields[messages]",
@@ -810,7 +811,9 @@ async fn openapi_matches_the_behaviour() {
             "offset[messages]",
             "order",
             "order[featuredMessages]",
-            "order[messages]"
+            "order[messages]",
+            "partition",
+            "window"
         ]
     );
     let first = params.iter().find(|p| p["name"] == "first").unwrap();

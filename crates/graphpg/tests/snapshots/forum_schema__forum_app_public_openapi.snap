@@ -428,6 +428,60 @@ expression: openapi
             }
           },
           {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
+              }
+            }
+          },
+          {
             "name": "Range",
             "in": "header",
             "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
@@ -1654,6 +1708,60 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "name",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
               }
             }
           },
@@ -3709,6 +3817,72 @@ expression: openapi
             }
           },
           {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
+              }
+            }
+          },
+          {
             "name": "Range",
             "in": "header",
             "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
@@ -4869,6 +5043,72 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(author|user|forum)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
               }
             }
           },
@@ -6816,6 +7056,61 @@ expression: openapi
             }
           },
           {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned"
+                ]
+              }
+            }
+          },
+          {
             "name": "Range",
             "in": "header",
             "description": "A page as rows `A` to `B` (`items=0-24`, `items=25-`): answered with `206` and `Content-Range`, or `416` past the end. It does not combine with `first`, `last`, `after`, `before` or `offset`. Another unit or a suffix range is ignored.",
@@ -7983,6 +8278,61 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned"
+                ]
               }
             }
           },
@@ -9960,6 +10310,72 @@ expression: openapi
             }
           },
           {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "forumId",
+                  "authorId",
+                  "body",
+                  "featured",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned",
+                  "archivedAt",
+                  "archivedAt:minute",
+                  "archivedAt:hour",
+                  "archivedAt:day",
+                  "archivedAt:week",
+                  "archivedAt:month",
+                  "archivedAt:quarter",
+                  "archivedAt:year",
+                  "archivedAt:binned"
+                ]
+              }
+            }
+          },
+          {
             "name": "Prefer",
             "in": "header",
             "description": "`count=exact`, `count=planned`, or `count=estimated` adds `X-Total-Count`; exact costs a scan of every matching row, so it is off by default",
@@ -11343,6 +11759,61 @@ expression: openapi
               "items": {
                 "type": "string",
                 "pattern": "^(messages)(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              }
+            }
+          },
+          {
+            "name": "cursors",
+            "in": "query",
+            "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "rowNumber",
+                  "rank",
+                  "denseRank",
+                  "percentRank"
+                ]
+              }
+            }
+          },
+          {
+            "name": "partition",
+            "in": "query",
+            "style": "form",
+            "explode": false,
+            "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "id",
+                  "username",
+                  "gravatarUrl",
+                  "createdAt",
+                  "createdAt:minute",
+                  "createdAt:hour",
+                  "createdAt:day",
+                  "createdAt:week",
+                  "createdAt:month",
+                  "createdAt:quarter",
+                  "createdAt:year",
+                  "createdAt:binned"
+                ]
               }
             }
           },

@@ -1742,3 +1742,64 @@ async fn a_json_column_can_be_read_through_a_path() {
         );
     }
 }
+
+#[tokio::test]
+async fn rows_can_carry_their_cursor_and_window_values() {
+    let app = app().await;
+    let r = get(
+        &app,
+        "/rest/orders?fields=id,customer&order=id&window=rowNumber,rank&cursors=true",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let rows = r.ok().as_array().unwrap();
+    assert_eq!(rows.len(), 6);
+    assert_eq!(rows[0]["_window"]["rowNumber"], 1);
+    assert_eq!(rows[5]["_window"]["rowNumber"], 6);
+    assert_eq!(rows[2]["_window"]["rank"], 3);
+    let cursor = rows[1]["_cursor"].as_str().unwrap().to_string();
+    assert!(!cursor.is_empty());
+
+    // The cursor of a row is a page boundary: `after` it, the rows that follow
+    let next = get(
+        &app,
+        &format!("/rest/orders?fields=id&order=id&first=2&after={cursor}"),
+    )
+    .await;
+    assert_eq!(ids(&next), [3, 4]);
+
+    // Within groups, and running sums (a ledger's balance)
+    let r = get(
+        &app,
+        "/rest/orders?fields=id,customer&order=id&window=rowNumber&partition=customer&running=total",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let rows = r.ok().as_array().unwrap();
+    let numbers: Vec<i64> = rows
+        .iter()
+        .map(|r| r["_window"]["rowNumber"].as_i64().unwrap())
+        .collect();
+    assert_eq!(numbers, [1, 2, 1, 2, 1, 2]);
+    assert_eq!(number(&rows[1]["_window"]["runningSum"]["total"]), 150.5);
+    assert_eq!(number(&rows[5]["_window"]["runningSum"]["total"]), 210.0);
+
+    // Rows have neither unless asked
+    let plain = get(&app, "/rest/orders?fields=id&order=id").await;
+    assert!(plain.ok()[0].get("_window").is_none() && plain.ok()[0].get("_cursor").is_none());
+
+    for uri in [
+        "/rest/orders?window=median",
+        "/rest/orders?running=customer",
+        "/rest/orders?partition=customer",
+        "/rest/orders?window=rank&partition=nope",
+        "/rest/orders?cursors=sometimes",
+        "/rest/orders/1?window=rank",
+    ] {
+        assert_eq!(
+            get(&app, uri).await.status,
+            StatusCode::BAD_REQUEST,
+            "{uri}"
+        );
+    }
+}

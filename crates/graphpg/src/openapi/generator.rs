@@ -1368,6 +1368,50 @@ impl OpenApiGenerator {
         })
     }
 
+    /// What a row of a list can carry besides its columns: its cursor, window values among the
+    /// matching rows and running sums (the `edges` of the GraphQL connection).
+    fn edge_parameters(table: &TableMetadata) -> Vec<Value> {
+        let numeric: Vec<String> = table
+            .visible_columns()
+            .filter(|c| c.pg_type.is_numeric())
+            .map(|c| c.field_name.clone())
+            .collect();
+        let groups: Vec<String> = table
+            .group_by_values()
+            .iter()
+            .map(|(_, c, unit)| match unit {
+                None => c.field_name.clone(),
+                Some("bin") => format!("{}:binned", c.field_name),
+                Some(unit) => format!("{}:{unit}", c.field_name),
+            })
+            .collect();
+        let mut params = vec![
+            json!({
+                "name": "cursors", "in": "query",
+                "description": "Each row carries its own cursor in `_cursor`: send it back as `after` / `before` to continue from that row",
+                "schema": { "type": "boolean", "default": false }
+            }),
+            json!({
+                "name": "window", "in": "query", "style": "form", "explode": false,
+                "description": "Window values of each row among all the matching rows, in the list's order, pages before this one included: `_window.rowNumber`, `rank`, `denseRank`, `percentRank`",
+                "schema": { "type": "array", "items": { "type": "string", "enum": ["rowNumber", "rank", "denseRank", "percentRank"] } }
+            }),
+            json!({
+                "name": "partition", "in": "query", "style": "form", "explode": false,
+                "description": "Number the rows (`window`, `running`) within the groups of rows sharing these values; `column`, `column:unit` for dates",
+                "schema": { "type": "array", "items": { "type": "string", "enum": groups } }
+            }),
+        ];
+        if !numeric.is_empty() {
+            params.push(json!({
+                "name": "running", "in": "query", "style": "form", "explode": false,
+                "description": "Running sums of these columns up to each row, in the list's order (a ledger's balance): `_window.runningSum.<column>`",
+                "schema": { "type": "array", "items": { "type": "string", "enum": numeric } }
+            }));
+        }
+        params
+    }
+
     /// `by`: address a row by one of its other unique keys instead of the primary key
     /// (`/rest/users/alice?by=username`), or null when the table has none.
     fn by_parameter(table: &TableMetadata) -> Value {
@@ -1710,6 +1754,9 @@ impl OpenApiGenerator {
             prefer_param(false),
         ];
         params.extend(Self::embed_parameters(table, catalog, limits, true));
+        if table.operations.connection {
+            params.extend(Self::edge_parameters(table));
+        }
         params.retain(|p| !p.is_null());
         Value::Array(params)
     }

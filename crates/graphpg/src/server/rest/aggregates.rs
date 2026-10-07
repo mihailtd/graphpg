@@ -195,7 +195,7 @@ fn body_from_query(
 }
 
 /// The enum value of `groupBy` for `column` or `column:unit`.
-fn group_value(table: &TableMetadata, item: &str) -> Result<String, ProblemDetails> {
+pub(super) fn group_value(table: &TableMetadata, item: &str) -> Result<String, ProblemDetails> {
     let (name, unit) = match item.split_once(':') {
         Some((name, unit)) => (name.trim(), Some(unit.trim().to_ascii_lowercase())),
         None => (item.trim(), None),
