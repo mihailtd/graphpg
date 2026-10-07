@@ -58,6 +58,9 @@ type PageInfo {
   endCursor: String
 }
 
+"""What the database enforces on a value, in the keywords of JSON Schema (and so of the OpenAPI document): a `CHECK` on the column, or its `varchar(n)` length. Documentation for clients and code generators; the database checks every write."""
+directive @constraint(minimum: Float, maximum: Float, exclusiveMinimum: Float, exclusiveMaximum: Float, multipleOf: Float, minLength: Int, maxLength: Int, pattern: String, minItems: Int, maxItems: Int) on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
 directive @defer(label: String, if: Boolean = true) on FRAGMENT_SPREAD | INLINE_FRAGMENT
 
 directive @stream(label: String, initialCount: Int = 0, if: Boolean = true) on FIELD

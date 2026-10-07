@@ -1844,3 +1844,36 @@ async fn aggregates_can_be_side_by_side_with_filters_of_their_own() {
         assert_eq!(r.status, StatusCode::BAD_REQUEST, "{body}: {}", r.body);
     }
 }
+
+#[tokio::test]
+async fn graphql_states_the_constraints_the_document_states() {
+    common::ensure_rest_extras_fixture().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema("rest_extras")
+        .await
+        .unwrap();
+    let sdl = SchemaBuilder::generate_sdl(&catalog);
+    // The directive, and on the type and on both inputs, the same keywords as JSON Schema
+    assert!(sdl.contains("directive @constraint("), "no directive");
+    for field in [
+        "score: Int @constraint(minimum: 0, maximum: 100)",
+        "step: Int @constraint(multipleOf: 5)",
+        "rating: Float @constraint(exclusiveMinimum: 0, exclusiveMaximum: 5)",
+        "code: String @constraint(pattern: \"^[A-Z]{3}$\")",
+        "title: String @constraint(minLength: 3, maxLength: 20)",
+        "tags: [String] @constraint(maxItems: 5)",
+    ] {
+        let count = sdl.matches(field).count();
+        assert!(count >= 3, "{field}: {count} times (type and two inputs)");
+    }
+    // A check that is not a simple bound says nothing
+    assert!(sdl.contains("other: Int\n"));
+    // The schema is valid with them
+    SchemaBuilder::build(&catalog).unwrap();
+}
