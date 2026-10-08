@@ -54,11 +54,11 @@ importers:
         specifier: 17.0.2
         version: 17.0.2
       monaco-editor:
-        specifier: 0.52.2
-        version: 0.52.2
+        specifier: 0.57.0
+        version: 0.57.0
       monaco-graphql:
         specifier: ^1.4.0
-        version: 1.9.0(graphql@17.0.2)(monaco-editor@0.52.2)(prettier@3.9.9)
+        version: 1.9.0(graphql@17.0.2)(monaco-editor@0.57.0)(prettier@3.9.9)
       react:
         specifier: 19.3.0
         version: 19.3.0
@@ -840,6 +840,9 @@ packages:
   '@types/pg@8.23.1':
     resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
+  '@types/trusted-types@2.0.7':
+    resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
     engines: {node: '>=16.20.0'}
@@ -1010,6 +1013,9 @@ packages:
   detect-node-es@1.1.0:
     resolution: {integrity: sha512-ypdmJU/TbBby2Dxibuv7ZLW3Bs1QEmM7nHjEANfohJLvE0XVujisn1qPJcZxg+qDucsr+bP6fLD1rPS3AhJ7EQ==}
 
+  dompurify@3.4.15:
+    resolution: {integrity: sha512-EUBjM+B+lkDE41iE82DDSCfkoPGfXx8IxFxPMjNzm/Uk4xDet77rTN9wqlxlVg71kK7XGuUMv6wUxJUwwv+Xyw==}
+
   drizzle-kit@0.31.11:
     resolution: {integrity: sha512-YCYqxTLIB2OCqf6w9/Vef13baBVbwQIPcbT4Y56AfO6B9ajZhDhD8Jkveg/hJvT/iuMloKD/IYYkyMMNhr7Kqg==}
     hasBin: true
@@ -1137,8 +1143,8 @@ packages:
       picomatch:
         optional: true
 
-  framer-motion@13.5.1:
-    resolution: {integrity: sha512-HeWOaeHD3kyTSIEMT6+nw7fBn4saIfxxabZyAITbycAl4xr1kzGJKIvGt/OWghSlvIA9qTnZ1zTGelHAe6S8DA==}
+  framer-motion@13.5.0:
+    resolution: {integrity: sha512-5KDKvhGTKKEQPWl8xg2mZRC+pGsenooz9v+ar6BpoXcD1mae4wdhvjxLaK+3jvFbge0jk4C8JeIjIC8m98z7hg==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -1286,6 +1292,11 @@ packages:
     resolution: {integrity: sha512-q4IGxMv56jCqT4OCRCADBoDP3LO4MhmTXjFbphHPXs4g3j9Xg5RDnxqN8IF/3vIWEU+VCnUq+7JUg/cfy2E6Qw==}
     hasBin: true
 
+  marked@14.0.0:
+    resolution: {integrity: sha512-uIj4+faQ+MgHgwUW1l2PsPglZLOLOT1uErt06dAPtx2kjteLAkbsd/0FiYg/MGS+i7ZKLb7w2WClxHkzOOuryQ==}
+    engines: {node: '>= 18'}
+    hasBin: true
+
   mdurl@2.1.0:
     resolution: {integrity: sha512-1+HBaOx0zi/dQWht8rNv9MYf9qqpqL/kxI0hXImU6Y547zM6Sni8BQibt7ifgMcYtQg41ao3Ivd6cnSM86inpg==}
 
@@ -1301,6 +1312,9 @@ packages:
   monaco-editor@0.52.2:
     resolution: {integrity: sha512-GEQWEZmfkOGLdd3XK8ryrfWz3AIP8YymVXiPHEdewrUq7mh0qrKrfHLNCXcbB6sTnMLnOZ3ztSiKcciFUkIJwQ==}
 
+  monaco-editor@0.57.0:
+    resolution: {integrity: sha512-5BkI9KGoqrNvBGUe15/QlZq3OooZ8WLg1AxTpaqHRCP3HNpzPPZKE2EDz8M7c+VRmCeUw1Brp4cx/PWm3kI/5A==}
+
   monaco-graphql@1.9.0:
     resolution: {integrity: sha512-zIK4Abg7KpJ6E0nis75wktpQ6vgDTKOEMwtrqa2mMIv7D+Q2n42cr75LCuWfO144xqbTjxyav7MbI2ViIy6q3w==}
     peerDependencies:
@@ -1308,8 +1322,8 @@ packages:
       monaco-editor: '>= 0.20.0 < 0.53'
       prettier: ^2.8.0 || ^3.0.0
 
-  motion-dom@13.5.1:
-    resolution: {integrity: sha512-/7CVCD20Mz1KobktorpdgvowV0V41J7UxqE+qWS3GkSJqrRr5ft+2RloOYtEKv+wvBp3JaSFBclhxt4ja8ovHg==}
+  motion-dom@13.5.0:
+    resolution: {integrity: sha512-mSdelbdqc1LDi3m7RkYgnMgdys0qSDsNFpdf0Hjyf8U5Ln0AcjSeApKD4Q4Er3sBPFDzdLehDj4SLgwBf39poQ==}
 
   motion-utils@13.5.0:
     resolution: {integrity: sha512-Hqe/sqjIKliPZg8sVjWAkdySDPJNIeKH+euVkDOG8ri3DUUU7ZjndmHsGqEPz2iHpiyVaV5I22iguCMHU2he+Q==}
@@ -1864,7 +1878,7 @@ snapshots:
       '@radix-ui/react-tooltip': 1.2.16(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@radix-ui/react-visually-hidden': 1.2.11(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       clsx: 1.2.1
-      framer-motion: 13.5.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      framer-motion: 13.5.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       get-value: 4.1.0
       graphql: 17.0.2
       graphql-language-service: 5.7.0(graphql@17.0.2)
@@ -2252,6 +2266,9 @@ snapshots:
       pg-protocol: 1.16.1
       pg-types: 2.2.0
 
+  '@types/trusted-types@2.0.7':
+    optional: true
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
 
@@ -2345,6 +2362,10 @@ snapshots:
 
   detect-node-es@1.1.0: {}
 
+  dompurify@3.4.15:
+    optionalDependencies:
+      '@types/trusted-types': 2.0.7
+
   drizzle-kit@0.31.11:
     dependencies:
       '@drizzle-team/brocli': 0.10.2
@@ -2400,9 +2421,9 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.7
 
-  framer-motion@13.5.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+  framer-motion@13.5.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:
-      motion-dom: 13.5.1
+      motion-dom: 13.5.0
       motion-utils: 13.5.0
       tslib: 2.8.1
     optionalDependencies:
@@ -2528,6 +2549,8 @@ snapshots:
       punycode.js: 2.3.1
       uc.micro: 3.0.0
 
+  marked@14.0.0: {}
+
   mdurl@2.1.0: {}
 
   meros@1.3.2(@types/node@26.6.4):
@@ -2535,6 +2558,11 @@ snapshots:
       '@types/node': 26.6.4
 
   monaco-editor@0.52.2: {}
+
+  monaco-editor@0.57.0:
+    dependencies:
+      dompurify: 3.4.15
+      marked: 14.0.0
 
   monaco-graphql@1.9.0(graphql@17.0.2)(monaco-editor@0.52.2)(prettier@3.9.9):
     dependencies:
@@ -2544,7 +2572,15 @@ snapshots:
       picomatch-browser: 2.2.6
       prettier: 3.9.9
 
-  motion-dom@13.5.1:
+  monaco-graphql@1.9.0(graphql@17.0.2)(monaco-editor@0.57.0)(prettier@3.9.9):
+    dependencies:
+      graphql: 17.0.2
+      graphql-language-service: 5.7.0(graphql@17.0.2)
+      monaco-editor: 0.57.0
+      picomatch-browser: 2.2.6
+      prettier: 3.9.9
+
+  motion-dom@13.5.0:
     dependencies:
       motion-utils: 13.5.0
 
