@@ -377,8 +377,14 @@ Optional lines in SQL comments, versioned with your migrations:
 
 - `@name <GraphQLName>` names a table's type, a column's field, a function's field or a type.
 - `@deprecated [reason]` deprecates a column's field, a function's fields, or a table's root fields and the relation fields leading to it.
+- `@primaryKey a, b` gives a view, materialized view or foreign table its key, as `entities.<name>.primary_key` does.
+- `@foreignKey (a, b) references [schema.]table [(c, d)]` declares a virtual foreign key (the referenced columns default to the target's primary key), one line per key. Its relation fields are named as for a real foreign key; rename them in `graphpg.yaml` under the name `<table>_<columns>_fkey`.
 
-The config (`deprecated:` on entities, columns and functions) wins over comment hints. A table or column's SQL comment is also its GraphQL description.
+```sql
+COMMENT ON FOREIGN TABLE billing.invoices IS E'Invoices from the billing database\n@primaryKey id\n@foreignKey (customer_id) references app.customers';
+```
+
+A key hint that does not parse, or names a column that does not exist, stops the start and names the comment. The config (`deprecated:`, `primary_key:`, a foreign key of the same name) wins over comment hints. A table or column's SQL comment is also its GraphQL description.
 
 ## Startup advice
 

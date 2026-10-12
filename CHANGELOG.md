@@ -5,6 +5,7 @@ Releases are tagged `vX.Y.Z`; each one has generated notes on the
 
 ## Unreleased
 
+- **Keys in SQL comments** (#151): `@primaryKey a, b` and `@foreignKey (a) references [schema.]table [(b)]` give views, materialized views and foreign tables their keys and relations from the migration that creates them. `graphpg.yaml` wins over them; a hint that does not parse or names an unknown column stops the start, naming the comment.
 - **Foreign data errors** (#153, #154): a remote violation of a foreign table's declared primary key is typed (`ID_TAKEN`, REST `409`) like a local one, and listed in `<Type>ErrorCode`. A foreign server that is down answers `SOURCE_UNAVAILABLE` (`503`) and, with partial results, fails only the root fields reading from it.
 - Fixed: a unique index on the columns of a primary key declared in `graphpg.yaml` added a second lookup field (#157). Foreign tables no longer offer `onConflict` upserts, which `postgres_fdw` cannot run.
 - **Other databases and files through foreign data wrappers** ([guide](docs/foreign-data.md)): `postgres_fdw` and `file_fdw` foreign tables are tested end to end. With keys and relations declared in `graphpg.yaml`, they join local tables in one statement, both ways, with relation filters, aggregates, REST embedding and (for `postgres_fdw`) writes. The guide covers authorization without Row-Level Security, measured query plans, materialized views for files, transactions and errors.

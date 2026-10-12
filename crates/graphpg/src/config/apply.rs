@@ -7,7 +7,7 @@
 //!   descriptions, omitted fields, operations and types.
 //!
 //! Both validate every reference and return all problems at once.
-use super::models::{Config, Operation};
+use super::models::{Config, ForeignKeyConfig, Operation, ReferenceConfig};
 use crate::catalog::{
     is_graphql_name, ConstraintKind, ConstraintMetadata, DatabaseCatalog, ForeignKeyMetadata,
     RelationKind, SearchLimits, TableMetadata,
@@ -118,10 +118,84 @@ fn function_index(catalog: &DatabaseCatalog, config: &Config, name: &str) -> Res
     )
 }
 
+/// `config` with the keys relations declare in their comments (`@primaryKey`,
+/// `@foreignKey`), where the config declares none for them: the config wins, as for the other
+/// comment hints. Also the qualified names of the relations that contributed some, and the
+/// hint lines that do not parse.
+fn with_comment_keys(catalog: &DatabaseCatalog, config: &Config) -> (Config, Vec<String>, Errors) {
+    let mut config = config.clone();
+    let (mut from_comments, mut errors) = (Vec::new(), Errors::new());
+    for table in &catalog.tables {
+        let hints = crate::catalog::models::CommentHints::parse(table.description.as_deref());
+        let qualified = format!("{}.{}", table.schema, table.name);
+        for line in &hints.invalid {
+            errors.push(format!(
+                "the comment on `{qualified}`: `{line}` does not parse (`@primaryKey a, b` or `@foreignKey (a) references [schema.]table [(b)]`)"
+            ));
+        }
+        if hints.primary_key.is_none() && hints.foreign_keys.is_empty() {
+            continue;
+        }
+        // The config's own entry for this relation, under either name
+        let configured = [qualified.as_str(), table.name.as_str()]
+            .into_iter()
+            .find(|k| config.entities.contains_key(*k))
+            .map(str::to_string);
+        let key = configured.clone().unwrap_or_else(|| qualified.clone());
+        let entity = config.entities.entry(key).or_default();
+        let mut contributed = false;
+        if let Some(pk) = hints.primary_key {
+            if entity.primary_key.is_empty() {
+                entity.primary_key = pk;
+                contributed = true;
+            }
+        }
+        for fk in hints.foreign_keys {
+            let name = format!("{}_{}_fkey", table.name, fk.columns.join("_"));
+            if entity.foreign_keys.contains_key(&name) {
+                continue;
+            }
+            entity.foreign_keys.insert(
+                name,
+                ForeignKeyConfig {
+                    columns: fk.columns,
+                    references: Some(ReferenceConfig {
+                        table: fk.table,
+                        columns: fk.references,
+                    }),
+                    ..Default::default()
+                },
+            );
+            contributed = true;
+        }
+        if contributed && configured.is_none() {
+            from_comments.push(qualified);
+        }
+    }
+    (config, from_comments, errors)
+}
+
 /// Declared keys, virtual foreign keys and function mounts.
 pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &Config) -> Result<(), Errors> {
-    let mut errors = Errors::new();
+    let (config, from_comments, mut errors) = with_comment_keys(catalog, config);
+    apply_declared_structure(catalog, &config, &mut errors);
+    // A problem of a key from a comment names the comment, not a config entry
+    let errors: Errors = errors
+        .into_iter()
+        .map(|e| {
+            from_comments.iter().fold(e, |e, q| {
+                e.replace(&format!("entities.{q}"), &format!("the comment on `{q}`"))
+            })
+        })
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
 
+fn apply_declared_structure(catalog: &mut DatabaseCatalog, config: &Config, errors: &mut Errors) {
     // Primary keys first: a virtual foreign key may reference a declared key
     for (name, entity) in &config.entities {
         let path = format!("entities.{name}");
@@ -384,12 +458,6 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &Config) -> Result
         func.parent_table = Some(parent_name);
         func.parent_arguments = parent_arguments;
         func.mounted_field_name.clear();
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
     }
 }
 

@@ -3821,6 +3821,58 @@ pub struct CommentHints {
     pub description: Option<String>,
     pub name: Option<String>,
     pub deprecated: Option<String>,
+    /// `@primaryKey a, b`: the key of a relation PostgreSQL cannot give one (a view, a
+    /// materialized view, a foreign table).
+    pub primary_key: Option<Vec<String>>,
+    /// `@foreignKey (a, b) references [schema.]table [(c, d)]`: virtual foreign keys.
+    pub foreign_keys: Vec<CommentForeignKey>,
+    /// Key hint lines that do not parse, reported at startup.
+    pub invalid: Vec<String>,
+}
+
+/// A virtual foreign key declared in a comment.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommentForeignKey {
+    pub columns: Vec<String>,
+    /// The referenced relation, `table` or `schema.table`.
+    pub table: String,
+    /// The referenced columns; empty for its primary key.
+    pub references: Vec<String>,
+}
+
+impl CommentForeignKey {
+    /// `(a, b) references [schema.]table [(c, d)]`.
+    fn parse(text: &str) -> Option<Self> {
+        let list = |text: &str| -> Option<(Vec<String>, String)> {
+            let inner = text.trim_start().strip_prefix('(')?;
+            let (inner, rest) = inner.split_once(')')?;
+            let names: Vec<String> = inner.split(',').map(|c| c.trim().to_string()).collect();
+            names
+                .iter()
+                .all(|n| !n.is_empty())
+                .then(|| (names, rest.to_string()))
+        };
+        let (columns, rest) = list(text)?;
+        let rest = rest.trim_start();
+        let rest = rest
+            .get(..10)
+            .filter(|k| k.eq_ignore_ascii_case("references"))
+            .map(|_| &rest[10..])?;
+        let rest = rest.trim();
+        let (table, references) = match rest.find('(') {
+            Some(open) => {
+                let (names, after) = list(&rest[open..])?;
+                after.trim().is_empty().then_some(())?;
+                (rest[..open].trim(), names)
+            }
+            None => (rest, Vec::new()),
+        };
+        (!table.is_empty() && !table.contains(char::is_whitespace)).then(|| Self {
+            columns,
+            table: table.to_string(),
+            references,
+        })
+    }
 }
 
 impl CommentHints {
@@ -3848,6 +3900,21 @@ impl CommentHints {
                 .filter(|n| is_graphql_name(n))
             {
                 hints.name = Some(name.to_string());
+            } else if trimmed == "@primaryKey" || trimmed == "@foreignKey" {
+                hints.invalid.push(trimmed.to_string());
+            } else if let Some(columns) = trimmed.strip_prefix("@primaryKey ") {
+                let columns: Vec<String> =
+                    columns.split(',').map(|c| c.trim().to_string()).collect();
+                if columns.iter().any(String::is_empty) {
+                    hints.invalid.push(trimmed.to_string());
+                } else {
+                    hints.primary_key = Some(columns);
+                }
+            } else if let Some(rest) = trimmed.strip_prefix("@foreignKey ") {
+                match CommentForeignKey::parse(rest) {
+                    Some(fk) => hints.foreign_keys.push(fk),
+                    None => hints.invalid.push(trimmed.to_string()),
+                }
             } else {
                 kept.push(line);
             }
@@ -4171,6 +4238,38 @@ mod naming_tests {
         assert_eq!(pluralize("Address"), "Addresses");
         assert_eq!(pluralize("Box"), "Boxes");
         assert_eq!(pluralize("CarePlanActivity"), "CarePlanActivities");
+    }
+
+    #[test]
+    fn comment_key_hints() {
+        let hints = CommentHints::parse(Some(
+            "Invoices from billing\n@primaryKey id\n@foreignKey (customer_id) references app.customers\n@foreignKey (org, code) REFERENCES orgs (org, code)\n@primaryKey\n@foreignKey customer_id references x",
+        ));
+        assert_eq!(hints.description.as_deref(), Some("Invoices from billing"));
+        assert_eq!(hints.primary_key, Some(vec!["id".to_string()]));
+        assert_eq!(
+            hints.foreign_keys,
+            [
+                CommentForeignKey {
+                    columns: vec!["customer_id".into()],
+                    table: "app.customers".into(),
+                    references: vec![],
+                },
+                CommentForeignKey {
+                    columns: vec!["org".into(), "code".into()],
+                    table: "orgs".into(),
+                    references: vec!["org".into(), "code".into()],
+                },
+            ]
+        );
+        // Malformed key hints are reported, never ignored
+        assert_eq!(
+            hints.invalid,
+            [
+                "@primaryKey".to_string(),
+                "@foreignKey customer_id references x".to_string()
+            ]
+        );
     }
 
     #[test]

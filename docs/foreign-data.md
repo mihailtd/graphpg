@@ -71,6 +71,7 @@ curl -g 'localhost:4000/rest/customers/1?include=invoices'
 A foreign table has no indexes or constraints of its own: PostgreSQL rejects `PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY` on it. Declare them in `graphpg.yaml`, as for views:
 
 - `entities.<table>.primary_key` gives the type its key: the single-row lookup (`invoice(id:)`, `GET /rest/invoices/{id}`), Relay `id` / `node(id:)`, and the key of updates and deletes.
+- Or put them in the foreign table's SQL comment, versioned with the migration that creates it: `@primaryKey id` and `@foreignKey (customer_id) references app.customers` (see [comment hints](configuration.md#comment-hints)). `graphpg.yaml` wins over the comment.
 - `entities.<table>.foreign_keys.<new name>` declares a relation in either direction: from a foreign table to a local one, from a local table to a foreign one (on the local table's entry), or between two foreign tables. The reverse field is generated as for a real foreign key.
 
 **These keys are promises, not constraints.** PostgreSQL does not check them. If the remote rows are not unique on the declared key, Relay IDs repeat, a single-row lookup can match two rows, and a to-one relation can return the wrong row. Declare the key the remote side really enforces (its primary key), and keep the two in step.
