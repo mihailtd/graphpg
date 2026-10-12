@@ -844,6 +844,11 @@ impl<'a> PlanningContext<'a> {
             },
         };
         let table_meta = self.find_table(schema, table_name)?;
+        // A type without root reads (`omit_operations: [read]`) is reached through its
+        // relations only: a global ID, which anyone can write, must not reach it either
+        if !table_meta.operations.read {
+            return null(plan);
+        }
         let [pk_col] = table_meta.primary_key.as_slice() else {
             return null(plan);
         };
@@ -1041,6 +1046,10 @@ impl<'a> PlanningContext<'a> {
             let Ok(table_meta) = self.find_table(entity_schema, table_name) else {
                 continue;
             };
+            // Like `node(id:)`: no lookup of a type whose reads are omitted
+            if !table_meta.operations.read {
+                continue;
+            }
             let Some(key) = self.entity_key(map, table_meta) else {
                 continue;
             };
