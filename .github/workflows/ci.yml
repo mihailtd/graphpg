@@ -26,7 +26,7 @@ jobs:
   # Cheap static checks first: typecheck, lint and formatting for both the Rust and TypeScript
   # parts. Everything below waits for them. Locally: `pnpm verify` (and `pnpm fix` to apply fixes).
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     outputs:
       docker: ${{ steps.docker.outputs.changed }}
     steps:
@@ -34,6 +34,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # Self-hosted runners keep the build directory between jobs (checkout cleans `target`,
+      # the link to the runner's cache survives as a fresh link)
+      - if: runner.environment == 'self-hosted'
+        run: ln -sfn "$CI_TARGET_CACHE" target
       # Whether this pull request touches what the image build depends on (see the `image` job).
       # Workflow files are not in the list: a change to them cannot break the Docker build.
       - id: docker
@@ -55,12 +59,13 @@ jobs:
       # than an install inside each of the tasks moon runs in parallel
       - run: pnpm install --frozen-lockfile
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: runner.environment == 'github-hosted'
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: moon run :typecheck :lint :format
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     needs: check
     services:
       postgres:
@@ -77,6 +82,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # Self-hosted runners keep the build directory between jobs (checkout cleans `target`,
+      # the link to the runner's cache survives as a fresh link)
+      - if: runner.environment == 'self-hosted'
+        run: ln -sfn "$CI_TARGET_CACHE" target
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
@@ -91,6 +100,7 @@ jobs:
         with:
           toolchain: 1.98.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: runner.environment == 'github-hosted'
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Create extensions
@@ -105,7 +115,7 @@ jobs:
           GRAPHPG_REQUIRE_UI: "1"
 
   example:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     needs: check
     services:
       postgres:
@@ -121,10 +131,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Self-hosted runners keep the build directory between jobs (checkout cleans `target`,
+      # the link to the runner's cache survives as a fresh link)
+      - if: runner.environment == 'self-hosted'
+        run: ln -sfn "$CI_TARGET_CACHE" target
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.98.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: runner.environment == 'github-hosted'
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Load the blog example
@@ -152,7 +167,7 @@ jobs:
   # End-to-end: Drizzle migrates and seeds PostgreSQL, then the built graphpg binary is queried.
   # moon installs the pinned Rust and Node toolchains (.moon/toolchains.yml) and orders the tasks.
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     needs: check
     services:
       postgres:
@@ -169,6 +184,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # Self-hosted runners keep the build directory between jobs (checkout cleans `target`,
+      # the link to the runner's cache survives as a fresh link)
+      - if: runner.environment == 'self-hosted'
+        run: ln -sfn "$CI_TARGET_CACHE" target
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
@@ -176,6 +195,7 @@ jobs:
       # than an install inside each of the tasks moon runs in parallel
       - run: pnpm install --frozen-lockfile
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: runner.environment == 'github-hosted'
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: moon run e2e:typecheck e2e:test
@@ -191,7 +211,7 @@ jobs:
   image:
     needs: check
     if: github.event_name == 'pull_request' && needs.check.outputs.docker == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     services:
       postgres:
         image: postgres:18
@@ -206,6 +226,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Self-hosted runners keep the build directory between jobs (checkout cleans `target`,
+      # the link to the runner's cache survives as a fresh link)
+      - if: runner.environment == 'self-hosted'
+        run: ln -sfn "$CI_TARGET_CACHE" target
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
