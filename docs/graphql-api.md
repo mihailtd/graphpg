@@ -230,7 +230,7 @@ A query is one SQL statement, so a failure in it would fail every field. graphpg
 
 - **The successful path is unchanged:** one statement. Running the fields apart costs one statement per root field, and only when something fails. With one root field, nothing runs again: the failure is its own.
 - **Nulls follow the GraphQL spec.** A nullable root field (a lookup such as `forum(id:)`, a scalar function) becomes `null`. A non-null one (lists `[Forum!]!`, connections) cannot, so `data` itself is `null`. The request parameter `onError` changes that, as proposed for the spec in [RFC 1163](https://rfcs.graphql.org/rfcs/1163/): `"NULL"` leaves any failed field `null` and keeps the rest, while `"HALT"` fails the whole request without `data`, as before partial results. The default is `"PROPAGATE"`. The RFC's earlier names, `NO_PROPAGATE` and `ABORT`, are accepted too.
-- **Some failures still fail the whole request.** These are the ones that aren't about one field's data: `STATEMENT_TIMEOUT`, a lost connection, resource exhaustion and transient conflicts. Running the fields again would not help.
+- **Some failures still fail the whole request.** These are the ones that aren't about one field's data: `STATEMENT_TIMEOUT`, a lost connection to graphpg's own database, resource exhaustion and transient conflicts. Running the fields again would not help. A [foreign data source](foreign-data.md#errors) that is down is about its fields only: they fail with `SOURCE_UNAVAILABLE`.
 - **Mutations are all or nothing**, as before: a failing mutation field rolls back the operation.
 - **HTTP status:** a response with `data` is `200`, whatever failed in it, per GraphQL over HTTP. With `data: null`, it has the status of its first error.
 

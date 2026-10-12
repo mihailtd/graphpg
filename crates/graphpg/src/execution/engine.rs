@@ -91,8 +91,9 @@ impl ExecutionError {
     }
 
     /// A failure of the data a statement read (a bad value, a function raising, a privilege
-    /// or policy), as opposed to one of the database or the request as a whole (a timeout,
-    /// the connection, resources, a crash): only the first kind can belong to one field.
+    /// or policy, a foreign source that is down), as opposed to one of the database or the
+    /// request as a whole (a timeout, resources, a crash): only the first kind can belong to
+    /// one field.
     pub fn is_data_error(&self) -> bool {
         let ExecutionError::Postgres(e) = self else {
             return false;
@@ -101,7 +102,20 @@ impl ExecutionError {
             return false;
         };
         let class = &db.code().code()[..2];
-        !matches!(class, "08" | "40" | "53" | "54" | "57" | "58" | "XX")
+        !matches!(class, "40" | "53" | "54" | "57" | "58" | "XX")
+    }
+
+    /// A foreign data wrapper could not reach its remote server: a *database* error of
+    /// class `08` (connection exception). graphpg's own connection failing is never one (it
+    /// is an I/O error, not something the server reports), so this one names a source.
+    pub fn is_source_unavailable(&self) -> bool {
+        let e = match self {
+            ExecutionError::Mutation { source, .. } => return source.is_source_unavailable(),
+            ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => e,
+            _ => return false,
+        };
+        e.as_db_error()
+            .is_some_and(|db| db.code().code().starts_with("08"))
     }
 
     /// A failure that running the operation again may not hit: a serialization failure

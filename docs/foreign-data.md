@@ -86,7 +86,7 @@ A foreign table has no indexes or constraints of its own: PostgreSQL rejects `PR
 | Create, update, delete | Yes (`pg_relation_is_updatable`) | No: no mutations or REST writes are generated |
 | Upserts (`onConflict`) | No: they need a unique constraint, which a foreign table cannot have | No |
 | `rowVersion` / `expectedVersion` | No: a foreign table has no `xmin` | No |
-| Typed constraint error codes (`ID_TAKEN`) | No (see [Errors](#errors)) | — |
+| Typed constraint error codes | For the declared primary key (`ID_TAKEN`); see [Errors](#errors) | — |
 
 ## Authorization: no Row-Level Security on foreign tables
 
@@ -163,9 +163,11 @@ Settings that matter:
 
 ## Errors
 
-- **Remote constraint violations are not typed.** graphpg derives codes such as `ID_TAKEN` from the local catalog's constraints, and a foreign table has none. `postgres_fdw` passes on the remote error's SQLSTATE (`23505`) and message, but not the constraint's name, so `errors.map` cannot match it by name either. The client gets a masked `INTERNAL_SERVER_ERROR` in prod (the full message in dev). Mapping the SQLSTATE in `errors.map` works, but applies to every table, local ones included.
+- **The declared primary key is typed.** `postgres_fdw` passes on a remote violation's SQLSTATE (`23505`) and its detail (`Key (id)=(1) already exists.`), but not the constraint's name. graphpg matches the detail's columns to the primary key declared in `graphpg.yaml` and answers as for a local key: `ID_TAKEN` with the input fields (REST: `409`). The code is listed in the type's `<Type>ErrorCode` enum and the OpenAPI document.
+- **Other remote constraints are not typed.** A remote unique index, check or foreign key has no local definition, and its name doesn't come through, so `errors.map` can't match it by name either. The client gets a masked `INTERNAL_SERVER_ERROR` in prod (the full message in dev). Mapping the SQLSTATE in `errors.map` works, but applies to every table, local ones included. Virtual foreign keys get no code: the remote side cannot enforce a key that points at a local table.
+- **A source that is down is `SOURCE_UNAVAILABLE`** (`503`). A wrapper that cannot reach its server reports a connection error (SQLSTATE class `08`). graphpg's own connection failing never does (that is an I/O error, not something the server reports), so graphpg knows a foreign source is down. The client gets the code without the remote's address, which is logged.
 - **Remote errors are masked** like local ones (`errors.detail`).
-- **Partial results.** A remote error about data (a bad value, a constraint, a permission) fails only the root field that read the foreign table; the others keep their data (see [partial results](graphql-api.md#partial-results)). A remote server that cannot be reached is a connection error (SQLSTATE class `08`) and fails the whole request.
+- **Partial results.** A remote error about data (a bad value, a constraint, a permission) or an unreachable source fails only the root fields that read the foreign table; the others keep their data (see [partial results](graphql-api.md#partial-results)). A root list or connection is non-null, so ask with `onError: "NULL"` to keep the rest.
 
 ## Files: CSV, Parquet and object storage
 

@@ -57,7 +57,15 @@ pub fn violation(
     db: &DbError,
     context: Option<&WriteContext>,
 ) -> Option<ConstraintViolation> {
-    let (schema, table) = (db.schema()?, db.table()?);
+    let (schema, table) = match (db.schema(), db.table()) {
+        (Some(schema), Some(table)) => (schema, table),
+        // A foreign data wrapper re-raises the remote error with its SQLSTATE and detail
+        // only: the table is the one being written
+        _ => {
+            let context = context?;
+            (context.schema.as_str(), context.table.as_str())
+        }
+    };
     let t = catalog.find_table(schema, table)?;
     let code = db.code();
     if *code == SqlState::NOT_NULL_VIOLATION {
@@ -87,7 +95,20 @@ pub fn violation(
         c if *c == SqlState::EXCLUSION_VIOLATION => &[ConstraintKind::Exclusion],
         _ => return None,
     };
-    let (_, con) = catalog.find_constraint(schema, table, db.constraint()?)?;
+    let con = match db.constraint() {
+        Some(name) => catalog.find_constraint(schema, table, name)?.1,
+        // Unnamed (a foreign table's remote key): the constraint on the columns the error
+        // detail quotes (`Key (id)=(1) already exists.`)
+        None => {
+            let (names, _) = db.detail().and_then(detail_key)?;
+            let columns: Vec<&str> = names.split(", ").collect();
+            t.constraints.iter().find(|c| {
+                kinds.contains(&c.kind)
+                    && c.columns.len() == columns.len()
+                    && c.columns.iter().zip(&columns).all(|(a, b)| a == b)
+            })?
+        }
+    };
     if !kinds.contains(&con.kind) {
         return None;
     }

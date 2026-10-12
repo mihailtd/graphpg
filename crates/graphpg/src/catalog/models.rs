@@ -1065,7 +1065,9 @@ impl TableMetadata {
         };
         self.unique_keys
             .iter()
-            .filter(|k| !k.is_primary)
+            // The primary key has its lookup already, also when it is declared in
+            // `graphpg.yaml` and a unique index covers the same columns
+            .filter(|k| !k.is_primary && k.columns != self.primary_key)
             .filter_map(move |k| {
                 let cols = self.exposed_key_columns(k)?;
                 cols.iter().all(|c| comparable(c)).then_some((k, cols))
