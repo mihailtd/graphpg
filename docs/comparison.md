@@ -51,7 +51,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 
 ### When something else fits better
 
-- You need data from **more than one database or API** in a single query: Hasura or PostGraphile.
+- You need data from **APIs and services** (not databases) in a single query: Hasura or PostGraphile. Other databases and files reach graphpg through [foreign data wrappers](foreign-data.md).
 - You need **subscriptions**, **event triggers** or an **admin console**: Hasura.
 - You want to **rewrite how the schema is generated** (naming, field shapes, custom plugins): PostGraphile.
 
@@ -190,7 +190,7 @@ What it shows: both are limited by PostgreSQL where a query is expensive (`offse
 | :--- | :--- | :--- |
 | Error format | RFC 9457 `application/problem+json` with a stable `code` | JSON `code`, `message`, `details`, `hint` |
 | PostgreSQL's own messages | Masked in prod behind a request ID that is logged; typed constraint codes (`EMAIL_TAKEN`, `AUTHOR_NOT_FOUND`) instead | Forwarded as they are |
-| Custom HTTP status from SQL | No | `RAISE … SQLSTATE 'PT402'` |
+| Custom HTTP status from SQL | `RAISE … SQLSTATE 'PT402'` (the same convention), and `errors.map` from SQLSTATEs or constraint names | `RAISE … SQLSTATE 'PT402'` |
 | Page size | Default and maximum (`limits.page_size`) | `db-max-rows` |
 | Depth and cost | `limits.depth`, `limits.cost`, enforced on the plan before SQL is compiled | Not built in (the docs suggest `pg_plan_filter`) |
 | Bulk, body size, groups | `limits.bulk_rows`, `limits.request_body_bytes`, `limits.groups` | Not built in |
@@ -238,10 +238,8 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### When PostgREST fits better
 
-- You need **update or delete many rows by a filter**.
 - You need **GeoJSON, XML, plain-text or custom media types** (domains, aggregates) from the REST API itself.
-- You rely on **embedded filters, ordering and limits**, spread, or `!inner` joins in one URL.
-- You need JSON arrow operators in the URL (`->`, `->>`), or `NULLS FIRST` / `LAST`.
+- You rely on **spread** embeds (`...author(name)`), JSON arrow operators in the URL (`->`, `->>`; graphpg has `path[column]`), or `NULLS FIRST` / `LAST`.
 - You want the token to **choose the PostgreSQL role**, or `Accept-Profile` to switch **schemas per request**.
 - You need **config and schema reload without a restart**.
 - You value a **decade of production use**, a large ecosystem and client libraries (`postgrest-js`, ...).
@@ -258,7 +256,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### Known gaps
 
-What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, GeoJSON, XML and custom media types, `planned` / `estimated` counts, schema reload in production without a restart, and `Accept-Profile`-style schema selection.
+What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: `NULLS FIRST` / `LAST` ordering, spread embeds, GeoJSON, XML and custom media types, schema reload in production without a restart, and `Accept-Profile`-style schema selection (graphpg serves each schema at `/rest/{schema}/…` instead).
 
 ## Where graphpg is a fit
 
@@ -269,7 +267,7 @@ What graphpg's REST API does not do today, from the tables above, in the order w
 
 ## Performance
 
-Throughput depends on your schema, indexes and hardware far more than on the server. graphpg compiles each request to one statement, as PostgREST does, so the difference is usually small next to the database's own work; no comparative numbers are published here. For benchmarking graphpg on your own schema, see [../benchmarks/](../benchmarks/README.md), and run the other tool against the same database, queries and hardware.
+Throughput depends on your schema, indexes and hardware far more than on the server. graphpg compiles each request to one statement, as PostgREST does, so the difference is usually small next to the database's own work. The one published comparison is [against PostgREST](#throughput-against-postgrest), with its caveats. For benchmarking graphpg on your own schema, see [../benchmarks/](../benchmarks/README.md), and run the other tool against the same database, queries and hardware.
 
 ## Sources
 
