@@ -400,4 +400,12 @@ The config (`deprecated:` on entities, columns and functions) wins over comment 
 
 ## Startup advice
 
-At startup, and with `graphpg advise`, graphpg reports foreign keys no index leads with, tables without a primary key, and orderable columns no index leads with. They are logged as warnings; nothing is changed.
+At startup, and with `graphpg advise`, graphpg reports foreign keys no index leads with, tables without a primary key, and orderable columns no index leads with. For [foreign tables](foreign-data.md) it also reports:
+
+- an exposed foreign table without a declared key;
+- a `postgres_fdw` table without `use_remote_estimate`, or one never analyzed;
+- a to-many relation into a foreign table, with its cost (one remote query, or one file read, per parent row);
+- root fields on a foreign table while requests are authenticated (Row-Level Security cannot apply to it);
+- a role requests run as that has no user mapping for the foreign server.
+
+They are logged (warnings as warnings, the rest at debug level); nothing is changed.

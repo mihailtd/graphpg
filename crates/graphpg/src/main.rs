@@ -343,7 +343,12 @@ async fn run(
             let catalog = inspector
                 .inspect_schemas_with_config(&schemas, &config)
                 .await?;
-            let advice = inspector.advise_schemas(&schemas, &catalog).await?;
+            let mut advice = inspector.advise_schemas(&schemas, &catalog).await?;
+            advice.extend(
+                inspector
+                    .advise_foreign_tables(&schemas, &catalog, &config.auth)
+                    .await?,
+            );
             for a in &advice {
                 let level = match a.level {
                     graphpg::catalog::AdviceLevel::Warning => "warning",
@@ -364,7 +369,12 @@ async fn run(
             .inspect_schemas_with_config(&schemas, &config)
             .await?;
         let schema = SchemaBuilder::build(&catalog)?;
-        let advice = inspector.advise_schemas(&schemas, &catalog).await?;
+        let mut advice = inspector.advise_schemas(&schemas, &catalog).await?;
+        advice.extend(
+            inspector
+                .advise_foreign_tables(&schemas, &catalog, &config.auth)
+                .await?,
+        );
         (catalog, schema, advice)
     };
 
