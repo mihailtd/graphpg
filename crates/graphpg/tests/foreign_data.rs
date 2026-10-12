@@ -67,7 +67,12 @@ async fn prepare() {
                 "COPY (VALUES ('RO', 'Romania'), ('DE', 'Germany')) \
                  TO '/tmp/graphpg_fdw_countries.csv' WITH (FORMAT csv, HEADER); \
                  REFRESH MATERIALIZED VIEW fdw_app.country_list; \
-                 ANALYZE fdw_app.countries;",
+                 ANALYZE fdw_app.countries; \
+                 CREATE SERVER IF NOT EXISTS fdw_down FOREIGN DATA WRAPPER postgres_fdw \
+                     OPTIONS (host '127.0.0.1', port '1', dbname 'nowhere', connect_timeout '2'); \
+                 CREATE USER MAPPING IF NOT EXISTS FOR CURRENT_USER SERVER fdw_down; \
+                 CREATE FOREIGN TABLE IF NOT EXISTS fdw_app.outages (id integer) \
+                     SERVER fdw_down OPTIONS (table_name 'outages');",
             )
             .await
             .unwrap();
@@ -218,18 +223,48 @@ async fn writes_go_through_postgres_fdw() {
     );
     assert_eq!(count().await, 1, "the row is on the remote side");
 
-    // A remote constraint has no local definition, and postgres_fdw passes on its SQLSTATE
-    // but not its name: no typed code (`ID_TAKEN`), masked like any database error
+    // postgres_fdw passes on the remote violation's SQLSTATE and detail but not the
+    // constraint's name: the declared primary key gives it its typed code
     let request = Request::post("/graphql")
         .header("content-type", "application/json")
         .body(Body::from(json!({ "query": create }).to_string()))
         .unwrap();
-    let (_, body) = send(&app, request).await;
-    assert_eq!(
-        body["errors"][0]["extensions"]["code"], "INTERNAL_SERVER_ERROR",
-        "{body}"
-    );
+    let (status, body) = send(&app, request).await;
+    assert_eq!(status, StatusCode::OK);
+    let error = &body["errors"][0];
+    assert_eq!(error["extensions"]["code"], "ID_TAKEN", "{body}");
+    assert_eq!(error["extensions"]["fields"], json!(["input.id"]), "{body}");
+    assert_eq!(error["path"], json!(["createInvoice"]));
     assert_eq!(count().await, 1, "the failed write changed nothing");
+
+    // REST says the same
+    let (status, body) = send(
+        &app,
+        Request::post("/rest/invoices")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "id": 900, "customerId": 3, "amount": "1.00", "status": "DRAFT" })
+                    .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "ID_TAKEN", "{body}");
+
+    // The code is in the type's error enum, as for a local key
+    let data = graphql(
+        &app,
+        r#"{ __type(name: "InvoiceErrorCode") { enumValues { name } } }"#,
+    )
+    .await;
+    assert!(
+        data["__type"]["enumValues"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({ "name": "ID_TAKEN" })),
+        "{data}"
+    );
 
     let id = SchemaBuilder::encode_global_id("Invoice", "900");
     graphql(
@@ -349,4 +384,50 @@ async fn rest_lists_and_embeds_foreign_rows() {
         .map(|r| r["id"].as_i64().unwrap())
         .collect();
     assert!(ids.starts_with(&[2, 3]), "{body}");
+}
+
+/// A foreign server that cannot be reached fails only what reads from it: `SOURCE_UNAVAILABLE`
+/// (503), and with partial results the other root fields keep their data.
+#[tokio::test]
+async fn an_unreachable_source_fails_only_its_own_fields() {
+    let app = app().await;
+    let ask = |body: Value| {
+        Request::post("/graphql")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+    let query = "{ customer(id: 1) { name } outages { id } }";
+
+    let (status, body) = send(&app, ask(json!({ "query": query, "onError": "NULL" }))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["customer"], json!({ "name": "Acme" }));
+    assert_eq!(body["data"]["outages"], Value::Null);
+    let error = &body["errors"][0];
+    assert_eq!(error["extensions"]["code"], "SOURCE_UNAVAILABLE", "{body}");
+    assert_eq!(error["path"], json!(["outages"]));
+    // The remote's address stays in the log
+    assert!(!error["message"].as_str().unwrap().contains("127.0.0.1"));
+
+    // `[Outage!]!` cannot be null: by default `data` is, with the source's status
+    let (status, body) = send(&app, ask(json!({ "query": query }))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["data"], Value::Null);
+
+    let (status, body) = send(
+        &app,
+        Request::get("/rest/outages").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["code"], "SOURCE_UNAVAILABLE");
+}
+
+/// A unique index on a declared primary key's columns adds no second lookup.
+#[tokio::test]
+async fn a_unique_index_on_the_declared_key_is_one_lookup() {
+    let app = app().await;
+    let schema = sdl(&app).await;
+    assert!(schema.contains("\"countryListById\""), "{schema}");
+    assert!(!schema.contains("countryListByIdByCode"), "{schema}");
 }

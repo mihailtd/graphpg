@@ -259,6 +259,15 @@ impl ProblemDetails {
             return problem;
         }
 
+        if err.is_source_unavailable() {
+            tracing::warn!(error = %err, "a foreign data source is unavailable");
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "A foreign data source is unavailable",
+            )
+            .with_code("SOURCE_UNAVAILABLE");
+        }
+
         if err.is_timeout() {
             return Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,

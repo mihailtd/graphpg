@@ -1576,6 +1576,10 @@ pub fn finalize(
 /// Row lookups, updates and deletes target one row by its key: without a primary key a
 /// relation only gets list and connection fields (and `create`, when insertable).
 fn refresh_key_operations(table: &mut TableMetadata) {
+    // `INSERT ... ON CONFLICT DO UPDATE` is not supported on foreign tables
+    if table.kind == RelationKind::ForeignTable {
+        table.operations.upsert = false;
+    }
     let has_key = !table.primary_key.is_empty();
     table.operations.read = has_key && table.operations.read;
     if !has_key {

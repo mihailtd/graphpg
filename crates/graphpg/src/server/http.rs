@@ -213,6 +213,17 @@ pub(crate) fn execution_error(
                 extensions: Some(serde_json::json!({ "code": "PERMISSION_DENIED" })),
             },
         ),
+        None if err.is_source_unavailable() => {
+            tracing::warn!(error = %err, "a foreign data source is unavailable");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                GraphQLError {
+                    message: "a foreign data source is unavailable".to_string(),
+                    path,
+                    extensions: Some(serde_json::json!({ "code": "SOURCE_UNAVAILABLE" })),
+                },
+            )
+        }
         None if err.is_timeout() => (
             StatusCode::SERVICE_UNAVAILABLE,
             GraphQLError {

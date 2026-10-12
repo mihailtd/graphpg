@@ -9,7 +9,8 @@
 //! Both validate every reference and return all problems at once.
 use super::models::{Config, Operation};
 use crate::catalog::{
-    is_graphql_name, DatabaseCatalog, ForeignKeyMetadata, SearchLimits, TableMetadata,
+    is_graphql_name, ConstraintKind, ConstraintMetadata, DatabaseCatalog, ForeignKeyMetadata,
+    RelationKind, SearchLimits, TableMetadata,
 };
 
 type Errors = Vec<String>;
@@ -163,6 +164,27 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &Config) -> Result
             c.is_primary_key = entity.primary_key.contains(&c.name);
         }
         table.primary_key = entity.primary_key.clone();
+        // A foreign table's key is enforced on the remote side, whose violations arrive
+        // without a constraint name: a constraint of its own gives them a typed code
+        // (`ID_TAKEN`, see `ExecutionError::violation`)
+        if table.kind == RelationKind::ForeignTable && !entity.primary_key.is_empty() {
+            table
+                .constraints
+                .retain(|c| c.kind != ConstraintKind::PrimaryKey);
+            table.constraints.push(ConstraintMetadata {
+                name: format!("{}_pkey", table.name),
+                kind: ConstraintKind::PrimaryKey,
+                columns: entity.primary_key.clone(),
+                definition: format!(
+                    "PRIMARY KEY ({}), declared in graphpg.yaml",
+                    entity.primary_key.join(", ")
+                ),
+                references: None,
+                period: false,
+                code: String::new(),
+                referenced_code: String::new(),
+            });
+        }
     }
 
     for (name, entity) in &config.entities {
