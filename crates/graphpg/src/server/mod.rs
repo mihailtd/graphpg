@@ -15,7 +15,7 @@ pub use http::{
 };
 pub use rest::{rest_list_handler, rest_search_handler, ProblemDetails, RestQuery};
 pub use router::{
-    apply_layers, create_router, graphql_routes, health_routes, openapi_routes, rest_routes,
-    ui_routes,
+    apply_layers, create_router, graphql_routes, health_routes, metrics_routes, openapi_routes,
+    rest_routes, ui_routes,
 };
 pub use watcher::{start_schema_watcher, WatcherOptions};

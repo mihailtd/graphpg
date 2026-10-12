@@ -46,6 +46,24 @@ pub enum ExecutionError {
 }
 
 impl ExecutionError {
+    /// `error.type` of the failure in metrics and traces: the SQLSTATE of a database error,
+    /// else the kind of failure. A bounded set of values.
+    pub fn metric_code(&self) -> String {
+        match self {
+            ExecutionError::Mutation { source, .. } => source.metric_code(),
+            ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => {
+                match e.as_db_error() {
+                    Some(db) => db.code().code().to_string(),
+                    None => "connection".to_string(),
+                }
+            }
+            ExecutionError::EmptyResult => "empty_result".to_string(),
+            ExecutionError::Rejected(_) => "rejected".to_string(),
+            ExecutionError::StaleVersion { .. } => "stale_version".to_string(),
+            ExecutionError::TooManyRows { .. } => "too_many_rows".to_string(),
+        }
+    }
+
     /// The statement ran longer than the connection's `statement_timeout` and was cancelled.
     pub fn is_timeout(&self) -> bool {
         match self {
@@ -330,6 +348,47 @@ impl ExecutionEngine {
     ///
     /// [`AuthSessionContext::apply`]: crate::server::AuthSessionContext::apply
     pub async fn run_with_auth<C: Connection>(
+        conn: &C,
+        compiled: &CompiledOperation,
+        explain: Option<&mut Vec<String>>,
+        auth_ctx: Option<&crate::server::AuthSessionContext>,
+    ) -> Result<serde_json::Value, ExecutionError> {
+        use tracing::Instrument as _;
+        let kind = match compiled {
+            CompiledOperation::Query(_) => "query",
+            CompiledOperation::Mutation(_) => "mutation",
+        };
+        let span = tracing::info_span!(
+            "db.operation",
+            // `{db.system.name}`: the conventions' name when there is no single statement
+            otel.name = "postgresql",
+            otel.kind = "client",
+            otel.status_code = tracing::field::Empty,
+            db.system.name = "postgresql",
+            // The older name, which Tempo's service graphs look for
+            db.system = "postgresql",
+            graphpg.operation.type = kind,
+            error.type = tracing::field::Empty,
+        );
+        let start = std::time::Instant::now();
+        let result = Self::run_with_retries(conn, compiled, explain, auth_ctx)
+            .instrument(span.clone())
+            .await;
+        let error = result.as_ref().err().map(ExecutionError::metric_code);
+        if let Some(code) = &error {
+            span.record("error.type", code.as_str());
+            span.record("otel.status_code", "ERROR");
+        }
+        crate::telemetry::metrics().db_operation(
+            kind,
+            error.as_deref(),
+            start.elapsed().as_secs_f64(),
+        );
+        result
+    }
+
+    /// [`run_with_auth`](Self::run_with_auth), run again after a transient failure.
+    async fn run_with_retries<C: Connection>(
         conn: &C,
         compiled: &CompiledOperation,
         mut explain: Option<&mut Vec<String>>,

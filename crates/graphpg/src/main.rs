@@ -168,11 +168,8 @@ async fn shutdown_signal() {
     tracing::info!("shutting down");
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let _ = dotenvy::dotenv();
-    let _telemetry = graphpg::telemetry::init();
-
     let cli = Cli::parse();
 
     let mode = resolve_mode(
@@ -180,16 +177,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
         std::env::var("GRAPHPG_MODE").ok().as_deref(),
     )?;
 
-    let secrets = Secrets::from_env()?;
-
     let config_path = resolve_config_path(cli.config.as_deref())?;
     let config = match &config_path {
-        Some(path) => {
-            tracing::info!(path = %path.display(), %mode, "loading config");
-            Config::load_from_file(path, mode).map_err(|e| e.to_string())?
-        }
+        Some(path) => Config::load_from_file(path, mode).map_err(|e| e.to_string())?,
         None => Config::defaults(mode),
     };
+
+    // Before the runtime starts, and dropped after it stops: the OTLP exporters' blocking
+    // HTTP client cannot live inside it. Subcommands only log.
+    let _telemetry = graphpg::telemetry::init(&config.telemetry, cli.command.is_none());
+    if let Some(path) = &config_path {
+        tracing::info!(path = %path.display(), %mode, "loaded config");
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(run(cli, mode, config_path, config))
+}
+
+async fn run(
+    cli: Cli,
+    mode: Mode,
+    config_path: Option<PathBuf>,
+    config: Config,
+) -> Result<(), Box<dyn Error>> {
+    let secrets = Secrets::from_env()?;
 
     let statement_timeout = config.limits.statement_timeout.map(|t| t.0);
     let pool = create_pool_with(
@@ -402,6 +415,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .iter()
         .map(|url| create_pool_with(url, config.database.pool_size, statement_timeout))
         .collect::<Result<Vec<_>, _>>()?;
+    let metrics = graphpg::telemetry::metrics();
+    metrics.watch_pool("primary", pool.clone());
+    for (i, replica) in replicas.iter().enumerate() {
+        metrics.watch_pool(format!("replica_{}", i + 1), replica.clone());
+    }
 
     let authenticator =
         match Authenticator::new(&config.auth, secrets.auth_jwt_secret.as_deref()).await {
@@ -530,6 +548,35 @@ async fn main() -> Result<(), Box<dyn Error>> {
             explain = config.debug.explain,
             "debug mode: responses include generated SQL — do not enable in production"
         );
+    }
+
+    let telemetry = &config.telemetry;
+    if telemetry.metrics.enabled {
+        match &telemetry.metrics.listen {
+            // On a listener of its own: create_router leaves it off the API's port
+            Some(listen) => {
+                let metrics_addr: SocketAddr = listen.parse()?;
+                let metrics_listener = tokio::net::TcpListener::bind(metrics_addr).await?;
+                let router = axum::Router::new().route(
+                    &telemetry.metrics.path,
+                    axum::routing::get(graphpg::telemetry::http::metrics_handler),
+                );
+                tokio::spawn(async move {
+                    if let Err(err) = axum::serve(metrics_listener, router).await {
+                        tracing::error!(error = %err, "the metrics listener failed");
+                    }
+                });
+                tracing::info!(
+                    "Prometheus metrics available at http://{metrics_addr}{}",
+                    telemetry.metrics.path
+                );
+            }
+            None => tracing::info!(
+                "Prometheus metrics available at http://localhost:{}{}",
+                config.server.port,
+                telemetry.metrics.path
+            ),
+        }
     }
 
     axum::serve(listener, create_router(state))

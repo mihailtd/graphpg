@@ -67,6 +67,9 @@ pub struct Config {
     /// Safety limits shared by the GraphQL and REST APIs.
     #[serde(default)]
     pub limits: LimitsConfig,
+    /// Logs, Prometheus metrics, traces, and OpenTelemetry (OTLP) export.
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
 }
 
 /// A number given as text, which is what `${NAME}` produces: `port: '${PORT}'`.
@@ -533,7 +536,7 @@ pub struct DatabaseConfig {
     /// Schemas to expose, the first being the default schema (`app_public` when empty).
     #[serde(default)]
     pub schemas: Vec<String>,
-    /// Append a sqlcommenter comment (route, field, trace context) to every statement.
+    /// Append a sqlcommenter comment (application, operation or route) to every statement.
     #[serde(deserialize_with = "switch", default = "default_true")]
     pub sql_comments: bool,
 }
@@ -861,6 +864,221 @@ pub struct ExtensionsConfig {
 impl ExtensionsConfig {
     pub fn exposes_all(&self) -> bool {
         self.expose.iter().any(|e| e == "*")
+    }
+}
+
+/// Logs, metrics and traces: what a running server says about itself, for Prometheus, an
+/// OpenTelemetry collector, or the Grafana LGTM stack (Loki, Grafana, Tempo, Mimir).
+/// Read at startup: a change needs a restart.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TelemetryConfig {
+    /// `service.name` of exported telemetry (default: `OTEL_SERVICE_NAME`, else `graphpg`).
+    #[serde(default)]
+    pub service_name: Option<String>,
+    /// Log lines on standard output.
+    #[serde(default)]
+    pub logs: LogsConfig,
+    /// Prometheus metrics endpoint.
+    #[serde(default)]
+    pub metrics: MetricsConfig,
+    /// Request traces.
+    #[serde(default)]
+    pub traces: TracesConfig,
+    /// Push traces, metrics and logs to an OpenTelemetry (OTLP/HTTP) endpoint.
+    #[serde(default)]
+    pub otlp: OtlpConfig,
+}
+
+impl TelemetryConfig {
+    /// `service_name`, else `OTEL_SERVICE_NAME`, else `graphpg`.
+    pub fn resolved_service_name(&self) -> String {
+        self.service_name
+            .clone()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                std::env::var("OTEL_SERVICE_NAME")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or_else(|| "graphpg".to_string())
+    }
+
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if !self.metrics.path.starts_with('/') {
+            problems.push(format!(
+                "telemetry.metrics.path must start with `/`: {:?}",
+                self.metrics.path
+            ));
+        }
+        if let Some(listen) = &self.metrics.listen {
+            if listen.parse::<std::net::SocketAddr>().is_err() {
+                problems.push(format!(
+                    "telemetry.metrics.listen must be an address and a port, like `0.0.0.0:9464`: {listen:?}"
+                ));
+            }
+        }
+        if !(0.0..=1.0).contains(&self.traces.sample_ratio) {
+            problems.push(format!(
+                "telemetry.traces.sample_ratio must be between 0 and 1: {}",
+                self.traces.sample_ratio
+            ));
+        }
+        if let Some(endpoint) = self.otlp.endpoint.as_deref().filter(|e| !e.is_empty()) {
+            if !(endpoint.starts_with("http://") || endpoint.starts_with("https://")) {
+                problems.push(format!(
+                    "telemetry.otlp.endpoint must be an http:// or https:// URL: {endpoint:?}"
+                ));
+            }
+        }
+        problems
+    }
+}
+
+/// How log lines are written.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    /// Human-readable lines.
+    #[default]
+    Text,
+    /// One JSON object per line, for Loki, Elasticsearch, CloudWatch ...
+    Json,
+}
+
+/// Log lines on standard output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LogsConfig {
+    /// Lowest level logged, or a filter like `info,graphpg=debug` (`RUST_LOG` wins when set).
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    /// `text` (default) or `json`.
+    #[serde(default)]
+    pub format: LogFormat,
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+impl Default for LogsConfig {
+    fn default() -> Self {
+        Self {
+            level: default_log_level(),
+            format: LogFormat::Text,
+        }
+    }
+}
+
+/// The Prometheus metrics endpoint (OpenMetrics text format).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsConfig {
+    /// Serve metrics. On in `dev` mode, off in `prod`.
+    #[serde(default, deserialize_with = "switch")]
+    pub enabled: bool,
+    /// Path of the endpoint.
+    #[serde(default = "default_metrics_path")]
+    pub path: String,
+    /// Serve the endpoint on a listener of its own (`0.0.0.0:9464`) instead of the API's port,
+    /// to keep it off the public network.
+    #[serde(default)]
+    pub listen: Option<String>,
+}
+
+fn default_metrics_path() -> String {
+    "/metrics".to_string()
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: default_metrics_path(),
+            listen: None,
+        }
+    }
+}
+
+/// Request traces: one span per request, with planning, compilation and execution inside it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TracesConfig {
+    /// Share of new traces recorded, from 0 to 1. A request carrying a W3C `traceparent`
+    /// follows the caller's decision.
+    #[serde(default = "default_sample_ratio", deserialize_with = "lenient")]
+    pub sample_ratio: f64,
+}
+
+fn default_sample_ratio() -> f64 {
+    1.0
+}
+
+impl Default for TracesConfig {
+    fn default() -> Self {
+        Self {
+            sample_ratio: default_sample_ratio(),
+        }
+    }
+}
+
+/// OpenTelemetry export over OTLP/HTTP (protobuf): to a collector, Grafana Alloy, the
+/// `grafana/otel-lgtm` image, Grafana Cloud, or any OTLP backend.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OtlpConfig {
+    /// Base URL, like `http://localhost:4318`; signals go to `/v1/traces`, `/v1/metrics` and
+    /// `/v1/logs` below it. Unset: `OTEL_EXPORTER_OTLP_ENDPOINT`, else no export.
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    /// Headers of every export request, like `Authorization` (use `${NAME}` for credentials).
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Export traces.
+    #[serde(default = "default_true", deserialize_with = "switch")]
+    pub traces: bool,
+    /// Export metrics.
+    #[serde(default = "default_true", deserialize_with = "switch")]
+    pub metrics: bool,
+    /// Export logs.
+    #[serde(default = "default_true", deserialize_with = "switch")]
+    pub logs: bool,
+    /// How often metrics are pushed.
+    #[serde(default = "default_export_interval")]
+    pub interval: Timeout,
+}
+
+fn default_export_interval() -> Timeout {
+    Timeout(std::time::Duration::from_secs(60))
+}
+
+impl Default for OtlpConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: None,
+            headers: BTreeMap::new(),
+            traces: true,
+            metrics: true,
+            logs: true,
+            interval: default_export_interval(),
+        }
+    }
+}
+
+impl OtlpConfig {
+    /// The base URL to export to: `endpoint`, else `OTEL_EXPORTER_OTLP_ENDPOINT`.
+    pub fn resolved_endpoint(&self) -> Option<String> {
+        self.endpoint
+            .clone()
+            .filter(|e| !e.is_empty())
+            .or_else(|| {
+                std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+                    .ok()
+                    .filter(|e| !e.is_empty())
+            })
+            .map(|e| e.trim_end_matches('/').to_string())
     }
 }
 
