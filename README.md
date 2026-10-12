@@ -78,6 +78,7 @@ Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) 
 | [Federation and RBAC](docs/federation-and-rbac.md) | Apollo Federation subgraphs and schema pruning by role |
 | [Performance](docs/performance.md) | Indexes and settings, replicas |
 | [Observability](docs/observability.md) | Prometheus metrics, OpenTelemetry traces, metrics and logs (OTLP), JSON logs; Grafana LGTM |
+| [Other databases and files](docs/foreign-data.md) | Foreign data wrappers (`postgres_fdw`, `file_fdw`, Parquet, S3): keys, relations, authorization, performance and caveats |
 | [Comparison](docs/comparison.md) | How graphpg differs from PostGraphile and Hasura (GraphQL) and from PostgREST (REST) |
 | [GraphQL and OpenAPI parity](docs/graphql-openapi-parity.md) | What each API knows about the database that the other does not, and whether it could be ported |
 
