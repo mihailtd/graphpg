@@ -1242,3 +1242,29 @@ async fn test_grouped_aggregates_keys_and_having() {
         json!([{ "keys": ["1815-01-01"], "count": 1 }, { "keys": ["1912-01-01"], "count": 1 }])
     );
 }
+
+/// A type whose root reads are omitted is reachable through its relations only: neither
+/// `node(id:)` nor Federation's `_entities` looks it up from an ID a client wrote.
+#[tokio::test]
+async fn test_omitted_reads_are_not_reachable_by_id() {
+    let env = setup_with(
+        r#"
+entities:
+  authors:
+    type_name: Writer
+    omit_operations: [read, list, connection]
+"#,
+    )
+    .await;
+    let id = SchemaBuilder::encode_global_id("Writer", "1");
+    let data = env
+        .run(&format!(
+            r#"{{ node(id: "{id}") {{ id ... on Writer {{ fullName }} }} }}"#
+        ))
+        .await;
+    assert_eq!(data["node"], serde_json::Value::Null, "{data}");
+
+    // Through a relation it is still there
+    let data = env.run("{ book(id: 1) { author { fullName } } }").await;
+    assert_eq!(data["book"]["author"]["fullName"], "Ada Lovelace", "{data}");
+}
