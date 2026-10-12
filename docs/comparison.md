@@ -11,7 +11,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | | graphpg | PostGraphile v5 (Grafast) | Hasura (v2 / v3 DDN) |
 | :--- | :--- | :--- | :--- |
 | Runtime | Rust, single binary | Node.js library and CLI | Haskell (v2); Rust (v3) |
-| Data sources | One PostgreSQL database | PostgreSQL, plus other sources through plugins | Many databases and remote schemas |
+| Data sources | One PostgreSQL database, and what it reaches through foreign data wrappers (other databases, files) | PostgreSQL, plus other sources through plugins | Many databases and remote schemas |
 | Schema comes from | Database catalogs; optional YAML for API-level changes | Database catalogs; smart comments and plugins | Tracked tables and relationships in metadata |
 | Extension model | Configuration only | Plugin and inflection system | Metadata, actions, remote schemas |
 
@@ -42,7 +42,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Rate limits | Yes (per token subject or IP, `RateLimit-*` headers; per instance) | No (use a gateway) | Yes (Cloud / Enterprise) |
 | Partial results (one root field failing alone) | Yes (root fields run apart only after a failure; `onError`) | Yes (per field) | No (one statement fails the request) |
 | Persisted queries and allow-lists | Yes (APQ, Apollo and Code Generator manifests, allow-list) | Yes (`@grafserv/persisted`) | Yes (allow-lists) |
-| Multi-database joins | No | Yes, across sources | Yes |
+| Multi-database joins | Through PostgreSQL foreign data wrappers, in one statement ([guide](foreign-data.md)) | Yes, across sources | Yes |
 | Event triggers / webhooks | No | No (use a job queue) | Yes |
 | REST endpoints | Yes ([see below](#compared-with-postgrest)) | No | Yes (REST endpoints from saved queries) |
 | Admin console / schema editor | GraphiQL and Scalar only | Ruru IDE | Full web console |

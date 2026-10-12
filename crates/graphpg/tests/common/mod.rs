@@ -13,6 +13,7 @@ const FORUM_SQL: &str = include_str!("../fixtures/forum.sql");
 const INTERFACES_SQL: &str = include_str!("../fixtures/interfaces_and_unions.sql");
 const REST_EXTRAS_SQL: &str = include_str!("../fixtures/rest_extras.sql");
 const PARTIAL_RESULTS_SQL: &str = include_str!("../fixtures/partial_results.sql");
+const FOREIGN_DATA_SQL: &str = include_str!("../fixtures/foreign_data.sql");
 
 /// Connection string of the test database.
 pub fn db_url() -> &'static str {
@@ -41,6 +42,11 @@ pub async fn ensure_rest_extras_fixture() {
 /// Create the `partial_results` fixture: root fields that fail on their own.
 pub async fn ensure_partial_results_fixture() {
     ensure_fixture("partial_results", PARTIAL_RESULTS_SQL).await;
+}
+
+/// Create the `fdw_app` fixture: a `postgres_fdw` foreign table and a `file_fdw` one.
+pub async fn ensure_foreign_data_fixture() {
+    ensure_fixture("fdw_app", FOREIGN_DATA_SQL).await;
 }
 
 /// Run `sql` unless `schema` already exists. Safe to call from tests running in parallel:
