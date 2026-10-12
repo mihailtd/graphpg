@@ -50,6 +50,13 @@ impl OperationPlan {
         &self.root_field_steps
     }
 
+    /// The plan of the root field `alias` alone: it compiles to a statement of that field only.
+    pub fn only_root(&self, alias: &str) -> Self {
+        let mut plan = self.clone();
+        plan.root_field_steps.retain(|(a, _)| a == alias);
+        plan
+    }
+
     pub fn step_count(&self) -> usize {
         self.steps.len()
     }

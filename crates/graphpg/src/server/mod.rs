@@ -3,6 +3,7 @@ pub mod bulk;
 pub mod cache;
 pub mod http;
 pub mod incremental;
+pub mod partial;
 pub mod persisted;
 pub mod rate_limit;
 pub mod rest;

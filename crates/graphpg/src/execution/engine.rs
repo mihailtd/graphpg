@@ -90,6 +90,20 @@ impl ExecutionError {
         }
     }
 
+    /// A failure of the data a statement read (a bad value, a function raising, a privilege
+    /// or policy), as opposed to one of the database or the request as a whole (a timeout,
+    /// the connection, resources, a crash): only the first kind can belong to one field.
+    pub fn is_data_error(&self) -> bool {
+        let ExecutionError::Postgres(e) = self else {
+            return false;
+        };
+        let Some(db) = e.as_db_error() else {
+            return false;
+        };
+        let class = &db.code().code()[..2];
+        !matches!(class, "08" | "40" | "53" | "54" | "57" | "58" | "XX")
+    }
+
     /// A failure that running the operation again may not hit: a serialization failure
     /// (under `REPEATABLE READ` or `SERIALIZABLE`) or a deadlock.
     pub fn is_transient(&self) -> bool {
@@ -629,6 +643,54 @@ impl ExecutionEngine {
             .batch_execute("ROLLBACK TO SAVEPOINT _explain")
             .await?;
         result
+    }
+
+    /// Runs query statements one after another and returns each one's `data` or error, in
+    /// order: one failing does not stop the others. They run in one `REPEATABLE READ`,
+    /// `READ ONLY` transaction, so all of them read the same snapshot, each in a savepoint
+    /// of its own (inside a transaction the caller opened, in its snapshot). Fails as a whole
+    /// only when the transaction does.
+    pub async fn run_apart<C: Connection>(
+        conn: &C,
+        queries: &[CompiledQuery],
+        auth_ctx: Option<&crate::server::AuthSessionContext>,
+    ) -> Result<Vec<Result<serde_json::Value, ExecutionError>>, ExecutionError> {
+        const FIELD: &str = "_graphql_field";
+        let client = conn.client();
+        let scope = Scope::begin(conn).await?;
+        let run: Result<_, ExecutionError> = async {
+            if scope == Scope::Transaction {
+                client
+                    .batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                    .await?;
+            }
+            if let Some(auth) = auth_ctx {
+                auth.apply(conn).await?;
+            }
+            let mut results = Vec::with_capacity(queries.len());
+            for query in queries {
+                client.batch_execute(&format!("SAVEPOINT {FIELD}")).await?;
+                let result = Self::query_data(conn, query).await;
+                let end = match result {
+                    Ok(_) => format!("RELEASE SAVEPOINT {FIELD}"),
+                    Err(_) => format!("ROLLBACK TO SAVEPOINT {FIELD}; RELEASE SAVEPOINT {FIELD}"),
+                };
+                client.batch_execute(&end).await?;
+                results.push(result);
+            }
+            Ok(results)
+        }
+        .await;
+        match run {
+            Ok(results) => {
+                scope.commit(client).await?;
+                Ok(results)
+            }
+            Err(err) => {
+                let _ = scope.rollback(client).await;
+                Err(err)
+            }
+        }
     }
 
     /// Runs a statement returning one row with a `data` column, its estimates first.

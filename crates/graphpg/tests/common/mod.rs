@@ -12,6 +12,7 @@ const DEFAULT_URL: &str = "postgres://postgres:postgres@localhost:5432/graphpg_t
 const FORUM_SQL: &str = include_str!("../fixtures/forum.sql");
 const INTERFACES_SQL: &str = include_str!("../fixtures/interfaces_and_unions.sql");
 const REST_EXTRAS_SQL: &str = include_str!("../fixtures/rest_extras.sql");
+const PARTIAL_RESULTS_SQL: &str = include_str!("../fixtures/partial_results.sql");
 
 /// Connection string of the test database.
 pub fn db_url() -> &'static str {
@@ -35,6 +36,11 @@ pub async fn ensure_interfaces_fixture() {
 /// REST API) unless it already exists.
 pub async fn ensure_rest_extras_fixture() {
     ensure_fixture("rest_extras", REST_EXTRAS_SQL).await;
+}
+
+/// Create the `partial_results` fixture: root fields that fail on their own.
+pub async fn ensure_partial_results_fixture() {
+    ensure_fixture("partial_results", PARTIAL_RESULTS_SQL).await;
 }
 
 /// Run `sql` unless `schema` already exists. Safe to call from tests running in parallel:
