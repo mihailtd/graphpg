@@ -679,6 +679,10 @@ enum ForumOrderBy {
   NAME_DESC
   ARCHIVED_AT_ASC
   ARCHIVED_AT_DESC
+  """Ascending, NULLs first."""
+  ARCHIVED_AT_ASC_NULLS_FIRST
+  """Descending, NULLs last."""
+  ARCHIVED_AT_DESC_NULLS_LAST
   """By the number of related `Message` rows."""
   MESSAGES_COUNT_ASC
   """By the number of related `Message` rows."""
@@ -687,6 +691,10 @@ enum ForumOrderBy {
   UNIQUE_AUTHOR_COUNT_ASC
   """By the value of the computed field `uniqueAuthorCount`."""
   UNIQUE_AUTHOR_COUNT_DESC
+  """Ascending, NULLs first."""
+  UNIQUE_AUTHOR_COUNT_ASC_NULLS_FIRST
+  """Descending, NULLs last."""
+  UNIQUE_AUTHOR_COUNT_DESC_NULLS_LAST
 }
 
 type ForumMinAggregate {
@@ -812,26 +820,50 @@ enum MessageOrderBy {
   CREATED_AT_DESC
   ARCHIVED_AT_ASC
   ARCHIVED_AT_DESC
+  """Ascending, NULLs first."""
+  ARCHIVED_AT_ASC_NULLS_FIRST
+  """Descending, NULLs last."""
+  ARCHIVED_AT_DESC_NULLS_LAST
   """By the `username` of the related `User` (rows without one last ascending)."""
   AUTHOR_USERNAME_ASC
   """By the `username` of the related `User` (rows without one last ascending)."""
   AUTHOR_USERNAME_DESC
+  """Ascending, NULLs first."""
+  AUTHOR_USERNAME_ASC_NULLS_FIRST
+  """Descending, NULLs last."""
+  AUTHOR_USERNAME_DESC_NULLS_LAST
   """By the `gravatarUrl` of the related `User` (rows without one last ascending)."""
   AUTHOR_GRAVATAR_URL_ASC
   """By the `gravatarUrl` of the related `User` (rows without one last ascending)."""
   AUTHOR_GRAVATAR_URL_DESC
+  """Ascending, NULLs first."""
+  AUTHOR_GRAVATAR_URL_ASC_NULLS_FIRST
+  """Descending, NULLs last."""
+  AUTHOR_GRAVATAR_URL_DESC_NULLS_LAST
   """By the `createdAt` of the related `User` (rows without one last ascending)."""
   AUTHOR_CREATED_AT_ASC
   """By the `createdAt` of the related `User` (rows without one last ascending)."""
   AUTHOR_CREATED_AT_DESC
+  """Ascending, NULLs first."""
+  AUTHOR_CREATED_AT_ASC_NULLS_FIRST
+  """Descending, NULLs last."""
+  AUTHOR_CREATED_AT_DESC_NULLS_LAST
   """By the `name` of the related `Forum` (rows without one last ascending)."""
   FORUM_NAME_ASC
   """By the `name` of the related `Forum` (rows without one last ascending)."""
   FORUM_NAME_DESC
+  """Ascending, NULLs first."""
+  FORUM_NAME_ASC_NULLS_FIRST
+  """Descending, NULLs last."""
+  FORUM_NAME_DESC_NULLS_LAST
   """By the `archivedAt` of the related `Forum` (rows without one last ascending)."""
   FORUM_ARCHIVED_AT_ASC
   """By the `archivedAt` of the related `Forum` (rows without one last ascending)."""
   FORUM_ARCHIVED_AT_DESC
+  """Ascending, NULLs first."""
+  FORUM_ARCHIVED_AT_ASC_NULLS_FIRST
+  """Descending, NULLs last."""
+  FORUM_ARCHIVED_AT_DESC_NULLS_LAST
 }
 
 type MessageMinAggregate {
@@ -965,6 +997,10 @@ enum UserOrderBy {
   USERNAME_DESC
   GRAVATAR_URL_ASC
   GRAVATAR_URL_DESC
+  """Ascending, NULLs first."""
+  GRAVATAR_URL_ASC_NULLS_FIRST
+  """Descending, NULLs last."""
+  GRAVATAR_URL_DESC_NULLS_LAST
   CREATED_AT_ASC
   CREATED_AT_DESC
   """By the number of related `Message` rows."""

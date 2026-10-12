@@ -82,7 +82,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Filtering through relations | `filter[author][name][eq]=…`, `some` / `every` / `none` / `count` on to-many | Embedded filters with `!inner`; `is.null` anti-joins |
 | Complex filters in a body | `POST /rest/<table>/search` with the same JSON filter GraphQL takes | No (the query string only; or an RPC function) |
 | Ordering | `order=name,-created_at`; also by related columns | `order=name.desc.nullslast`; also by embedded to-one columns |
-| `NULLS FIRST` / `LAST` | PostgreSQL's default (last ascending, first descending) | Yes |
+| `NULLS FIRST` / `LAST` | Yes: `order=-rank:nullslast` (GraphQL `RANK_DESC_NULLS_LAST`), keyset pagination included | Yes |
 | Column selection | `fields=a,b` | `select=a,b`, with renaming and casts (`total:amount::text`) |
 | Embedding relations | `include=posts,posts.author` (to-one, to-many, many-to-many); all columns of the embedded rows | `select=*,posts(*)`, nested, with column lists, hints (`!fk`), `!inner` joins |
 | Filter, order and limit *inside* an embedding | Yes, to-many relations (`filter[posts][status][eq]=x`, `order[posts]=-createdAt`, `first[posts]=5`, `offset[posts]=10`); sparse fieldsets per relation (`fields[posts]=id,title`); `inner=posts` / `anti=posts` for inner joins and anti-joins | Yes (`posts.order=…`, `posts.limit=…`, `posts.status=eq.x`, `!inner`) |
@@ -239,7 +239,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 ### When PostgREST fits better
 
 - You need **GeoJSON, XML, plain-text or custom media types** (domains, aggregates) from the REST API itself.
-- You rely on **spread** embeds (`...author(name)`), JSON arrow operators in the URL (`->`, `->>`; graphpg has `path[column]`), or `NULLS FIRST` / `LAST`.
+- You rely on **spread** embeds (`...author(name)`), or JSON arrow operators in the URL (`->`, `->>`; graphpg has `path[column]`).
 - You want the token to **choose the PostgreSQL role**, or `Accept-Profile` to switch **schemas per request**.
 - You need **configuration reload without a restart** (graphpg reloads the schema, not its configuration).
 - You value a **decade of production use**, a large ecosystem and client libraries (`postgrest-js`, ...).
@@ -256,7 +256,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### Known gaps
 
-What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: `NULLS FIRST` / `LAST` ordering, spread embeds, GeoJSON, XML and custom media types, and `Accept-Profile`-style schema selection (graphpg serves each schema at `/rest/{schema}/…` instead).
+What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: spread embeds, GeoJSON, XML and custom media types, and `Accept-Profile`-style schema selection (graphpg serves each schema at `/rest/{schema}/…` instead).
 
 ## Where graphpg is a fit
 

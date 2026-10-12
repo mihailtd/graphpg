@@ -22,6 +22,8 @@ enum CustomerOrderBy {
   NAME_DESC
   CREATED_AT_ASC
   CREATED_AT_DESC    # one ASC/DESC pair per column
+  CREATED_AT_ASC_NULLS_FIRST   # and, for a column that can be NULL,
+  CREATED_AT_DESC_NULLS_LAST   # the placements of NULL that are not the default
 }
 
 type Query {
@@ -32,6 +34,8 @@ type Query {
 ```
 
 `orderBy: [NAME_ASC, PRIMARY_KEY_ASC]` becomes `ORDER BY c0."name" ASC, c0."id" ASC`; the planner resolves enum values to SQL before execution. It works with variables (`$ord: [CustomerOrderBy!]`).
+
+NULLs sort as PostgreSQL sorts them by default: last ascending, first descending. A column that can be NULL (and a related row's column or a computed value) also has the other placements, `_ASC_NULLS_FIRST` and `_DESC_NULLS_LAST`, which become `NULLS FIRST` / `NULLS LAST`. The defaults keep their short names and emit no `NULLS` clause, so an index in the default order still serves them; for a placement you use often, create the index in that order (`CREATE INDEX ON customers (created_at DESC NULLS LAST)`).
 
 Connections page by **keyset**. The `orderBy` columns are followed by the primary-key columns they leave out, which makes the order total. A cursor holds the values of all of them, and `after`/`before` select the rows past it, so no row is skipped or repeated even when sort values tie, and every page is an index seek, never an `OFFSET` scan.
 

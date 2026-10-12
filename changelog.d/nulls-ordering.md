@@ -1,0 +1,1 @@
+- **`NULLS FIRST` / `NULLS LAST` ordering**: `<NAME>_ASC_NULLS_FIRST` and `<NAME>_DESC_NULLS_LAST` in every `<Type>OrderBy` for options that can be NULL, and `order=-rank:nullslast` over REST. Keyset pagination stays exact in every placement, forward and backward. The new enum values change the exported SDL: re-export pinned schemas (`graphpg schema export`).

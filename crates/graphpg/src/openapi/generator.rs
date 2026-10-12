@@ -1774,7 +1774,10 @@ impl OpenApiGenerator {
         let columns = Self::visible_fields(table, catalog);
         let mut orderable = columns.clone();
         orderable.extend(Self::order_names(table, catalog));
-        let order_item = format!("^[+-]?{}(:(asc|desc))?$", alternation(&orderable));
+        let order_item = format!(
+            "^[+-]?{}(:(asc|desc))?(:(nullsfirst|nullslast))?$",
+            alternation(&orderable)
+        );
         let mut params = vec![
             json!({
                 "name": "filter", "in": "query", "style": "deepObject", "explode": true,
@@ -1783,7 +1786,7 @@ impl OpenApiGenerator {
             }),
             json!({
                 "name": "order", "in": "query", "style": "form", "explode": false,
-                "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
+                "description": "What to order by: `column`, `-column` or `column:desc`, and where NULLs go with `:nullsfirst` / `:nullslast` (by default last ascending, first descending). Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
                 "schema": { "type": "array", "items": { "type": "string", "pattern": order_item } }
             }),
             json!({
@@ -1848,7 +1851,7 @@ impl OpenApiGenerator {
         let mut properties = json!({
             "filter": schema_ref(&format!("{}Filter", table.name)),
             "order": {
-                "description": "Columns to order by: `column`, `-column` or `column:desc`",
+                "description": "Columns to order by: `column`, `-column` or `column:desc`, with `:nullsfirst` / `:nullslast`",
                 "oneOf": [
                     { "type": "string" },
                     { "type": "array", "items": { "type": "string" } }

@@ -398,6 +398,7 @@ impl SqlCompiler {
                 nullable: false,
                 compare: cast.clone().map_or(SortCompare::Text, SortCompare::Cast),
                 expr: None,
+                nulls_first: None,
             })
             .collect();
         let keyset: &[SortKey] = if sort.is_empty() { &key_sort } else { sort };
@@ -425,7 +426,7 @@ impl SqlCompiler {
         let order: Vec<String> = keyset
             .iter()
             .zip(&key_exprs)
-            .map(|(k, e)| format!("{e} {}", if k.descending { "DESC" } else { "ASC" }))
+            .map(|(k, e)| format!("{e} {}", k.direction_sql(false)))
             .collect();
         let from = match source {
             Some(source) => Self::function_from(source, table_alias, &mut params),
@@ -2817,6 +2818,7 @@ impl SqlCompiler {
                     nullable: false,
                     compare: cast.clone().map_or(SortCompare::Text, SortCompare::Cast),
                     expr: None,
+                    nulls_first: None,
                 })
                 .collect();
             &key_sort[..]
@@ -2859,7 +2861,7 @@ impl SqlCompiler {
             let order: Vec<String> = keyset
                 .iter()
                 .zip(&key_exprs)
-                .map(|(k, e)| format!("{e} {}", if k.descending { "DESC" } else { "ASC" }))
+                .map(|(k, e)| format!("{e} {}", k.direction_sql(false)))
                 .collect();
             let over = format!(
                 "OVER ({partition}ORDER BY {} ROWS UNBOUNDED PRECEDING)",
@@ -2930,16 +2932,7 @@ impl SqlCompiler {
         let order_items: Vec<String> = keyset
             .iter()
             .zip(&key_exprs)
-            .map(|(k, e)| {
-                format!(
-                    "{e} {}",
-                    if k.descending != backward {
-                        "DESC"
-                    } else {
-                        "ASC"
-                    }
-                )
-            })
+            .map(|(k, e)| format!("{e} {}", k.direction_sql(backward)))
             .collect();
         let order_by_sql = format!("ORDER BY {}", order_items.join(", "));
         let rn_order = if backward {
@@ -4876,8 +4869,9 @@ impl SqlCompiler {
         (from, clauses)
     }
 
-    /// Condition selecting the rows after (`after`) or before a cursor in a keyset order,
-    /// where NULLs sort as the largest value. It is one row comparison when that is exact,
+    /// Condition selecting the rows after (`after`) or before a cursor in a keyset order.
+    /// NULLs sort above every value (PostgreSQL's default) or below it (`nulls_high`, from
+    /// `NULLS FIRST` / `LAST`). It is one row comparison when that is exact,
     /// `ROW(a, b) > ROW($1, $2)`: an index seek. Mixed directions and NULLs need the
     /// expansion, `a > $1 OR (a = $1 AND b > $2)`, with each column's direction and NULL
     /// spelled out.
@@ -4909,9 +4903,11 @@ impl SqlCompiler {
         let op = |k: &SortKey| if greater(k) { ">" } else { "<" };
 
         // A row comparison is NULL (no match) at the first NULL pair, which is exact only
-        // when no value is NULL, or when rows are sought below the cursor (NULLs are above)
+        // when no NULL lies in the direction rows are sought in
         let uniform = keys.iter().all(|k| greater(k) == greater(&keys[0]));
-        let has_nulls = keys.iter().any(|k| k.nullable) && greater(&keys[0]);
+        let has_nulls = keys
+            .iter()
+            .any(|k| k.nullable && k.nulls_high() == greater(k));
         if uniform && !has_nulls && bound.iter().all(Option::is_some) {
             let values: Vec<&str> = bound.iter().flatten().map(String::as_str).collect();
             return match (exprs, values.as_slice()) {
@@ -4928,13 +4924,18 @@ impl SqlCompiler {
         let mut terms = Vec::new();
         let mut equal: Vec<String> = Vec::new();
         for ((k, e), v) in keys.iter().zip(exprs).zip(&bound) {
-            let beyond = match (greater(k), v) {
-                (true, Some(v)) if k.nullable => Some(format!("({e} > {v} OR {e} IS NULL)")),
-                (true, Some(v)) => Some(format!("{e} > {v}")),
-                // Nothing sorts above NULL
-                (true, None) => None,
-                (false, Some(v)) => Some(format!("{e} < {v}")),
-                (false, None) => Some(format!("{e} IS NOT NULL")),
+            // Rows beyond the cursor in this column: NULLs are beyond a value when they lie
+            // in the direction sought, and every value is beyond a NULL that lies behind
+            let toward_nulls = greater(k) == k.nulls_high();
+            let cmp = if greater(k) { ">" } else { "<" };
+            let beyond = match v {
+                Some(v) if k.nullable && toward_nulls => {
+                    Some(format!("({e} {cmp} {v} OR {e} IS NULL)"))
+                }
+                Some(v) => Some(format!("{e} {cmp} {v}")),
+                // Nothing lies beyond NULL in its own direction
+                None if toward_nulls => None,
+                None => Some(format!("{e} IS NOT NULL")),
             };
             if let Some(beyond) = beyond {
                 let parts: Vec<&str> = equal
