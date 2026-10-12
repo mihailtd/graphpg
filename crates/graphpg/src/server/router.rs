@@ -2,8 +2,8 @@
 //! GraphQL, developer UIs, and health checks, with layered middleware.
 use super::bulk::{export_handler, import_handler};
 use super::http::{
-    graphql_handler, graphql_sdl_handler, graphql_subgraph_handler, health_handler, live_handler,
-    openapi_spec_handler, ready_handler, rest_handler,
+    graphql_get_handler, graphql_handler, graphql_sdl_handler, graphql_subgraph_handler,
+    health_handler, live_handler, openapi_spec_handler, ready_handler, rest_handler,
 };
 use super::rest::rest_schemas;
 use super::rest::{
@@ -24,12 +24,13 @@ use axum::Extension;
 use axum::Router;
 use std::sync::Arc;
 use std::time::Duration;
-use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer, ExposeHeaders};
 
-/// Mounts the GraphQL API routes: `/graphql`, plus `/export` and `/import/{type_name}`.
+/// Mounts the GraphQL API routes: `/graphql` (`POST`, and `GET` for queries), plus `/export`
+/// and `/import/{type_name}`.
 pub fn graphql_routes() -> Router<Arc<ServerState>> {
     Router::new()
-        .route("/graphql", post(graphql_handler))
+        .route("/graphql", post(graphql_handler).get(graphql_get_handler))
         .route("/export", post(export_handler))
         // An import streams NDJSON of any size: the body limit does not apply
         .route(
@@ -308,6 +309,31 @@ pub fn apply_layers_with_mode(router: Router, config: &Config, is_dev: bool) -> 
     }
 }
 
+/// Response headers graphpg sends that are not CORS-safelisted: without them in
+/// `Access-Control-Expose-Headers` a page's scripts cannot read them.
+const DEFAULT_EXPOSE_HEADERS: &[&str] = &[
+    "x-request-id",
+    "etag",
+    "location",
+    "link",
+    "content-range",
+    "accept-ranges",
+    "preference-applied",
+    "x-total-count",
+    "x-total-count-estimate",
+    "x-affected-count",
+    "x-next-cursor",
+    "x-previous-cursor",
+    "x-wal-position",
+    "ratelimit-limit",
+    "ratelimit-remaining",
+    "ratelimit-reset",
+    "retry-after",
+    "server-timing",
+    "x-debug-sql",
+    "x-debug-explain",
+];
+
 /// The CORS layer for `server.cors`, or none when no origin is allowed.
 fn cors_layer(cors: &CorsConfig) -> Option<CorsLayer> {
     if !cors.enabled() {
@@ -344,6 +370,7 @@ fn cors_layer(cors: &CorsConfig) -> Option<CorsLayer> {
             "if-none-match",
             "if-match",
             "range",
+            "x-min-wal-position",
         ]
         .iter()
         .map(|h| HeaderName::from_static(h))
@@ -354,10 +381,22 @@ fn cors_layer(cors: &CorsConfig) -> Option<CorsLayer> {
             .filter_map(|h| HeaderName::from_bytes(h.as_bytes()).ok())
             .collect()
     };
+    let exposed: Vec<HeaderName> = if cors.expose_headers.is_empty() {
+        DEFAULT_EXPOSE_HEADERS
+            .iter()
+            .map(|h| HeaderName::from_static(h))
+            .collect()
+    } else {
+        cors.expose_headers
+            .iter()
+            .filter_map(|h| HeaderName::from_bytes(h.as_bytes()).ok())
+            .collect()
+    };
     let mut layer = CorsLayer::new()
         .allow_origin(origins)
         .allow_methods(AllowMethods::list(methods))
         .allow_headers(AllowHeaders::list(headers))
+        .expose_headers(ExposeHeaders::list(exposed))
         .allow_credentials(cors.credentials);
     if let Some(secs) = cors.max_age {
         layer = layer.max_age(Duration::from_secs(secs));
@@ -380,13 +419,30 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
         None => DefaultBodyLimit::disable(),
     };
 
+    // `limits.rate_limit` on the APIs; off, there is no layer at all
+    let limited = state.rate_limiter.is_some();
+
     if state.graphql_enabled {
-        router = router.merge(graphql_routes().layer(body_limit));
+        let mut graphql = graphql_routes().layer(body_limit);
+        if limited {
+            graphql = graphql.layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                super::rate_limit::limit_graphql,
+            ));
+        }
+        router = router.merge(graphql);
         router = router.merge(sdl_routes(&state));
     }
 
     if state.openapi_enabled {
-        router = router.merge(rest_routes(&served_schemas(&state)).layer(body_limit));
+        let mut rest = rest_routes(&served_schemas(&state)).layer(body_limit);
+        if limited {
+            rest = rest.layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                super::rate_limit::limit_rest,
+            ));
+        }
+        router = router.merge(rest);
         router = router.merge(openapi_routes(&state));
     }
 
@@ -464,6 +520,70 @@ mod tests {
         assert_eq!(out["x-frame-options"], "SAMEORIGIN");
         assert!(!out.contains_key("strict-transport-security"));
         assert_eq!(out["x-content-type-options"], "nosniff");
+    }
+
+    async fn cors_answer(
+        cors: CorsConfig,
+        request: axum::http::Request<axum::body::Body>,
+    ) -> axum::http::HeaderMap {
+        use tower::ServiceExt;
+        let mut config = Config::default();
+        config.server.cors = cors;
+        let app = apply_layers(
+            Router::new().route("/graphql", get(|| async { "ok" })),
+            &config,
+        );
+        app.oneshot(request).await.unwrap().headers().clone()
+    }
+
+    #[tokio::test]
+    async fn cors_exposes_the_headers_graphpg_sends() {
+        let cors = CorsConfig {
+            origins: vec!["https://app.example.com".into()],
+            ..Default::default()
+        };
+        let request = axum::http::Request::get("/graphql")
+            .header("origin", "https://app.example.com")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let headers = cors_answer(cors.clone(), request).await;
+        let exposed = headers["access-control-expose-headers"].to_str().unwrap();
+        for name in [
+            "ratelimit-remaining",
+            "retry-after",
+            "etag",
+            "x-wal-position",
+            "x-total-count",
+        ] {
+            assert!(exposed.contains(name), "{name} not in {exposed}");
+        }
+
+        // A browser may send the WAL position back for read-your-writes
+        let preflight = axum::http::Request::builder()
+            .method("OPTIONS")
+            .uri("/graphql")
+            .header("origin", "https://app.example.com")
+            .header("access-control-request-method", "GET")
+            .header("access-control-request-headers", "x-min-wal-position")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let headers = cors_answer(cors.clone(), preflight).await;
+        assert!(headers["access-control-allow-headers"]
+            .to_str()
+            .unwrap()
+            .contains("x-min-wal-position"));
+
+        // A list of its own replaces the default
+        let narrow = CorsConfig {
+            expose_headers: vec!["x-request-id".into()],
+            ..cors
+        };
+        let request = axum::http::Request::get("/graphql")
+            .header("origin", "https://app.example.com")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let headers = cors_answer(narrow, request).await;
+        assert_eq!(headers["access-control-expose-headers"], "x-request-id");
     }
 
     #[test]

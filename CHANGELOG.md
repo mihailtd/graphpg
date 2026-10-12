@@ -5,6 +5,11 @@ Releases are tagged `vX.Y.Z`; each one has generated notes on the
 
 ## Unreleased
 
+- **Rate limits** (`limits.rate_limit`, #17, off by default): a token bucket (GCRA) per client over GraphQL and REST, keyed by the verified token's `sub` (`key_claim`) or the IP address (`X-Forwarded-For` from `trusted_proxies` only), with `anonymous` and `authenticated` rates. Answers carry `RateLimit-Limit` / `-Remaining` / `-Reset`; a refused request is `429` with `Retry-After` and `RATE_LIMITED`. In memory, per instance.
+- **Persisted queries** (`graphql.persisted_queries`, #19, off by default): Apollo's automatic persisted queries (`extensions.persistedQuery.sha256Hash`), a manifest of operations (Apollo's format, or a map of ids to texts) named by `documentId` or hash and validated against the schema at startup, and `allow_list` to run only the manifest's operations (`OPERATION_NOT_ALLOWED`, `/export` included). Off, a request naming one is `PERSISTED_QUERY_NOT_SUPPORTED`.
+- **CORS exposes graphpg's response headers** (`server.cors.expose_headers`, default: every header graphpg sends): browser scripts could not read `ETag`, `Link`, `Content-Range`, `X-Total-Count`, `X-WAL-Position` or the new `RateLimit-*` / `Retry-After`. `X-Min-WAL-Position` is now an allowed request header by default. With rate limits on, the OpenAPI document gives each operation a `429` and each success the `RateLimit-*` headers.
+- **`GET /graphql`** for queries (a mutation is `405`), so persisted queries can be cached by URL.
+
 - **Observability** (`telemetry:`, [guide](docs/observability.md)), for Prometheus, OpenTelemetry collectors and the Grafana LGTM stack. Metric names follow the OpenTelemetry semantic conventions, so scraped and pushed metrics read the same:
   - *Metrics:* Prometheus at `/metrics` (`telemetry.metrics`: on in dev, off in prod, optionally on a port of its own). They cover HTTP requests by route template, GraphQL operations by name and error code, database operations by type and SQLSTATE, connection pools, cache hits and planning time.
   - *OTLP/HTTP export* of traces, metrics and logs (`telemetry.otlp`: endpoint, headers, per-signal switches).

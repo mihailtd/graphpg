@@ -81,6 +81,38 @@ Page sizes and the cost of an operation are bounded by the deployment's [`limits
 
 Plain list fields (`forums: [Forum!]!`) and to-many relations (`messages: [Message!]!`) have no page size: they return at most `limits.page_size.max` rows. Page through the `…Connection` fields to read more. `createForums(inputs:)` accepts at most `limits.bulk_rows` rows, nested ones included. A statement running longer than `limits.statement_timeout` is cancelled (`STATEMENT_TIMEOUT`). `/export` streams a whole connection and is not limited.
 
+### Rate limits
+
+With [`limits.rate_limit`](configuration.md#rate-limits) on, a client over its rate is answered `429` before the operation is parsed, with `Retry-After` and:
+
+```json
+{ "errors": [{ "message": "too many requests: retry in 12 s",
+               "extensions": { "code": "RATE_LIMITED", "retryAfter": 12 } }] }
+```
+
+Every answer carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`.
+
+## Persisted queries
+
+`graphql.persisted_queries` lets clients send an operation by reference instead of by text, and lets production run only known operations. It is off by default.
+
+```yaml
+graphql:
+  persisted_queries:
+    enabled: true
+    manifest: persisted-operations.json
+prod:
+  graphql:
+    persisted_queries: { allow_list: true }
+```
+
+- **Automatic persisted queries** (Apollo's protocol, `automatic: true`): the client sends `extensions: { persistedQuery: { version: 1, sha256Hash } }` with the SHA-256 of the text, in hex. An unknown hash is answered `PERSISTED_QUERY_NOT_FOUND` (message `PersistedQueryNotFound`, HTTP 200); the client sends the hash with the text, which registers it in this instance's memory, and the hash alone from then on. A hash that is not the text's is `PERSISTED_QUERY_HASH_MISMATCH` (400). Apollo Client's `createPersistedQueryLink` speaks this protocol.
+- **A manifest** of known operations, read at startup: an Apollo persisted query manifest (`{ "format": "apollo-persisted-query-manifest", "version": 1, "operations": [{ "id", "name", "type", "body" }] }`, from `generate-persisted-query-manifest`), or a map of ids to texts (`{ "<id>": "<text>" }`, as GraphQL Code Generator's persisted documents and Relay write it). A client names one by `documentId`, or by the SHA-256 of its text. Every operation is validated against the schema at startup: prod refuses to start when one does not validate (a column it reads was dropped), dev logs it, and the schema watcher logs it after a reload.
+- **The allow-list** (`allow_list: true`, needs a manifest): only the manifest's operations run, by id, by hash, or sent as text whose hash is listed (so clients that send the text keep working). Anything else is `OPERATION_NOT_ALLOWED` (403) before it is parsed, and nothing can be registered. `/export` queries must be listed too. Introspection is refused unless an introspection query is in the manifest, so leave the allow-list off where GraphiQL is used.
+- **Off**, a request naming a persisted query (by hash or `documentId`) is answered `PERSISTED_QUERY_NOT_SUPPORTED` (message `PersistedQueryNotSupported`); Apollo clients then send the text alone.
+
+A persisted query is planned like any other: the document and compiled-operation caches are keyed by its text. `GET /graphql?extensions=…&variables=…` runs a query (never a mutation: `405`) with a URL short enough for a CDN to cache.
+
 ## Constraints as `@constraint`
 
 What the database enforces on a value is stated on the field, in the keywords of JSON Schema, the same ones the [OpenAPI document](configuration.md#the-openapi-document-and-uis) uses: a single-column `CHECK` and a `varchar(n)` length.

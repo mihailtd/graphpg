@@ -45,6 +45,7 @@ OpenTelemetry export is compiled into the image: set `telemetry.otlp.endpoint` (
 | Path | Method | |
 | :--- | :--- | :--- |
 | `/graphql` | `POST` | Queries, mutations, `@defer` / `@stream` (as `multipart/mixed`) and Federation `_entities` (404 when `graphql.enabled: false`) |
+| `/graphql` | `GET` | Queries in the URL (`query`, `operationName`, `variables`, `extensions`, `documentId`), for caching by URL with [persisted queries](graphql-api.md#persisted-queries); a mutation is `405` |
 | `/rest/{resource}` … | `GET` `POST` `PATCH` `PUT` `DELETE` | The [REST API](rest-api.md): list, search, read, create, update, upsert and delete (404 when `openapi.enabled: false`) |
 | `/rest` | `GET` | REST API root |
 | `/graphiql` | `GET` | GraphiQL IDE, when `graphql.ui` is on (404 otherwise) |
@@ -100,7 +101,8 @@ server:
   cors:                         # default: any origin in dev, none in prod (no CORS headers)
     origins: [https://app.example.com]   # or ['*']
     methods: [GET, POST]        # default: GET POST PUT PATCH DELETE OPTIONS HEAD
-    headers: [authorization, content-type]  # default: authorization content-type accept prefer
+    headers: [authorization, content-type]  # default: authorization content-type accept prefer x-request-id if-none-match if-match range x-min-wal-position
+    expose_headers: [x-request-id]   # headers scripts may read; default: every one graphpg sends (ETag, Link, Content-Range, X-Total-Count, X-WAL-Position, RateLimit-*, Retry-After, ...)
     credentials: false          # needs explicit origins, not '*'
     max_age: 600                # seconds a browser caches the preflight
 
@@ -134,6 +136,13 @@ limits:                         # shared by GraphQL and REST, enforced on the pl
   groups: 10000
   request_body_bytes: 1048576
   statement_timeout: 30s        # `off` for none
+  rate_limit:                   # requests per client and minute, per instance (see "Rate limits")
+    enabled: false              # off by default: nothing is counted, no headers are sent
+    anonymous: { requests_per_minute: 60 }          # by IP address; burst defaults to the rate
+    authenticated: { requests_per_minute: 600, burst: 100 }   # by the token's key_claim
+    key_claim: sub
+    trusted_proxies: [10.0.0.0/8]   # proxies whose X-Forwarded-For names the client
+    max_clients: 100000
 
 auth: { ... }                   # OAuth 2.0 bearer tokens (see authentication.md)
 rbac: { enabled: false }        # prune the APIs to what a role may access
@@ -146,6 +155,11 @@ graphql:
   sdl_path: /schema.graphql
   subgraph_path: /subgraph.graphql   # the Federation subgraph SDL, with federation on
   federation: { enabled: false }
+  persisted_queries:            # operations sent by hash or id (see graphql-api.md#persisted-queries)
+    enabled: false              # off by default: a request naming one gets PERSISTED_QUERY_NOT_SUPPORTED
+    automatic: true             # APQ: clients register a hash by sending it with the text
+    manifest: persisted-operations.json   # known operations, read and validated at startup
+    allow_list: false           # run only the manifest's operations (e.g. under prod:)
 openapi:
   enabled: true                 # the REST API at /rest and its OpenAPI description (alias: rest)
   ui: false                     # the Scalar API reference: on by default in dev mode only
@@ -320,6 +334,27 @@ A request over a limit fails before it touches the database. GraphQL: an error w
 
 Limits are global, not per entity: one number to reason about, and the same for every client of a container. For different limits per audience, run another container.
 
+### Rate limits
+
+`limits.rate_limit` bounds how many requests a client makes to `/graphql`, `/export`, `/import` and `/rest`. It is **off by default**; off, there is no middleware at all, nothing is counted and no headers are sent. Probes, metrics, the SDL, the OpenAPI document and the UIs are never limited.
+
+```yaml
+limits:
+  rate_limit:
+    enabled: true
+    anonymous: { requests_per_minute: 60, burst: 20 }
+    authenticated: { requests_per_minute: 600 }   # burst defaults to the rate
+    trusted_proxies: [10.0.0.0/8]
+prod:
+  limits: { rate_limit: { enabled: true } }       # or switch it on per mode
+```
+
+- **Who a client is.** A request with an access token that verifies is counted against its `key_claim` (`sub` by default; a claim name or a dot-separated path), at the `authenticated` rate. Anything else, a missing or invalid token included, is counted against its IP address at the `anonymous` rate. The address is the connection's peer; when the peer is in `trusted_proxies`, it is the last `X-Forwarded-For` entry no trusted proxy added, so a client cannot choose its own address. `requests_per_minute: off` leaves a kind of client unlimited.
+- **How.** Each client has a token bucket (the Generic Cell Rate Algorithm): it holds `burst` requests and refills at `requests_per_minute`. A request is counted before it is parsed, planned or sent to the database; a refused one does not use up the bucket.
+- **Headers.** Every answer carries `RateLimit-Limit` (the burst), `RateLimit-Remaining` and `RateLimit-Reset` (seconds until the bucket is full). A refused request is `429 Too Many Requests` with `Retry-After` and the code `RATE_LIMITED`: a GraphQL error (`extensions: { code: "RATE_LIMITED", retryAfter }`), or a REST problem document.
+- **Documented and readable.** With rate limits on, the OpenAPI document gives every operation a `429` response and every success the `RateLimit-*` headers; off, the document is unchanged. Cross-origin pages can read the headers: `server.cors.expose_headers` exposes them by default.
+- **Per instance.** Buckets live in each instance's memory (at most `max_clients` of them; full buckets are dropped first), so behind a load balancer with N instances a client gets up to N times the rate. Divide the rates by the number of instances, or use sticky sessions.
+
 ### Development mode (`--mode dev`)
 
 - `watch.enabled` defaults to `true`: graphpg installs an event trigger on `ddl_command_end` and `sql_drop`, listens for asynchronous notifications (`LISTEN graphpg_watch`), and re-introspects live catalogs in ~1.5s without interrupting in-flight requests.
@@ -331,6 +366,7 @@ Limits are global, not per entity: one number to reason about, and the same for 
 ### Production mode (`--mode prod`)
 
 - `watch.enabled`, `graphql.ui`, `openapi.ui`, `graphql.introspection` and `graphql.sdl` default to `false`, `errors.detail` to `masked` and `headers.preset` to `strict`. If any of these dev features are explicitly enabled, a startup warning is logged.
+- `limits.rate_limit` and `graphql.persisted_queries` are off in both modes; turn them on under `prod:` to use them in production only. With a manifest, prod refuses to start when one of its operations no longer validates against the schema (dev logs it).
 - `debug.sql` and `debug.explain` are **dev-only**: validation rejects them if enabled in the shared section or `prod:` block (`debug.sql is only allowed in the dev: block`).
 
 ---

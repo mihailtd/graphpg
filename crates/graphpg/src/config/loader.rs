@@ -220,6 +220,7 @@ impl Config {
             let mut problems = config.limits.problems();
             problems.extend(config.server.cors.problems());
             problems.extend(config.telemetry.problems());
+            problems.extend(config.graphql.persisted_queries.problems());
             if !problems.is_empty() {
                 let problems = if m == mode {
                     problems
@@ -468,6 +469,65 @@ prod:
         assert_eq!((dev.database.pool_size, prod.database.pool_size), (2, 20));
         // Deep merge: a block's setting does not drop its siblings
         assert!(dev.graphql.federation.enabled && prod.graphql.federation.enabled);
+    }
+
+    #[test]
+    fn rate_limits_and_persisted_queries_are_off_by_default() {
+        for mode in Mode::ALL {
+            let config = Config::defaults(mode);
+            assert!(!config.limits.rate_limit.enabled);
+            assert!(!config.graphql.persisted_queries.enabled);
+        }
+    }
+
+    #[test]
+    fn rate_limits_parse_and_are_checked() {
+        let config = Config::parse(
+            "limits:\n  rate_limit:\n    enabled: '${ON}'\n    anonymous: { requests_per_minute: '30', burst: 5 }\n    authenticated: { requests_per_minute: off }\n    trusted_proxies: [10.0.0.0/8, '::1']\n",
+            Mode::Prod,
+            &|name| (name == "ON").then(|| "true".to_string()),
+        )
+        .unwrap();
+        let rate = &config.limits.rate_limit;
+        assert!(rate.enabled);
+        assert_eq!(rate.anonymous.requests_per_minute, Some(30));
+        assert_eq!(rate.anonymous.burst, Some(5));
+        assert_eq!(rate.authenticated.requests_per_minute, None);
+        assert_eq!(rate.key_claim, "sub");
+
+        let err = Config::parse(
+            "limits:\n  rate_limit:\n    anonymous: { requests_per_minute: 0 }\n    trusted_proxies: [proxy.internal]\n",
+            Mode::Prod,
+            &|_| None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("anonymous.requests_per_minute"), "{err}");
+        assert!(err.contains("proxy.internal"), "{err}");
+    }
+
+    #[test]
+    fn an_allow_list_needs_a_manifest() {
+        let err = Config::parse(
+            "graphql:\n  persisted_queries:\n    allow_list: true\n",
+            Mode::Prod,
+            &|_| None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("needs graphql.persisted_queries.enabled"),
+            "{err}"
+        );
+        assert!(err.contains("needs a manifest"), "{err}");
+        let config = Config::parse(
+            "graphql:\n  persisted_queries: { enabled: true }\nprod:\n  graphql:\n    persisted_queries: { allow_list: true, manifest: ops.json }\n",
+            Mode::Dev,
+            &|_| None,
+        )
+        .unwrap();
+        assert!(config.graphql.persisted_queries.automatic);
+        assert!(!config.graphql.persisted_queries.allow_list);
     }
 
     #[test]
