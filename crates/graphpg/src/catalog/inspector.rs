@@ -752,6 +752,7 @@ impl<'a> CatalogInspector<'a> {
                     table.primary_key = columns;
                 }
                 ConstraintKind::ForeignKey => table.foreign_keys.push(ForeignKeyMetadata {
+                    batch: false,
                     constraint_name: row.get(1),
                     columns,
                     foreign_schema: row.get(4),

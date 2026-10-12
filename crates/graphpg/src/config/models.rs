@@ -1695,6 +1695,12 @@ pub struct ForeignKeyConfig {
     /// Hide the to-many relation fields on the referenced type.
     #[serde(default)]
     pub omit_reverse: bool,
+    /// Foreign tables: read the to-many relation of a page of parents in one query
+    /// (`= ANY` their keys) instead of one per parent. Every child of those parents is
+    /// fetched and trimmed to the page size locally, so use it when parents have few
+    /// children each (see `docs/foreign-data.md`).
+    #[serde(default)]
+    pub batch: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

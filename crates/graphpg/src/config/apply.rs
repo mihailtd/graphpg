@@ -258,7 +258,21 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &Config) -> Result
             if !ok {
                 continue;
             }
+            if fk.batch {
+                let source = find_relation(catalog, config, name).ok();
+                if source.is_none_or(|t| t.kind != RelationKind::ForeignTable) {
+                    errors.push(format!(
+                        "{path}.batch: only a foreign table's relations are read in batches"
+                    ));
+                }
+                if fk.columns.len() != 1 {
+                    errors.push(format!(
+                        "{path}.batch: only a single-column foreign key is read in batches"
+                    ));
+                }
+            }
             let virtual_fk = ForeignKeyMetadata {
+                batch: fk.batch,
                 constraint_name: fk_name.clone(),
                 columns: fk.columns.clone(),
                 foreign_schema: target.schema.clone(),

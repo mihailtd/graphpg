@@ -498,3 +498,117 @@ async fn startup_advice_for_foreign_tables() {
         "{advice:#?}"
     );
 }
+
+/// `value` with every array sorted, for comparing lists whose order is not specified.
+fn unordered(value: Value) -> Value {
+    match value {
+        Value::Array(items) => {
+            let mut items: Vec<Value> = items.into_iter().map(unordered).collect();
+            items.sort_by_key(|v| v.to_string());
+            Value::Array(items)
+        }
+        Value::Object(map) => {
+            Value::Object(map.into_iter().map(|(k, v)| (k, unordered(v))).collect())
+        }
+        other => other,
+    }
+}
+
+/// `batch: true` reads a page of parents' children in one remote query; the answer is the
+/// same as reading them per parent.
+#[tokio::test]
+async fn batched_relations_answer_the_same_in_one_remote_query() {
+    // Small pages, so nested lists stay under the cost limit
+    let small = format!("{CONFIG}limits:\n  page_size: {{ default: 10, max: 10 }}\n");
+    let batched_config = small.replace(
+        "        reverse_field_name: invoices\n",
+        "        reverse_field_name: invoices\n        batch: true\n",
+    );
+    assert_ne!(batched_config, small);
+    let (plain, batched) = (app_with(&small).await, app_with(&batched_config).await);
+    for query in [
+        "{ customers { name invoices { databaseId amount status } } }",
+        // Nested: each invoice's customer, and that customer's invoices again
+        "{ customers { name invoices { databaseId customer { name invoices { databaseId } } } } }",
+        // A parent without children gets an empty list
+        r#"{ customersConnection(filter: { name: { equalTo: "Initech" } }) { nodes { invoices { databaseId } } } }"#,
+    ] {
+        // Plain list relations have no order: compare them as sets
+        assert_eq!(
+            unordered(graphql(&plain, query).await),
+            unordered(graphql(&batched, query).await),
+            "{query}"
+        );
+    }
+
+    // The plan: one remote scan for every customer, instead of one per customer
+    let explain = |config: String| async move {
+        prepare().await;
+        let client = {
+            let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+                .await
+                .unwrap();
+            tokio::spawn(async move {
+                let _ = connection.await;
+            });
+            client
+        };
+        let config = Config::from_yaml(&config).unwrap();
+        let catalog = CatalogInspector::new(&client)
+            .inspect_schema_with_config(SCHEMA, &config)
+            .await
+            .unwrap();
+        let schema = SchemaBuilder::build(&catalog).unwrap();
+        let state = ServerState::new(
+            create_pool(common::db_url(), 2).unwrap(),
+            schema,
+            catalog,
+            SCHEMA.to_string(),
+            DebugOptions {
+                sql: true,
+                explain: true,
+            },
+        )
+        .with_config(config);
+        let request = Request::post("/graphql")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "query": "{ customers { invoices { amount } } }" }).to_string(),
+            ))
+            .unwrap();
+        let (_, body) = send(&create_router(Arc::new(state)), request).await;
+        body["extensions"]["explain"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{body}"))
+            .iter()
+            .filter_map(|l| l.as_str())
+            .find(|l| l.contains("Foreign Scan on invoices"))
+            .unwrap_or_else(|| panic!("no foreign scan: {body}"))
+            .to_string()
+    };
+    let per_parent = explain(small.clone()).await;
+    assert!(per_parent.contains("loops=3"), "{per_parent}");
+    let once = explain(batched_config).await;
+    assert!(once.contains("loops=1"), "{once}");
+}
+
+#[tokio::test]
+async fn batch_is_for_a_foreign_tables_single_column_keys() {
+    prepare().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let config = Config::from_yaml(
+        "entities:\n  customers:\n    foreign_keys:\n      customers_list:\n        columns: [country_code]\n        references: { table: country_list, columns: [code] }\n        batch: true\n  country_list:\n    primary_key: [code]\n",
+    )
+    .unwrap();
+    let err = CatalogInspector::new(&client)
+        .inspect_schema_with_config(SCHEMA, &config)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("only a foreign table's relations"), "{err}");
+}

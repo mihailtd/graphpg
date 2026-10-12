@@ -548,6 +548,7 @@ fn join_for(rel: &RelationInfo, parent_alias: &str, unique_target: bool) -> Join
         }),
         unique_target,
         period: rel.period.clone(),
+        batch: false,
     }
 }
 
@@ -1106,6 +1107,7 @@ impl<'a> PlanningContext<'a> {
                     .map(|(i, c)| (c.clone(), format!("k{i}")))
                     .collect(),
                 parent_alias: keys_alias.clone(),
+                batch: false,
                 junction: None,
                 unique_target: true,
                 period: None,
@@ -3709,7 +3711,23 @@ impl<'a> PlanningContext<'a> {
                                 })
                                 .clone()
                         });
-                    let join = join_for(rel, parent_alias, unique_target);
+                    let mut join = join_for(rel, parent_alias, unique_target);
+                    // A foreign table's relation marked `batch`: its children are read for
+                    // all parents at once (see `SqlCompiler::batched_body`)
+                    join.batch = rel.is_many
+                        && rel.junction.is_none()
+                        && rel.period.is_none()
+                        && rel.columns.len() == 1
+                        && catalog
+                            .find_table(&rel.target_schema, &rel.target_table)
+                            .is_some_and(|child| {
+                                child.foreign_keys.iter().any(|fk| {
+                                    fk.batch
+                                        && fk.foreign_schema == schema
+                                        && fk.foreign_table == table_name
+                                        && fk.columns == [rel.columns[0].0.clone()]
+                                })
+                            });
                     let step_id = self.plan_field(
                         plan,
                         sub_field,

@@ -135,7 +135,22 @@ graphpg compiles nested selections into one statement with `LATERAL` subqueries.
 | Local rows → foreign rows, to-many (`customers { invoices }`) | Nested loop: **one remote query per parent row** (`Foreign Scan ... loops=N`) | A network round trip per parent |
 | Local rows → rows of a file, to-many | Nested loop: **the whole file is read once per parent row** | Grows with file size × parents |
 
-A to-many relation is a subquery with a `LIMIT` per parent, which PostgreSQL cannot turn into one join. With `postgres_fdw` each remote query is parameterized and filtered on the remote side, so it uses the remote indexes. It is still one round trip per parent row. Keep to-many relations into foreign tables under parents with small pages, or turn them around (query the foreign side and nest the local one).
+A to-many relation is a subquery with a `LIMIT` per parent, which PostgreSQL cannot turn into one join. With `postgres_fdw` each remote query is parameterized and filtered on the remote side, so it uses the remote indexes. It is still one round trip per parent row. Keep to-many relations into foreign tables under parents with small pages, turn them around (query the foreign side and nest the local one), or batch them.
+
+**Batched relations.** Mark the virtual foreign key `batch: true` and a list relation into the foreign table reads the children of a whole page of parents in **one** remote query: `WHERE customer_id = ANY ($1)`, the parents' keys, shipped to the remote side. It then numbers them per parent and keeps each parent's page locally:
+
+```yaml
+entities:
+  billing.invoices:
+    primary_key: [id]
+    foreign_keys:
+      invoices_customer:
+        columns: [customer_id]
+        references: { table: app.customers }
+        batch: true
+```
+
+Measured on a loopback connection (no network latency), a page of 100 customers with their first 5 invoices took 2.7 ms batched against 7.5 ms per parent: 1 remote query instead of 100. Over a network the gap grows with the round-trip time. The trade-off: the per-parent limit cannot be shipped, so **every** child of the page's parents is transferred, then trimmed. Use it when parents have a bounded number of children (a customer's invoices), not when one parent can have millions. It applies to list relations under list parents (`customers { invoices }`, nested ones included), on a single-column key; connections and other shapes keep the per-parent query. For files it does not help: the file is read once either way.
 
 Settings that matter:
 

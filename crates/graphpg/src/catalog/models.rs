@@ -643,6 +643,9 @@ impl ColumnMetadata {
 /// A foreign key: `columns` of the owning table reference `foreign_columns` (same order).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForeignKeyMetadata {
+    /// Read its to-many relation for all parents at once (a foreign table's, `batch: true`).
+    #[serde(default)]
+    pub batch: bool,
     pub constraint_name: String,
     pub columns: Vec<String>,
     pub foreign_schema: String,

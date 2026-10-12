@@ -117,6 +117,10 @@ pub struct JoinCondition {
     /// `(child column, parent column)` ranges that must overlap (a temporal foreign key).
     #[serde(default)]
     pub period: Option<(String, String)>,
+    /// Read the children of every parent at once (`= ANY` the parents' keys) rather than per
+    /// parent: one remote query for a foreign table instead of one per parent row.
+    #[serde(default)]
+    pub batch: bool,
 }
 
 impl JoinCondition {
@@ -131,6 +135,7 @@ impl JoinCondition {
             junction: None,
             unique_target: false,
             period: None,
+            batch: false,
         }
     }
 }
