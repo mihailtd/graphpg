@@ -6,6 +6,7 @@ pub mod incremental;
 pub mod partial;
 pub mod persisted;
 pub mod rate_limit;
+pub mod reload;
 pub mod rest;
 pub mod router;
 pub(crate) mod sql_errors;

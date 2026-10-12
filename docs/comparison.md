@@ -201,7 +201,7 @@ What it shows: both are limited by PostgreSQL where a query is expensive (`offse
 
 | Feature | graphpg | PostgREST |
 | :--- | :--- | :--- |
-| Schema reload | Dev: automatic on DDL (event trigger). Prod: restart | `NOTIFY pgrst, 'reload schema'` or a signal, no restart |
+| Schema reload | `NOTIFY graphpg_reload` or `SIGHUP`, no restart, refused when it breaks pinned schemas; dev also reloads on DDL (event trigger) | `NOTIFY pgrst, 'reload schema'` or a signal, no restart |
 | Configuration reload | Restart | `NOTIFY pgrst, 'reload config'`, in-database settings, per-role settings |
 | Health and metrics | `/health`, `/live`, `/ready`, Prometheus `/metrics` (optionally on a port of its own) and OTLP metrics, named after the OpenTelemetry conventions | `/live`, `/ready` and Prometheus `/metrics` on an admin port |
 | Tracing and logs | OpenTelemetry traces with W3C `traceparent` propagation, OTLP logs, JSON logs with trace ids, sqlcommenter tags | Logs, `log-query`, `Server-Timing`, trace-header echo |
@@ -241,7 +241,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 - You need **GeoJSON, XML, plain-text or custom media types** (domains, aggregates) from the REST API itself.
 - You rely on **spread** embeds (`...author(name)`), JSON arrow operators in the URL (`->`, `->>`; graphpg has `path[column]`), or `NULLS FIRST` / `LAST`.
 - You want the token to **choose the PostgreSQL role**, or `Accept-Profile` to switch **schemas per request**.
-- You need **config and schema reload without a restart**.
+- You need **configuration reload without a restart** (graphpg reloads the schema, not its configuration).
 - You value a **decade of production use**, a large ecosystem and client libraries (`postgrest-js`, ...).
 
 ### When graphpg fits better
@@ -256,7 +256,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### Known gaps
 
-What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: `NULLS FIRST` / `LAST` ordering, spread embeds, GeoJSON, XML and custom media types, schema reload in production without a restart, and `Accept-Profile`-style schema selection (graphpg serves each schema at `/rest/{schema}/…` instead).
+What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: `NULLS FIRST` / `LAST` ordering, spread embeds, GeoJSON, XML and custom media types, and `Accept-Profile`-style schema selection (graphpg serves each schema at `/rest/{schema}/…` instead).
 
 ## Where graphpg is a fit
 
