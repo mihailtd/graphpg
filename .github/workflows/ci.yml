@@ -14,6 +14,9 @@ env:
   # The jobs that never serve the UI do not need it built (see crates/graphpg-ui/build.rs); the
   # ones that run the tests set it to 1.
   GRAPHPG_REQUIRE_UI: "0"
+  # Line tables only: panics still name the file and line, and the forty-odd test binaries
+  # fit the runner's disk (full debug info made the linker die with SIGBUS, out of space)
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 # Caches: only runs on main write them (`save-if`), and pull requests read main's. A cache is
 # readable from the branch that wrote it and from main only, so a PR that saved its own copies
@@ -48,6 +51,9 @@ jobs:
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
+      # Once, before any task: pnpm-workspace.yaml makes stale dependencies an error rather
+      # than an install inside each of the tasks moon runs in parallel
+      - run: pnpm install --frozen-lockfile
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -74,6 +80,9 @@ jobs:
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
+      # Once, before any task: pnpm-workspace.yaml makes stale dependencies an error rather
+      # than an install inside each of the tasks moon runs in parallel
+      - run: pnpm install --frozen-lockfile
       # The JavaScript build only: the Rust crates are compiled by the steps below, with the cache
       # restored (`graphpg-ui:build` would also compile them here, before the cache exists)
       - name: Build UI assets
@@ -163,6 +172,9 @@ jobs:
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
+      # Once, before any task: pnpm-workspace.yaml makes stale dependencies an error rather
+      # than an install inside each of the tasks moon runs in parallel
+      - run: pnpm install --frozen-lockfile
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}

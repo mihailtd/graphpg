@@ -51,35 +51,73 @@ impl Project {
         self.command(args).output().expect("graphpg runs")
     }
 
-    /// Starts the server and gives it a few seconds: `Some(output)` if it exited by itself.
-    /// Starts the server and waits a few seconds: `None` if it is still running (it starts).
+    /// Starts the server and waits until it is listening (`None`: it started) or has exited by
+    /// itself (`Some(output)`).
     fn start(&self, args: &[&str]) -> (Option<Output>, String) {
-        self.start_for(args, 30)
+        self.start_for(args)
     }
 
-    /// Starts the server where it is expected to refuse: a slow machine gets 30 seconds to say so.
+    /// Starts the server where it is expected to refuse.
     fn start_refused(&self, args: &[&str]) -> (Option<Output>, String) {
-        self.start_for(args, 300)
+        self.start_for(args)
     }
 
-    fn start_for(&self, args: &[&str], ticks: u32) -> (Option<Output>, String) {
+    /// Waits for the outcome rather than a fixed time, so a slow machine is not mistaken for a
+    /// server that started (or one that has not logged its warnings yet): the startup checks
+    /// all run before the "listening" line.
+    fn start_for(&self, args: &[&str]) -> (Option<Output>, String) {
+        use std::io::Read;
+        use std::sync::{Arc, Mutex};
         let mut child = self
             .command(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .expect("graphpg starts");
-        for _ in 0..ticks {
-            if child.try_wait().unwrap().is_some() {
-                let output = child.wait_with_output().unwrap();
-                let text = text_of(&output);
-                return (Some(output), text);
+        let text = Arc::new(Mutex::new(String::new()));
+        let readers: Vec<_> = [
+            Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>,
+            Box::new(child.stderr.take().unwrap()),
+        ]
+        .into_iter()
+        .map(|mut pipe| {
+            let text = text.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 4096];
+                while let Ok(n) = pipe.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    text.lock()
+                        .unwrap()
+                        .push_str(&String::from_utf8_lossy(&buf[..n]));
+                }
+            })
+        })
+        .collect();
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        let exited = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break Some(status);
             }
-            std::thread::sleep(Duration::from_millis(100));
+            if text.lock().unwrap().contains("listening on") || std::time::Instant::now() > deadline
+            {
+                child.kill().ok();
+                child.wait().ok();
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        for reader in readers {
+            reader.join().ok();
         }
-        child.kill().ok();
-        let output = child.wait_with_output().unwrap();
-        (None, text_of(&output))
+        let text = text.lock().unwrap().clone();
+        let output = exited.map(|status| Output {
+            status,
+            stdout: text.clone().into_bytes(),
+            stderr: Vec::new(),
+        });
+        (output, text)
     }
 }
 

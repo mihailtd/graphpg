@@ -2,6 +2,12 @@ packages:
   - e2e
   - packages/*
 
+# Dependencies are installed once, up front (`pnpm install`, a CI step). By default pnpm also
+# installs before each `pnpm run` / `pnpm exec` when they look stale; moon runs those in
+# parallel, and the installs raced over node_modules on fresh checkouts (an esbuild postinstall
+# lost its working directory, bins failed to link). Stale dependencies are an error instead.
+verifyDepsBeforeRun: error
+
 # esbuild (used by vitest and drizzle-kit) downloads its platform binary in a postinstall script
 allowBuilds:
   esbuild: true

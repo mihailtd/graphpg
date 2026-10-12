@@ -22,3 +22,7 @@ updates:
     labels: [dependencies]
     groups:
       npm: { patterns: ["*"], update-types: [minor, patch] }
+    ignore:
+      # GraphiQL (@graphiql/react) pins monaco-editor, and monaco-graphql supports < 0.53;
+      # it moves when GraphiQL moves. 0.57 broke the UI build (#108).
+      - dependency-name: monaco-editor
