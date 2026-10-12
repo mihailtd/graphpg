@@ -35,6 +35,10 @@ pub struct GraphQLRequest {
     /// The id of a persisted query in the manifest.
     #[serde(default, rename = "documentId")]
     pub document_id: Option<String>,
+    /// What a field error does to the response: `PROPAGATE` (default), `NULL` or `HALT`
+    /// (see [`partial`](super::partial)).
+    #[serde(default, rename = "onError")]
+    pub on_error: Option<String>,
 }
 
 /// `GET /graphql`: a query in the URL, its JSON values (`variables`, `extensions`) as text.
@@ -47,6 +51,8 @@ pub struct GraphQLGetParams {
     pub extensions: Option<String>,
     #[serde(rename = "documentId")]
     pub document_id: Option<String>,
+    #[serde(rename = "onError")]
+    pub on_error: Option<String>,
 }
 
 impl GraphQLGetParams {
@@ -63,6 +69,7 @@ impl GraphQLGetParams {
             variables: json("variables", self.variables)?,
             extensions: json("extensions", self.extensions)?,
             document_id: self.document_id,
+            on_error: self.on_error,
         })
     }
 }
@@ -1013,6 +1020,11 @@ async fn run_graphql(
     let schema = state.current_schema();
     let catalog = state.current_catalog();
 
+    let on_error = match super::partial::ErrorBehavior::parse(req.on_error.as_deref()) {
+        Ok(behavior) => behavior,
+        Err(message) => return error_response(StatusCode::BAD_REQUEST, message, None),
+    };
+
     // 1. Parse and validate the document (once per distinct document)
     let cached_doc = state.cache.document(&query);
     crate::telemetry::metrics().cache("document", cached_doc.is_some());
@@ -1127,6 +1139,9 @@ async fn run_graphql(
 
     // 3. Plan and compile the database-backed fields into a single SQL statement
     let mut sql_data = serde_json::Map::new();
+    // Root fields that failed on their own (see `partial`), and whether `data` is then null
+    let mut field_errors: Vec<(StatusCode, GraphQLError)> = Vec::new();
+    let mut data_null = false;
     let mut wal_position: Option<String> = None;
     let mut extensions = serde_json::Map::new();
     if has_concrete {
@@ -1265,9 +1280,71 @@ async fn run_graphql(
             Ok(serde_json::Value::Object(map)) => sql_data = map,
             Ok(_) => {}
             Err(err) => {
-                let (status, error) =
-                    execution_error(&err, &catalog, state.mask_errors, &state.errors);
-                return errors_response(status, vec![error], extensions_value(&extensions));
+                // A query failing because of its data: which root fields fail, and the
+                // others' data. The request as a whole fails otherwise
+                let roots: Vec<&apollo_compiler::executable::Field> = {
+                    let mut seen = std::collections::HashSet::new();
+                    root_fields
+                        .iter()
+                        .copied()
+                        .filter(|f| !f.name.starts_with("__") && seen.insert(response_key(f)))
+                        .collect()
+                };
+                // `Err`: the request fails with the operation's error
+                let apart = if is_mutation
+                    || on_error == super::partial::ErrorBehavior::Halt
+                    || !err.is_data_error()
+                {
+                    Err(err)
+                } else if roots.len() == 1 {
+                    Ok(vec![Err(err)])
+                } else {
+                    let min_lsn = request_headers
+                        .get(MIN_WAL_POSITION_HEADER)
+                        .and_then(|v| v.to_str().ok());
+                    let aliases: Vec<&str> = roots.iter().map(|f| response_key(f)).collect();
+                    run_roots_apart(
+                        &state,
+                        &planner,
+                        operation,
+                        &aliases,
+                        auth_ctx.clone(),
+                        min_lsn,
+                        &operation_label,
+                    )
+                    .await
+                    .ok_or(err)
+                };
+                let results = match apart {
+                    Ok(results) => results,
+                    Err(err) => {
+                        let (status, error) =
+                            execution_error(&err, &catalog, state.mask_errors, &state.errors);
+                        return errors_response(status, vec![error], extensions_value(&extensions));
+                    }
+                };
+                for (field, result) in roots.iter().zip(results) {
+                    let key = response_key(field);
+                    match result {
+                        Ok(serde_json::Value::Object(mut map)) => {
+                            if let Some(value) = map.remove(key) {
+                                sql_data.insert(key.to_string(), value);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(err) => {
+                            let (status, mut error) =
+                                execution_error(&err, &catalog, state.mask_errors, &state.errors);
+                            error.path = Some(vec![serde_json::json!(key)]);
+                            sql_data.insert(key.to_string(), serde_json::Value::Null);
+                            data_null |= super::partial::nulls_data(
+                                on_error,
+                                field.definition.ty.is_non_null(),
+                            );
+                            field_errors.push((status, error));
+                        }
+                    }
+                }
             }
         }
     }
@@ -1290,14 +1367,83 @@ async fn run_graphql(
         data.entry(k).or_insert(v);
     }
 
+    // With data, the response is a success whatever failed in it (GraphQL over HTTP); with
+    // none, it has the status of its first error
+    let status = match field_errors.first() {
+        Some((status, _)) if data_null => *status,
+        _ => StatusCode::OK,
+    };
+    let first_code = field_errors.first().and_then(|(_, e)| {
+        e.extensions
+            .as_ref()
+            .and_then(|ext| ext.get("code"))
+            .and_then(|c| c.as_str())
+            .map(str::to_string)
+    });
     let res = GraphQLResponse {
-        errors: None,
-        data: Some(serde_json::Value::Object(data)),
+        errors: (!field_errors.is_empty())
+            .then(|| field_errors.into_iter().map(|(_, e)| e).collect()),
+        data: Some(if data_null {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::Object(data)
+        }),
         extensions: (!extensions.is_empty()).then_some(serde_json::Value::Object(extensions)),
     };
     let mut headers = graphql_headers();
     if let Some(lsn) = wal_position.and_then(|l| l.parse().ok()) {
         headers.insert(WAL_POSITION_HEADER, lsn);
     }
-    (StatusCode::OK, headers, Json(res)).into_response()
+    let mut response = (status, headers, Json(res)).into_response();
+    if let Some(code) = first_code {
+        response.extensions_mut().insert(ErrorCode(code));
+    }
+    response
+}
+
+/// Runs the root fields `aliases` of a query one by one in one snapshot (see
+/// [`partial`](super::partial)): each one's data or error, in order. `None` when they cannot
+/// be run (no connection, the transaction failed).
+async fn run_roots_apart(
+    state: &ServerState,
+    planner: &QueryPlanner<'_>,
+    operation: &Operation,
+    aliases: &[&str],
+    auth_ctx: Option<super::AuthSessionContext>,
+    min_lsn: Option<&str>,
+    operation_label: &str,
+) -> Option<Vec<Result<serde_json::Value, ExecutionError>>> {
+    let plan = planner.plan_operation(operation).ok()?;
+    let queries: Vec<CompiledQuery> = aliases
+        .iter()
+        .map(|alias| {
+            let mut compiled =
+                CompiledOperation::Query(SqlCompiler::compile(&plan.only_root(alias)));
+            if state.sql_comments {
+                compiled.tag(&[
+                    ("application", "graphpg"),
+                    ("graphql_operation", operation_label),
+                    ("graphql_type", "query"),
+                    ("graphql_field", alias),
+                ]);
+            }
+            match compiled {
+                CompiledOperation::Query(query) => query,
+                CompiledOperation::Mutation(_) => unreachable!("a query compiles to a query"),
+            }
+        })
+        .collect();
+    let (client, _) = state.read_pool(min_lsn).await.ok()?;
+    let span = tracing::info_span!("graphql.execute_apart", graphql.operation = %operation_label);
+    // Run to the end even when the client goes away (see `run_graphql`)
+    let task =
+        async move { ExecutionEngine::run_apart(&*client, &queries, auth_ctx.as_ref()).await };
+    match tokio::spawn(task.instrument(span)).await {
+        Ok(Ok(results)) => Some(results),
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "running the root fields apart failed");
+            None
+        }
+        Err(_) => None,
+    }
 }

@@ -40,6 +40,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Read replicas | Yes (WAL-position aware) | Configure sources | Yes |
 | Depth, cost and page-size limits | Yes (`limits:`, enforced on the plan) | Plugins / custom | Yes (depth, node limit) |
 | Rate limits | Yes (per token subject or IP, `RateLimit-*` headers; per instance) | No (use a gateway) | Yes (Cloud / Enterprise) |
+| Partial results (one root field failing alone) | Yes (root fields run apart only after a failure; `onError`) | Yes (per field) | No (one statement fails the request) |
 | Persisted queries and allow-lists | Yes (APQ, Apollo and Code Generator manifests, allow-list) | Yes (`@grafserv/persisted`) | Yes (allow-lists) |
 | Multi-database joins | No | Yes, across sources | Yes |
 | Event triggers / webhooks | No | No (use a job queue) | Yes |

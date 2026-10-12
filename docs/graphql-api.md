@@ -218,6 +218,24 @@ Each writable table's `enum <Type>ErrorCode` lists its codes, documented. `exten
 
 `varchar(n)`/`char(n)` lengths and `numeric(p, s)` precision are read from `atttypmod`, documented on the fields, and checked (with PostgreSQL's rounding) before any SQL runs: `<FIELD>_TOO_LONG` and `<FIELD>_OUT_OF_RANGE`, with the input path in `extensions.field`. Single-column `CHECK` expressions appear in the field's description; multi-column ones in the type's.
 
+### Partial results
+
+A query is one SQL statement, so a failure in it would fail every field. graphpg keeps the statement and narrows the failure afterwards. When the statement fails because of the data it read (a function raising, a bad value, a missing privilege or a Row-Level Security refusal), each root field is run again on its own. They all run in one `REPEATABLE READ READ ONLY` transaction, so they read the same snapshot. The root fields that succeed keep their data; a failing one is `null`, with an error whose `path` names it:
+
+```json
+{ "data": { "items": [{ "name": "one" }], "broken": null },
+  "errors": [{ "message": "An unexpected database error occurred", "path": ["broken"],
+               "extensions": { "code": "INTERNAL_SERVER_ERROR", "requestId": "…" } }] }
+```
+
+- **The successful path is unchanged:** one statement. Running the fields apart costs one statement per root field, and only when something fails. With one root field, nothing runs again: the failure is its own.
+- **Nulls follow the GraphQL spec.** A nullable root field (a lookup such as `forum(id:)`, a scalar function) becomes `null`. A non-null one (lists `[Forum!]!`, connections) cannot, so `data` itself is `null`. The request parameter `onError` changes that, as proposed for the spec in [RFC 1163](https://rfcs.graphql.org/rfcs/1163/): `"NULL"` leaves any failed field `null` and keeps the rest, while `"HALT"` fails the whole request without `data`, as before partial results. The default is `"PROPAGATE"`. The RFC's earlier names, `NO_PROPAGATE` and `ABORT`, are accepted too.
+- **Some failures still fail the whole request.** These are the ones that aren't about one field's data: `STATEMENT_TIMEOUT`, a lost connection, resource exhaustion and transient conflicts. Running the fields again would not help.
+- **Mutations are all or nothing**, as before: a failing mutation field rolls back the operation.
+- **HTTP status:** a response with `data` is `200`, whatever failed in it, per GraphQL over HTTP. With `data: null`, it has the status of its first error.
+
+The granularity is the root field. A failure deeper in a selection (a computed field of one row) fails the root field it is under.
+
 ## Rows before a write (`RETURNING OLD`, PostgreSQL 18)
 
 Update payloads have `previous<Type>` (`previous<Types>` for many rows, in the order of the updated rows): the rows as they were, read with `to_json(old)` in the writing statement itself. Upsert payloads have it too: null for rows the upsert inserted. Their relations are read as they are now; their `rowVersion` is null.
