@@ -268,7 +268,69 @@ impl OpenApiGenerator {
                 Self::merge_scoped(&mut doc, scoped, schema);
             }
         }
+        if config.limits.rate_limit.enabled {
+            Self::attach_rate_limits(&mut doc);
+        }
         doc
+    }
+
+    /// With `limits.rate_limit` on: the `RateLimit-*` headers on every success, and a `429`
+    /// (`RATE_LIMITED`, with `Retry-After`) on every operation. Off, the document is unchanged.
+    fn attach_rate_limits(doc: &mut Value) {
+        let header = |description: &str| json!({ "description": description, "schema": { "type": "integer", "minimum": 0 } });
+        doc["components"]["headers"] = json!({
+            "RateLimit-Limit": header("Requests the client's bucket holds (`limits.rate_limit`'s burst)"),
+            "RateLimit-Remaining": header("Requests the client may still make now"),
+            "RateLimit-Reset": header("Seconds until the client's bucket is full again"),
+            "Retry-After": header("Seconds until the request may be retried")
+        });
+        let header_ref = |name: &str| json!({ "$ref": format!("#/components/headers/{name}") });
+        doc["components"]["responses"]["RateLimited"] = json!({
+            "description": "Too Many Requests: over the client's rate limit (`RATE_LIMITED`)",
+            "headers": {
+                "Retry-After": header_ref("Retry-After"),
+                "RateLimit-Limit": header_ref("RateLimit-Limit"),
+                "RateLimit-Remaining": header_ref("RateLimit-Remaining"),
+                "RateLimit-Reset": header_ref("RateLimit-Reset")
+            },
+            "content": { "application/problem+json": { "schema": schema_ref("ProblemDetails") } }
+        });
+        let Some(paths) = doc["paths"].as_object_mut() else {
+            return;
+        };
+        for item in paths.values_mut().filter_map(Value::as_object_mut) {
+            for (method, operation) in item.iter_mut() {
+                let is_operation = matches!(
+                    method.as_str(),
+                    "get" | "put" | "post" | "delete" | "options" | "head" | "patch"
+                );
+                let Some(responses) = operation
+                    .get_mut("responses")
+                    .and_then(Value::as_object_mut)
+                    .filter(|_| is_operation)
+                else {
+                    continue;
+                };
+                for (status, response) in responses.iter_mut() {
+                    if !status.starts_with('2') || response.get("$ref").is_some() {
+                        continue;
+                    }
+                    let Some(response) = response.as_object_mut() else {
+                        continue;
+                    };
+                    let headers = response.entry("headers").or_insert_with(|| json!({}));
+                    if let Some(headers) = headers.as_object_mut() {
+                        for name in ["RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"] {
+                            headers.insert(name.to_string(), header_ref(name));
+                        }
+                    }
+                }
+                responses.insert(
+                    "429".to_string(),
+                    json!({ "$ref": "#/components/responses/RateLimited" }),
+                );
+            }
+        }
     }
 
     /// Adds the paths and components of the document of one schema (`scoped`, written as if
@@ -2628,7 +2690,26 @@ mod tests {
     use crate::catalog::DatabaseCatalog;
 
     #[test]
-    fn test_generate_minimal_openapi_document() {
+    fn rate_limits_are_documented_only_when_on() {
+        let catalog = users_catalog();
+        let off = OpenApiGenerator::generate(&catalog, &Config::default());
+        assert!(off["components"].get("headers").is_none());
+        assert!(off.to_string().find("\"429\"").is_none());
+
+        let mut config = Config::default();
+        config.limits.rate_limit.enabled = true;
+        let on = OpenApiGenerator::generate(&catalog, &config);
+        let list = &on["paths"]["/rest/users"]["get"]["responses"];
+        assert_eq!(list["429"]["$ref"], "#/components/responses/RateLimited");
+        assert_eq!(
+            list["200"]["headers"]["RateLimit-Remaining"]["$ref"],
+            "#/components/headers/RateLimit-Remaining"
+        );
+        assert!(on["components"]["responses"]["RateLimited"]["headers"]["Retry-After"].is_object());
+    }
+
+    /// One `public.users` table: `id` (primary key) and `email`.
+    fn users_catalog() -> DatabaseCatalog {
         let mut catalog = DatabaseCatalog::default();
         catalog.tables.push(TableMetadata {
             schema: "public".to_string(),
@@ -2686,7 +2767,12 @@ mod tests {
             federation_key: None,
             federation_shareable: false,
         });
+        catalog
+    }
 
+    #[test]
+    fn test_generate_minimal_openapi_document() {
+        let catalog = users_catalog();
         let config = Config::default();
         let doc = OpenApiGenerator::generate(&catalog, &config);
 

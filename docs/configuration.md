@@ -101,7 +101,8 @@ server:
   cors:                         # default: any origin in dev, none in prod (no CORS headers)
     origins: [https://app.example.com]   # or ['*']
     methods: [GET, POST]        # default: GET POST PUT PATCH DELETE OPTIONS HEAD
-    headers: [authorization, content-type]  # default: authorization content-type accept prefer
+    headers: [authorization, content-type]  # default: authorization content-type accept prefer x-request-id if-none-match if-match range x-min-wal-position
+    expose_headers: [x-request-id]   # headers scripts may read; default: every one graphpg sends (ETag, Link, Content-Range, X-Total-Count, X-WAL-Position, RateLimit-*, Retry-After, ...)
     credentials: false          # needs explicit origins, not '*'
     max_age: 600                # seconds a browser caches the preflight
 
@@ -351,6 +352,7 @@ prod:
 - **Who a client is.** A request with an access token that verifies is counted against its `key_claim` (`sub` by default; a claim name or a dot-separated path), at the `authenticated` rate. Anything else, a missing or invalid token included, is counted against its IP address at the `anonymous` rate. The address is the connection's peer; when the peer is in `trusted_proxies`, it is the last `X-Forwarded-For` entry no trusted proxy added, so a client cannot choose its own address. `requests_per_minute: off` leaves a kind of client unlimited.
 - **How.** Each client has a token bucket (the Generic Cell Rate Algorithm): it holds `burst` requests and refills at `requests_per_minute`. A request is counted before it is parsed, planned or sent to the database; a refused one does not use up the bucket.
 - **Headers.** Every answer carries `RateLimit-Limit` (the burst), `RateLimit-Remaining` and `RateLimit-Reset` (seconds until the bucket is full). A refused request is `429 Too Many Requests` with `Retry-After` and the code `RATE_LIMITED`: a GraphQL error (`extensions: { code: "RATE_LIMITED", retryAfter }`), or a REST problem document.
+- **Documented and readable.** With rate limits on, the OpenAPI document gives every operation a `429` response and every success the `RateLimit-*` headers; off, the document is unchanged. Cross-origin pages can read the headers: `server.cors.expose_headers` exposes them by default.
 - **Per instance.** Buckets live in each instance's memory (at most `max_clients` of them; full buckets are dropped first), so behind a load balancer with N instances a client gets up to N times the rate. Divide the rates by the number of instances, or use sticky sessions.
 
 ### Development mode (`--mode dev`)

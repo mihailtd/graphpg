@@ -638,9 +638,14 @@ pub struct CorsConfig {
     /// Allowed methods (default: GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD).
     #[serde(default)]
     pub methods: Vec<String>,
-    /// Allowed request headers (default: authorization, content-type, accept, prefer).
+    /// Allowed request headers (default: authorization, content-type, accept, prefer,
+    /// x-request-id, if-none-match, if-match, range, x-min-wal-position).
     #[serde(default)]
     pub headers: Vec<String>,
+    /// Response headers a page's scripts may read beyond the CORS-safelisted ones (default:
+    /// every header graphpg sends, see `DEFAULT_EXPOSE_HEADERS` in the router).
+    #[serde(default)]
+    pub expose_headers: Vec<String>,
     /// Allow cookies and credentials. Needs explicit `origins`, not `*`.
     #[serde(default, deserialize_with = "switch")]
     pub credentials: bool,
