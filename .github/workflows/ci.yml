@@ -14,6 +14,9 @@ env:
   # The jobs that never serve the UI do not need it built (see crates/graphpg-ui/build.rs); the
   # ones that run the tests set it to 1.
   GRAPHPG_REQUIRE_UI: "0"
+  # Line tables only: panics still name the file and line, and the forty-odd test binaries
+  # fit the runner's disk (full debug info made the linker die with SIGBUS, out of space)
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 # Caches: only runs on main write them (`save-if`), and pull requests read main's. A cache is
 # readable from the branch that wrote it and from main only, so a PR that saved its own copies
