@@ -550,10 +550,10 @@ impl<'a> CatalogInspector<'a> {
 
         // Constraints: primary and foreign keys (columns in key order), unique, check and
         // exclusion constraints
-        let period = if server_version >= 180000 {
-            "con.conperiod"
+        let (period, enforced) = if server_version >= 180000 {
+            ("con.conperiod", "con.conenforced")
         } else {
-            "false"
+            ("false", "true")
         };
         let con_rows = self
             .client
@@ -565,7 +565,7 @@ impl<'a> CatalogInspector<'a> {
                             fn.nspname::text, fc.relname::text,
                             ARRAY(SELECT a.attname::text FROM unnest(con.confkey) WITH ORDINALITY k(num, ord)
                                   JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.num ORDER BY k.ord),
-                            pg_get_constraintdef(con.oid), {period}
+                            pg_get_constraintdef(con.oid), {period}, {enforced}
                      FROM pg_constraint con
                      JOIN pg_class c ON c.oid = con.conrelid
                      JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -592,16 +592,24 @@ impl<'a> CatalogInspector<'a> {
             };
             let references = (kind == ConstraintKind::ForeignKey)
                 .then(|| (row.get::<_, String>(4), row.get::<_, String>(5)));
-            table.constraints.push(ConstraintMetadata {
-                name: row.get(1),
-                kind,
-                columns: columns.clone(),
-                definition: row.get(7),
-                references,
-                period: row.get(8),
-                code: String::new(),
-                referenced_code: String::new(),
-            });
+            // PostgreSQL 18 `NOT ENFORCED`: a check promises nothing, so nothing is derived
+            // from it; a foreign key still states a relationship, but no write fails on it
+            let enforced: bool = row.get(9);
+            if !enforced && kind == ConstraintKind::Check {
+                continue;
+            }
+            if enforced {
+                table.constraints.push(ConstraintMetadata {
+                    name: row.get(1),
+                    kind,
+                    columns: columns.clone(),
+                    definition: row.get(7),
+                    references,
+                    period: row.get(8),
+                    code: String::new(),
+                    referenced_code: String::new(),
+                });
+            }
             match kind {
                 ConstraintKind::PrimaryKey => {
                     for c in &mut table.columns {
@@ -713,16 +721,26 @@ impl<'a> CatalogInspector<'a> {
         catalog: &mut DatabaseCatalog,
     ) -> Result<(), CatalogError> {
         let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
+        // Only a list every row satisfies makes an enum: a `NOT VALID` constraint leaves
+        // older rows unchecked, a `NOT ENFORCED` one (PostgreSQL 18) checks nothing
+        let enforced = if catalog.server_version >= 180000 {
+            " AND con.conenforced"
+        } else {
+            ""
+        };
         let rows = self
             .client
             .query(
-                "SELECT n.nspname::text, c.relname::text, a.attname::text, pg_get_constraintdef(con.oid)
-                 FROM pg_constraint con
-                 JOIN pg_class c ON c.oid = con.conrelid
-                 JOIN pg_namespace n ON n.oid = c.relnamespace
-                 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = con.conkey[1]
-                 WHERE n.nspname = ANY($1) AND con.contype = 'c' AND cardinality(con.conkey) = 1
-                 ORDER BY n.nspname, c.relname, con.conname",
+                &format!(
+                    "SELECT n.nspname::text, c.relname::text, a.attname::text, pg_get_constraintdef(con.oid)
+                     FROM pg_constraint con
+                     JOIN pg_class c ON c.oid = con.conrelid
+                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = con.conkey[1]
+                     WHERE n.nspname = ANY($1) AND con.contype = 'c' AND cardinality(con.conkey) = 1
+                       AND con.convalidated{enforced}
+                     ORDER BY n.nspname, c.relname, con.conname"
+                ),
                 &[&schemas_vec],
             )
             .await?;
