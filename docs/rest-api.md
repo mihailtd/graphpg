@@ -318,6 +318,7 @@ Errors are RFC 9457 `application/problem+json`:
 | 412 | `If-Match` does not match the row's version |
 | 413 | A bulk create over `limits.bulk_rows`, or a body over `limits.request_body_bytes` |
 | 422 | A validation failure (not null, check, `*_REQUIRED`, …), or more than 10 000 groups |
+| 429 | Over the client's [rate limit](configuration.md#rate-limits) (`RATE_LIMITED`, with `Retry-After`) |
 | 503 | The database is unavailable, or a statement ran past `limits.statement_timeout` (`STATEMENT_TIMEOUT`) |
 
 In **prod** mode raw PostgreSQL messages never reach the client: unexpected failures say so in general terms, with a `requestId` that is also written to the server log together with the real error. **Dev** mode adds the detail.
@@ -339,6 +340,8 @@ The limits are the deployment's [`limits:`](configuration.md#safety-limits), sha
 { "type": "about:blank", "title": "Bad Request", "status": 400, "code": "PAGE_SIZE_EXCEEDED",
   "detail": "`first` is 5000, more than the maximum page size of 1000", "limit": 1000, "actual": 5000 }
 ```
+
+With [`limits.rate_limit`](configuration.md#rate-limits) on, every answer carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`, and a client over its rate gets `429` with `Retry-After` and the code `RATE_LIMITED`. GraphQL and REST requests share a client's bucket.
 
 ## Observability and health probes
 

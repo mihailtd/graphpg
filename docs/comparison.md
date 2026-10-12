@@ -39,6 +39,8 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Bulk export (NDJSON / CSV) and `COPY` import | Yes | No | No |
 | Read replicas | Yes (WAL-position aware) | Configure sources | Yes |
 | Depth, cost and page-size limits | Yes (`limits:`, enforced on the plan) | Plugins / custom | Yes (depth, node limit) |
+| Rate limits | Yes (per token subject or IP, `RateLimit-*` headers; per instance) | No (use a gateway) | Yes (Cloud / Enterprise) |
+| Persisted queries and allow-lists | Yes (APQ, Apollo and Code Generator manifests, allow-list) | Yes (`@grafserv/persisted`) | Yes (allow-lists) |
 | Multi-database joins | No | Yes, across sources | Yes |
 | Event triggers / webhooks | No | No (use a job queue) | Yes |
 | REST endpoints | Yes ([see below](#compared-with-postgrest)) | No | Yes (REST endpoints from saved queries) |
@@ -203,6 +205,7 @@ What it shows: both are limited by PostgreSQL where a query is expensive (`offse
 | Health and metrics | `/health`, `/live`, `/ready`, Prometheus `/metrics` (optionally on a port of its own) and OTLP metrics, named after the OpenTelemetry conventions | `/live`, `/ready` and Prometheus `/metrics` on an admin port |
 | Tracing and logs | OpenTelemetry traces with W3C `traceparent` propagation, OTLP logs, JSON logs with trace ids, sqlcommenter tags | Logs, `log-query`, `Server-Timing`, trace-header echo |
 | Read replicas | Built in (WAL-position aware routing) | Not built in (use a load balancer or pooler) |
+| Rate limits | Built in (`limits.rate_limit`, per token subject or IP, `RateLimit-*` headers) | Not built in (use a gateway such as Nginx) |
 | Connection pooling | Built-in pool; replicas separately | Built-in pool (`db-pool`, acquisition timeout, lifetime) |
 | Graceful shutdown | Yes (`SIGTERM`) | Yes |
 | Packaging | Static binary, signed distroless image (about 27 MB) | Static binaries and Docker image |

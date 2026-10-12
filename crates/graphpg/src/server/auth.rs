@@ -224,6 +224,16 @@ impl Authenticator {
         Ok(self.context(claims))
     }
 
+    /// The claim at `path` of the request's token, when the token is valid and has it (the
+    /// client a rate limit counts it against).
+    pub async fn verified_claim(&self, headers: &HeaderMap, path: &str) -> Option<String> {
+        let token = bearer_token(headers).ok()??;
+        let claims = self.verify(token).await.ok()?;
+        claim(&claims, path)
+            .filter(|v| !v.is_null())
+            .map(setting_value)
+    }
+
     /// The claims of a valid token.
     async fn verify(&self, token: &str) -> Result<Map<String, Value>, AuthError> {
         let header = jsonwebtoken::decode_header(token)

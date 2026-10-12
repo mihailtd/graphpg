@@ -52,6 +52,7 @@ fn limits() -> LimitsConfig {
         statement_timeout: None,
         count_threshold: Some(10_000),
         require_filter: false,
+        rate_limit: Default::default(),
     }
 }
 

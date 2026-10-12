@@ -70,6 +70,16 @@ pub async fn export_handler(
             )
         }
     };
+    // The allow-list of persisted queries covers exports too
+    if let Some(persisted) = &state.persisted {
+        if !persisted.allows_text(&req.query) {
+            return json_error(
+                StatusCode::FORBIDDEN,
+                "the operation is not in the allow-list of persisted queries",
+                Some(serde_json::json!({ "code": "OPERATION_NOT_ALLOWED" })),
+            );
+        }
+    }
     let schema = state.current_schema();
     let catalog = state.current_catalog();
     let doc = match ExecutableDocument::parse_and_validate(&schema, &req.query, "export.graphql") {

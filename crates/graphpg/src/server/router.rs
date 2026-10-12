@@ -2,8 +2,8 @@
 //! GraphQL, developer UIs, and health checks, with layered middleware.
 use super::bulk::{export_handler, import_handler};
 use super::http::{
-    graphql_handler, graphql_sdl_handler, graphql_subgraph_handler, health_handler, live_handler,
-    openapi_spec_handler, ready_handler, rest_handler,
+    graphql_get_handler, graphql_handler, graphql_sdl_handler, graphql_subgraph_handler,
+    health_handler, live_handler, openapi_spec_handler, ready_handler, rest_handler,
 };
 use super::rest::rest_schemas;
 use super::rest::{
@@ -26,10 +26,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
-/// Mounts the GraphQL API routes: `/graphql`, plus `/export` and `/import/{type_name}`.
+/// Mounts the GraphQL API routes: `/graphql` (`POST`, and `GET` for queries), plus `/export`
+/// and `/import/{type_name}`.
 pub fn graphql_routes() -> Router<Arc<ServerState>> {
     Router::new()
-        .route("/graphql", post(graphql_handler))
+        .route("/graphql", post(graphql_handler).get(graphql_get_handler))
         .route("/export", post(export_handler))
         // An import streams NDJSON of any size: the body limit does not apply
         .route(
@@ -380,13 +381,30 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
         None => DefaultBodyLimit::disable(),
     };
 
+    // `limits.rate_limit` on the APIs; off, there is no layer at all
+    let limited = state.rate_limiter.is_some();
+
     if state.graphql_enabled {
-        router = router.merge(graphql_routes().layer(body_limit));
+        let mut graphql = graphql_routes().layer(body_limit);
+        if limited {
+            graphql = graphql.layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                super::rate_limit::limit_graphql,
+            ));
+        }
+        router = router.merge(graphql);
         router = router.merge(sdl_routes(&state));
     }
 
     if state.openapi_enabled {
-        router = router.merge(rest_routes(&served_schemas(&state)).layer(body_limit));
+        let mut rest = rest_routes(&served_schemas(&state)).layer(body_limit);
+        if limited {
+            rest = rest.layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                super::rate_limit::limit_rest,
+            ));
+        }
+        router = router.merge(rest);
         router = router.merge(openapi_routes(&state));
     }
 

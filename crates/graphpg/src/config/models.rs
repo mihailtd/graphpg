@@ -257,6 +257,171 @@ pub struct LimitsConfig {
     /// threshold, an exact count is computed; above this threshold, the planner estimate is used.
     #[serde(default = "default_count_threshold", deserialize_with = "limit")]
     pub count_threshold: Option<u64>,
+    /// Requests per client and minute, over GraphQL and REST. Off by default.
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+}
+
+/// How many requests a client may make: a token bucket per client (GCRA), refilled at
+/// `requests_per_minute` and holding `burst`. A client is the verified token's `key_claim`
+/// (`sub`), else its IP address. State lives in each instance's memory: with N instances
+/// behind a load balancer a client gets up to N times the rate.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimitConfig {
+    /// Limit requests at all. Off, nothing is counted and no `RateLimit-*` header is sent.
+    #[serde(default, deserialize_with = "switch")]
+    pub enabled: bool,
+    /// Requests without a valid access token, by IP address.
+    #[serde(default = "default_anonymous_rate")]
+    pub anonymous: RateConfig,
+    /// Requests with a valid access token, by `key_claim`.
+    #[serde(default = "default_authenticated_rate")]
+    pub authenticated: RateConfig,
+    /// The claim that names a client (a claim name or a dot-separated path, like the session
+    /// variable mappings). A token without it counts as anonymous.
+    #[serde(default = "default_key_claim")]
+    pub key_claim: String,
+    /// Proxies trusted to name the client in `X-Forwarded-For`: addresses or CIDR ranges.
+    /// Without them the client is the connection's peer address.
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
+    /// Clients tracked at most per instance. Clients whose bucket is full again are dropped
+    /// first; past the bound every client starts over.
+    #[serde(default = "default_max_clients", deserialize_with = "lenient")]
+    pub max_clients: usize,
+}
+
+/// The rate of one kind of client.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RateConfig {
+    /// Requests per minute, or `off` for no limit.
+    #[serde(deserialize_with = "limit")]
+    pub requests_per_minute: Option<u32>,
+    /// Requests allowed at once, after a quiet spell (default: `requests_per_minute`).
+    #[serde(default, deserialize_with = "limit")]
+    pub burst: Option<u32>,
+}
+
+fn default_anonymous_rate() -> RateConfig {
+    RateConfig {
+        requests_per_minute: Some(60),
+        burst: None,
+    }
+}
+fn default_authenticated_rate() -> RateConfig {
+    RateConfig {
+        requests_per_minute: Some(600),
+        burst: None,
+    }
+}
+fn default_key_claim() -> String {
+    "sub".to_string()
+}
+fn default_max_clients() -> usize {
+    100_000
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            anonymous: default_anonymous_rate(),
+            authenticated: default_authenticated_rate(),
+            key_claim: default_key_claim(),
+            trusted_proxies: Vec::new(),
+            max_clients: default_max_clients(),
+        }
+    }
+}
+
+impl RateLimitConfig {
+    /// Problems with the values.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        for (tier, rate) in [
+            ("anonymous", &self.anonymous),
+            ("authenticated", &self.authenticated),
+        ] {
+            if rate.requests_per_minute == Some(0) {
+                problems.push(format!(
+                    "limits.rate_limit.{tier}.requests_per_minute: must be at least 1 (use `off` for no limit)"
+                ));
+            }
+            if rate.burst == Some(0) {
+                problems.push(format!(
+                    "limits.rate_limit.{tier}.burst: must be at least 1"
+                ));
+            }
+        }
+        if self.key_claim.trim().is_empty() {
+            problems.push("limits.rate_limit.key_claim: must name a claim".to_string());
+        }
+        if self.max_clients == 0 {
+            problems.push("limits.rate_limit.max_clients: must be at least 1".to_string());
+        }
+        for proxy in &self.trusted_proxies {
+            if let Err(err) = IpRange::parse(proxy) {
+                problems.push(format!("limits.rate_limit.trusted_proxies: {err}"));
+            }
+        }
+        problems
+    }
+}
+
+/// An address, or a range of them in CIDR notation (`10.0.0.0/8`, `fd00::/8`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IpRange {
+    pub network: std::net::IpAddr,
+    pub prefix: u8,
+}
+
+impl IpRange {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let text = text.trim();
+        let (address, prefix) = match text.split_once('/') {
+            Some((address, prefix)) => (address, Some(prefix)),
+            None => (text, None),
+        };
+        let network: std::net::IpAddr = address
+            .parse()
+            .map_err(|_| format!("`{text}` is not an IP address or CIDR range"))?;
+        let max = if network.is_ipv4() { 32 } else { 128 };
+        let prefix = match prefix {
+            None => max,
+            Some(p) => p
+                .parse::<u8>()
+                .ok()
+                .filter(|p| *p <= max)
+                .ok_or_else(|| format!("`{text}`: the prefix length must be 0 to {max}"))?,
+        };
+        Ok(Self { network, prefix })
+    }
+
+    pub fn contains(&self, address: std::net::IpAddr) -> bool {
+        use std::net::IpAddr;
+        // An IPv4 peer of a dual-stack socket arrives as `::ffff:a.b.c.d`
+        let address = match address {
+            IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(address),
+            v4 => v4,
+        };
+        let bits = |a: IpAddr| -> u128 {
+            match a {
+                IpAddr::V4(v4) => u32::from(v4) as u128,
+                IpAddr::V6(v6) => u128::from(v6),
+            }
+        };
+        if self.network.is_ipv4() != address.is_ipv4() {
+            return false;
+        }
+        let width = if address.is_ipv4() { 32 } else { 128 };
+        if self.prefix == 0 {
+            return true;
+        }
+        let shift = width - self.prefix as u32;
+        (bits(self.network) >> shift) == (bits(address) >> shift)
+    }
 }
 
 /// Page sizes.
@@ -321,6 +486,7 @@ impl Default for LimitsConfig {
             request_body_bytes: default_body(),
             statement_timeout: default_timeout(),
             count_threshold: default_count_threshold(),
+            rate_limit: RateLimitConfig::default(),
         }
     }
 }
@@ -373,6 +539,7 @@ impl LimitsConfig {
                 ));
             }
         }
+        problems.extend(self.rate_limit.problems());
         problems
     }
 }
@@ -608,6 +775,63 @@ pub struct GraphqlConfig {
     /// Apollo Federation configuration.
     #[serde(default)]
     pub federation: FederationConfig,
+    /// Operations clients send by hash instead of text, and the allow-list of operations.
+    #[serde(default)]
+    pub persisted_queries: PersistedQueriesConfig,
+}
+
+/// Persisted queries: an operation sent as the SHA-256 hash of its text
+/// (`extensions.persistedQuery.sha256Hash`, Apollo's protocol) or as a manifest id
+/// (`documentId`). Off by default.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PersistedQueriesConfig {
+    /// Accept persisted queries at all. Off, a request naming one is answered
+    /// `PERSISTED_QUERY_NOT_SUPPORTED` (clients then send the text) and nothing is stored.
+    #[serde(default, deserialize_with = "switch")]
+    pub enabled: bool,
+    /// Automatic persisted queries (APQ): a client sending a hash with its text registers it
+    /// in this instance's memory, and later sends the hash alone. Ignored with `allow_list`.
+    #[serde(default = "default_true", deserialize_with = "switch")]
+    pub automatic: bool,
+    /// A JSON file of known operations, read at startup: an Apollo persisted query manifest
+    /// (`{"operations": [{"id", "body"}]}`) or a map of ids to texts (`{"<id>": "<text>"}`).
+    #[serde(default)]
+    pub manifest: Option<String>,
+    /// Run only the manifest's operations: by id, by hash, or as text whose hash is listed.
+    #[serde(default, deserialize_with = "switch")]
+    pub allow_list: bool,
+}
+
+impl Default for PersistedQueriesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            automatic: true,
+            manifest: None,
+            allow_list: false,
+        }
+    }
+}
+
+impl PersistedQueriesConfig {
+    /// Problems with the values.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.allow_list && !self.enabled {
+            problems.push(
+                "graphql.persisted_queries.allow_list: needs graphql.persisted_queries.enabled"
+                    .to_string(),
+            );
+        }
+        if self.allow_list && self.manifest.is_none() {
+            problems.push(
+                "graphql.persisted_queries.allow_list: needs a manifest of the allowed operations"
+                    .to_string(),
+            );
+        }
+        problems
+    }
 }
 
 fn default_sdl_path() -> String {
@@ -627,6 +851,7 @@ impl Default for GraphqlConfig {
             sdl_path: default_sdl_path(),
             subgraph_path: default_subgraph_path(),
             federation: FederationConfig::default(),
+            persisted_queries: PersistedQueriesConfig::default(),
         }
     }
 }

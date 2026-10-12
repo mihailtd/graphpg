@@ -202,6 +202,17 @@ impl ConfigSchemaGenerator {
                             "version": { "type": "string", "description": "Federation spec version (default v2.3)" }
                         },
                         "additionalProperties": false
+                    },
+                    "persisted_queries": {
+                        "type": "object",
+                        "description": "Operations sent by hash (`extensions.persistedQuery.sha256Hash`) or manifest id (`documentId`), and the allow-list",
+                        "properties": {
+                            "enabled": Self::switch_described("Accept persisted queries; off, a request naming one gets PERSISTED_QUERY_NOT_SUPPORTED (default false)"),
+                            "automatic": Self::switch_described("Automatic persisted queries: a hash sent with its text registers it in memory (default true; ignored with allow_list)"),
+                            "manifest": { "type": "string", "description": "JSON file of known operations: an Apollo persisted query manifest or a map of ids to texts" },
+                            "allow_list": Self::switch_described("Run only the manifest's operations (default false)")
+                        },
+                        "additionalProperties": false
                     }
                 },
                 "additionalProperties": false
@@ -322,6 +333,18 @@ impl ConfigSchemaGenerator {
                 "description": format!("{description} A number, or `off` for no limit.")
             })
         };
+        let rate = |description: &str| {
+            json!({
+                "type": "object",
+                "description": description,
+                "properties": {
+                    "requests_per_minute": limit("Requests per minute."),
+                    "burst": { "type": ["integer", "string"], "minimum": 1, "description": "Requests allowed at once (default: requests_per_minute)" }
+                },
+                "required": ["requests_per_minute"],
+                "additionalProperties": false
+            })
+        };
         settings.insert(
             "limits".to_string(),
             json!({
@@ -347,6 +370,19 @@ impl ConfigSchemaGenerator {
                     "statement_timeout": {
                         "type": "string",
                         "description": "`statement_timeout` of every connection, with a unit: `500ms`, `30s`, `2m`, `1h`; `off` for none (default 30s)"
+                    },
+                    "rate_limit": {
+                        "type": "object",
+                        "description": "Requests per client and minute over GraphQL and REST, per instance (off by default)",
+                        "properties": {
+                            "enabled": Self::switch_described("Limit request rates (default false)"),
+                            "anonymous": rate("Requests without a valid access token, by IP address (default 60 a minute)"),
+                            "authenticated": rate("Requests with a valid access token, by `key_claim` (default 600 a minute)"),
+                            "key_claim": { "type": "string", "description": "The claim naming a client (default sub)" },
+                            "trusted_proxies": { "type": "array", "items": { "type": "string" }, "description": "Addresses or CIDR ranges of proxies whose X-Forwarded-For names the client" },
+                            "max_clients": { "type": ["integer", "string"], "minimum": 1, "description": "Clients tracked at most per instance (default 100000)" }
+                        },
+                        "additionalProperties": false
                     }
                 },
                 "additionalProperties": false

@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use graphpg::config::{resolve_mode, Config, Mode, Secrets, DEFAULT_CONFIG_FILE};
-use graphpg::server::{create_pool_with, create_router, Authenticator, ServerState};
+use graphpg::server::{
+    create_pool_with, create_router, Authenticator, PersistedQueries, ServerState,
+};
 use graphpg::{CatalogInspector, SchemaBuilder};
 use std::error::Error;
 use std::net::SocketAddr;
@@ -458,6 +460,42 @@ async fn run(
         _ => tracing::warn!("authentication is off: every request runs as the database user"),
     }
 
+    let persisted = match PersistedQueries::new(&config.graphql.persisted_queries) {
+        Ok(persisted) => persisted,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    };
+    if let Some(persisted) = &persisted {
+        let problems = persisted.check(&schema);
+        if !problems.is_empty() {
+            let report = problems.join("\n");
+            if mode == Mode::Prod {
+                eprintln!("persisted query manifest: operations that do not validate against the schema:\n{report}");
+                std::process::exit(1);
+            }
+            tracing::warn!("persisted query manifest: operations that do not validate against the schema:\n{report}");
+        }
+        tracing::info!(
+            manifest = persisted.manifest_len(),
+            allow_list = persisted.allow_list(),
+            automatic = config.graphql.persisted_queries.automatic && !persisted.allow_list(),
+            "persisted queries"
+        );
+    }
+    if config.limits.rate_limit.enabled {
+        let rate = |r: &graphpg::config::models::RateConfig| match r.requests_per_minute {
+            Some(n) => format!("{n}/min, burst {}", r.burst.unwrap_or(n)),
+            None => "off".to_string(),
+        };
+        tracing::info!(
+            anonymous = %rate(&config.limits.rate_limit.anonymous),
+            authenticated = %rate(&config.limits.rate_limit.authenticated),
+            "rate limits (per instance)"
+        );
+    }
+
     let state = Arc::new(
         ServerState::new(pool, schema, catalog, default_schema, config.debug.into())
             .with_mode(mode)
@@ -470,6 +508,7 @@ async fn run(
             .with_scalar(config.openapi.ui)
             .with_graphql_enabled(config.graphql.enabled)
             .with_openapi_enabled(config.openapi.enabled)
+            .with_persisted_queries(persisted)
             .with_config(config.clone()),
     );
 
@@ -579,9 +618,13 @@ async fn run(
         }
     }
 
-    axum::serve(listener, create_router(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // The peer address names anonymous clients for the rate limits
+    axum::serve(
+        listener,
+        create_router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }

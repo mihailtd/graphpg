@@ -21,12 +21,50 @@ use std::sync::Arc;
 use tokio_postgres::NoTls;
 use tracing::Instrument;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct GraphQLRequest {
-    pub query: String,
+    /// The operation's text; absent when the request names a persisted query.
+    #[serde(default)]
+    pub query: Option<String>,
     #[serde(rename = "operationName")]
     pub operation_name: Option<String>,
     pub variables: Option<serde_json::Value>,
+    /// `persistedQuery` (`{ "version": 1, "sha256Hash": ... }`) for persisted queries.
+    #[serde(default)]
+    pub extensions: Option<serde_json::Value>,
+    /// The id of a persisted query in the manifest.
+    #[serde(default, rename = "documentId")]
+    pub document_id: Option<String>,
+}
+
+/// `GET /graphql`: a query in the URL, its JSON values (`variables`, `extensions`) as text.
+#[derive(Debug, Deserialize)]
+pub struct GraphQLGetParams {
+    pub query: Option<String>,
+    #[serde(rename = "operationName")]
+    pub operation_name: Option<String>,
+    pub variables: Option<String>,
+    pub extensions: Option<String>,
+    #[serde(rename = "documentId")]
+    pub document_id: Option<String>,
+}
+
+impl GraphQLGetParams {
+    fn into_request(self) -> Result<GraphQLRequest, String> {
+        let json = |name: &str, text: Option<String>| match text.filter(|t| !t.is_empty()) {
+            None => Ok(None),
+            Some(text) => serde_json::from_str(&text)
+                .map(Some)
+                .map_err(|err| format!("`{name}` is not JSON: {err}")),
+        };
+        Ok(GraphQLRequest {
+            query: self.query,
+            operation_name: self.operation_name.filter(|n| !n.is_empty()),
+            variables: json("variables", self.variables)?,
+            extensions: json("extensions", self.extensions)?,
+            document_id: self.document_id,
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -284,6 +322,10 @@ pub struct ServerState {
     pub limits: crate::config::models::LimitsConfig,
     /// Custom error configurations and detail level.
     pub errors: crate::config::models::ErrorsConfig,
+    /// Request rates per client (`limits.rate_limit`); `None` when off.
+    pub rate_limiter: Option<Arc<super::RateLimiter>>,
+    /// Persisted queries and the allow-list (`graphql.persisted_queries`); `None` when off.
+    pub persisted: Option<Arc<super::PersistedQueries>>,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -336,12 +378,25 @@ impl ServerState {
             mask_errors: true,
             limits: crate::config::models::LimitsConfig::default(),
             errors: crate::config::models::ErrorsConfig::default(),
+            rate_limiter: None,
+            persisted: None,
         }
     }
 
     /// Sets the safety limits (the defaults of [`LimitsConfig`](crate::config::models::LimitsConfig) otherwise).
     pub fn with_limits(mut self, limits: crate::config::models::LimitsConfig) -> Self {
+        self.rate_limiter = super::RateLimiter::new(&limits.rate_limit);
         self.limits = limits;
+        self
+    }
+
+    /// Accepts persisted queries (see [`PersistedQueries`](super::PersistedQueries)), or not
+    /// (`None`, the default).
+    pub fn with_persisted_queries(
+        mut self,
+        persisted: Option<Arc<super::PersistedQueries>>,
+    ) -> Self {
+        self.persisted = persisted;
         self
     }
 
@@ -525,6 +580,7 @@ impl ServerState {
         self.graphiql = config.graphql.ui;
         self.scalar = config.openapi.ui;
         self.sql_comments = config.database.sql_comments;
+        self.rate_limiter = super::RateLimiter::new(&config.limits.rate_limit);
         self.limits = config.limits.clone();
         self.errors = config.errors.clone();
         let cat = self.current_catalog();
@@ -571,6 +627,11 @@ impl ServerState {
             Some(&schema),
         );
         *self.openapi_document.write().unwrap() = Arc::new(doc);
+        if let Some(persisted) = &self.persisted {
+            for problem in persisted.check(&schema) {
+                tracing::warn!("persisted query manifest: {problem}");
+            }
+        }
         *self.schema.write().unwrap() = Arc::new(schema);
         *self.catalog.write().unwrap() = Arc::new(catalog);
         // Statements prepared, documents validated and operations compiled for the previous
@@ -876,12 +937,34 @@ pub(crate) async fn graphql_handler(
     request_headers: HeaderMap,
     Json(req): Json<GraphQLRequest>,
 ) -> Response {
+    answer_graphql(state, request_headers, req, false).await
+}
+
+/// `GET /graphql`: queries only (a mutation is `405`), so they can be cached by URL, which
+/// persisted queries keep short.
+pub(crate) async fn graphql_get_handler(
+    State(state): State<Arc<ServerState>>,
+    request_headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<GraphQLGetParams>,
+) -> Response {
+    match params.into_request() {
+        Ok(req) => answer_graphql(state, request_headers, req, true).await,
+        Err(message) => error_response(StatusCode::BAD_REQUEST, message, None),
+    }
+}
+
+async fn answer_graphql(
+    state: Arc<ServerState>,
+    request_headers: HeaderMap,
+    req: GraphQLRequest,
+    get: bool,
+) -> Response {
     let start = std::time::Instant::now();
     let mut metric = OperationMetric {
         kind: "",
         name: String::new(),
     };
-    let response = run_graphql(state, request_headers, req, &mut metric).await;
+    let response = run_graphql(state, request_headers, req, get, &mut metric).await;
     let error = match response.extensions().get::<ErrorCode>() {
         Some(code) => Some(code.0.clone()),
         None => (!response.status().is_success()).then(|| response.status().as_u16().to_string()),
@@ -899,6 +982,7 @@ async fn run_graphql(
     state: Arc<ServerState>,
     request_headers: HeaderMap,
     req: GraphQLRequest,
+    get: bool,
     metric: &mut OperationMetric,
 ) -> Response {
     // Authenticate before anything else is looked at
@@ -906,23 +990,43 @@ async fn run_graphql(
         Ok(ctx) => ctx,
         Err(err) => return err.into_response(),
     };
+    // The text of the operation: sent, or persisted and named by hash or id
+    let query = match super::persisted::resolve(
+        state.persisted.as_deref(),
+        req.query.as_deref(),
+        req.extensions.as_ref(),
+        req.document_id.as_deref(),
+    ) {
+        Ok(query) => query,
+        Err(rejection) => {
+            return errors_response(
+                rejection.status,
+                vec![GraphQLError {
+                    message: rejection.message,
+                    path: None,
+                    extensions: Some(serde_json::json!({ "code": rejection.code })),
+                }],
+                None,
+            )
+        }
+    };
     let schema = state.current_schema();
     let catalog = state.current_catalog();
 
     // 1. Parse and validate the document (once per distinct document)
-    let cached_doc = state.cache.document(&req.query);
+    let cached_doc = state.cache.document(&query);
     crate::telemetry::metrics().cache("document", cached_doc.is_some());
     let doc = match cached_doc {
         Some(doc) => doc,
         None => {
             let parsed = tracing::info_span!("graphql.parse").in_scope(|| {
-                ExecutableDocument::parse_and_validate(&schema, &req.query, "request.graphql")
+                ExecutableDocument::parse_and_validate(&schema, &*query, "request.graphql")
                     .map_err(|err| err.to_string())
             });
             match parsed {
                 Ok(doc) => {
                     let doc = Arc::new(doc);
-                    state.cache.store_document(&req.query, doc.clone());
+                    state.cache.store_document(&query, doc.clone());
                     doc
                 }
                 Err(message) => return error_response(StatusCode::BAD_REQUEST, message, None),
@@ -950,6 +1054,18 @@ async fn run_graphql(
         apollo_compiler::ast::OperationType::Subscription => "subscription",
     };
     metric.name = operation_label.clone();
+
+    if get && operation.operation_type != apollo_compiler::ast::OperationType::Query {
+        let mut response = error_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            format!("a {} cannot be sent with GET: use POST", metric.kind),
+            None,
+        );
+        response
+            .headers_mut()
+            .insert(header::ALLOW, axum::http::HeaderValue::from_static("POST"));
+        return response;
+    }
 
     if !state.introspection && asks_introspection(&doc, &operation.selection_set) {
         return errors_response(
@@ -1016,7 +1132,7 @@ async fn run_graphql(
     if has_concrete {
         // An operation run before with the same variables reuses its compiled statements
         let cached = state.cache.operation(
-            &req.query,
+            &query,
             req.operation_name.as_deref(),
             req.variables.as_ref(),
         );
@@ -1049,7 +1165,7 @@ async fn run_graphql(
                 crate::telemetry::metrics().planning("graphql", planning.elapsed().as_secs_f64());
                 let compiled = Arc::new(compiled);
                 state.cache.store_operation(
-                    &req.query,
+                    &query,
                     req.operation_name.as_deref(),
                     req.variables.as_ref(),
                     compiled.clone(),

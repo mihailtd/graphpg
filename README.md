@@ -60,7 +60,7 @@ curl -X POST localhost:4000/rest/authors -H 'content-type: application/json' \
 - **Search** fields from the indexes you have: trigram, full-text, pgvector, BM25 and hybrid.
 - **Modern PostgreSQL**: temporal keys (`WITHOUT OVERLAPS`, `PERIOD`), `RETURNING OLD`, `JSON_TABLE` views, `MERGE`-based syncing of children.
 - **Authorization from the database**: OAuth 2.0 bearer tokens are verified and their claims are made available to **Row-Level Security** policies; with `rbac.enabled`, the GraphQL schema, REST API and OpenAPI document are pruned to what the connecting role may do, from `GRANT`s.
-- **Safety limits for both APIs**: page size, query depth, estimated cost, bulk size, request size and `statement_timeout`, enforced on the plan before any SQL runs; production errors never carry PostgreSQL's own messages ([limits](docs/configuration.md#safety-limits)).
+- **Safety limits for both APIs**: page size, query depth, estimated cost, bulk size, request size and `statement_timeout`, enforced on the plan before any SQL runs; production errors never carry PostgreSQL's own messages ([limits](docs/configuration.md#safety-limits)). Optional [rate limits](docs/configuration.md#rate-limits) per client, and [persisted queries](docs/graphql-api.md#persisted-queries) with an allow-list of operations for production.
 - **Pinned schemas**: `graphpg schema export` writes the GraphQL SDL and the OpenAPI document; `--check` fails CI when they are out of date, and production refuses to start on drift.
 - **Apollo Federation v2** subgraph mode, `@defer` / `@stream`, streaming NDJSON/CSV export and `COPY` import, read replicas, OpenTelemetry spans.
 
