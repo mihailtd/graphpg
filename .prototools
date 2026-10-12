@@ -1,0 +1,2 @@
+# The moon version CI and the hooks use (setup-toolchain reads this file); move it deliberately.
+moon = "2.6.1"

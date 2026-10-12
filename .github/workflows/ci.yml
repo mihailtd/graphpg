@@ -48,6 +48,9 @@ jobs:
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
+      # Once, before any task: pnpm-workspace.yaml makes stale dependencies an error rather
+      # than an install inside each of the tasks moon runs in parallel
+      - run: pnpm install --frozen-lockfile
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -74,6 +77,9 @@ jobs:
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
+      # Once, before any task: pnpm-workspace.yaml makes stale dependencies an error rather
+      # than an install inside each of the tasks moon runs in parallel
+      - run: pnpm install --frozen-lockfile
       # The JavaScript build only: the Rust crates are compiled by the steps below, with the cache
       # restored (`graphpg-ui:build` would also compile them here, before the cache exists)
       - name: Build UI assets
@@ -163,6 +169,9 @@ jobs:
       - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
+      # Once, before any task: pnpm-workspace.yaml makes stale dependencies an error rather
+      # than an install inside each of the tasks moon runs in parallel
+      - run: pnpm install --frozen-lockfile
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
