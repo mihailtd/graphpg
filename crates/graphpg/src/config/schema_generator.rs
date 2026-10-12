@@ -381,6 +381,57 @@ impl ConfigSchemaGenerator {
             }),
         );
         settings.insert(
+            "telemetry".to_string(),
+            json!({
+                "type": "object",
+                "description": "Logs, Prometheus metrics, traces and OpenTelemetry (OTLP) export, for Prometheus, an OpenTelemetry collector or the Grafana LGTM stack. Read at startup",
+                "properties": {
+                    "service_name": { "type": "string", "description": "service.name of exported telemetry (default: OTEL_SERVICE_NAME, else graphpg)" },
+                    "logs": {
+                        "type": "object",
+                        "description": "Log lines on standard output",
+                        "properties": {
+                            "level": { "type": "string", "description": "Lowest level logged (`error`, `warn`, `info`, `debug`, `trace`) or a filter like `info,graphpg=debug`; RUST_LOG wins when set (default info)" },
+                            "format": { "enum": ["text", "json"], "description": "`text` (default) or `json`: one object per line, with the request's trace id" }
+                        },
+                        "additionalProperties": false
+                    },
+                    "metrics": {
+                        "type": "object",
+                        "description": "Prometheus metrics endpoint (text exposition format)",
+                        "properties": {
+                            "enabled": Self::switch_described("Serve metrics (default: on in dev mode, off in prod)"),
+                            "path": { "type": "string", "description": "Path of the endpoint (default /metrics)" },
+                            "listen": { "type": "string", "description": "Serve the endpoint on a listener of its own, like `0.0.0.0:9464`, instead of the API's port" }
+                        },
+                        "additionalProperties": false
+                    },
+                    "traces": {
+                        "type": "object",
+                        "description": "One span per request, with planning, compilation and execution inside it",
+                        "properties": {
+                            "sample_ratio": { "type": ["number", "string"], "minimum": 0, "maximum": 1, "description": "Share of new traces recorded (default 1); a request with a W3C traceparent follows the caller's decision" }
+                        },
+                        "additionalProperties": false
+                    },
+                    "otlp": {
+                        "type": "object",
+                        "description": "Push traces, metrics and logs over OTLP/HTTP (protobuf)",
+                        "properties": {
+                            "endpoint": { "type": "string", "description": "Base URL, like http://localhost:4318: signals go to /v1/traces, /v1/metrics and /v1/logs (default: OTEL_EXPORTER_OTLP_ENDPOINT, else no export)" },
+                            "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Headers of every export request, like Authorization (use ${NAME} for credentials)" },
+                            "traces": Self::switch_described("Export traces (default true)"),
+                            "metrics": Self::switch_described("Export metrics (default true)"),
+                            "logs": Self::switch_described("Export logs (default true)"),
+                            "interval": { "type": "string", "description": "How often metrics are pushed, with a unit: `10s`, `1m` (default 60s)" }
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
             "search".to_string(),
             json!({
                 "type": "object",

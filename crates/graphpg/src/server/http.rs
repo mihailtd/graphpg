@@ -628,12 +628,21 @@ fn errors_response(
     errors: Vec<GraphQLError>,
     extensions: Option<serde_json::Value>,
 ) -> Response {
+    let code = errors
+        .first()
+        .and_then(|e| e.extensions.as_ref())
+        .and_then(|ext| ext.get("code"))
+        .and_then(|code| code.as_str())
+        .unwrap_or("GRAPHQL_ERROR")
+        .to_string();
     let res = GraphQLResponse {
         errors: Some(errors),
         data: None,
         extensions,
     };
-    (status, graphql_headers(), Json(res)).into_response()
+    let mut response = (status, graphql_headers(), Json(res)).into_response();
+    response.extensions_mut().insert(ErrorCode(code));
+    response
 }
 
 pub(crate) async fn health_handler() -> impl IntoResponse {
@@ -852,10 +861,45 @@ pub(crate) fn execute_introspection(
     }
 }
 
+/// The code of a GraphQL response's first error (`extensions.code`), for the metrics.
+#[derive(Clone)]
+struct ErrorCode(String);
+
+/// What the metrics say of a GraphQL operation, learnt while answering it.
+struct OperationMetric {
+    kind: &'static str,
+    name: String,
+}
+
 pub(crate) async fn graphql_handler(
     State(state): State<Arc<ServerState>>,
     request_headers: HeaderMap,
     Json(req): Json<GraphQLRequest>,
+) -> Response {
+    let start = std::time::Instant::now();
+    let mut metric = OperationMetric {
+        kind: "",
+        name: String::new(),
+    };
+    let response = run_graphql(state, request_headers, req, &mut metric).await;
+    let error = match response.extensions().get::<ErrorCode>() {
+        Some(code) => Some(code.0.clone()),
+        None => (!response.status().is_success()).then(|| response.status().as_u16().to_string()),
+    };
+    crate::telemetry::metrics().graphql_operation(
+        metric.kind,
+        &metric.name,
+        error.as_deref(),
+        start.elapsed().as_secs_f64(),
+    );
+    response
+}
+
+async fn run_graphql(
+    state: Arc<ServerState>,
+    request_headers: HeaderMap,
+    req: GraphQLRequest,
+    metric: &mut OperationMetric,
 ) -> Response {
     // Authenticate before anything else is looked at
     let auth_ctx = match state.authenticate(&request_headers).await {
@@ -866,7 +910,9 @@ pub(crate) async fn graphql_handler(
     let catalog = state.current_catalog();
 
     // 1. Parse and validate the document (once per distinct document)
-    let doc = match state.cache.document(&req.query) {
+    let cached_doc = state.cache.document(&req.query);
+    crate::telemetry::metrics().cache("document", cached_doc.is_some());
+    let doc = match cached_doc {
         Some(doc) => doc,
         None => {
             let parsed = tracing::info_span!("graphql.parse").in_scope(|| {
@@ -898,6 +944,12 @@ pub(crate) async fn graphql_handler(
         .as_ref()
         .map(|n| n.to_string())
         .unwrap_or_else(|| "anonymous".to_string());
+    metric.kind = match operation.operation_type {
+        apollo_compiler::ast::OperationType::Query => "query",
+        apollo_compiler::ast::OperationType::Mutation => "mutation",
+        apollo_compiler::ast::OperationType::Subscription => "subscription",
+    };
+    metric.name = operation_label.clone();
 
     if !state.introspection && asks_introspection(&doc, &operation.selection_set) {
         return errors_response(
@@ -969,9 +1021,11 @@ pub(crate) async fn graphql_handler(
             req.variables.as_ref(),
         );
         let cache_status = if cached.is_some() { "hit" } else { "miss" };
+        crate::telemetry::metrics().cache("operation", cached.is_some());
         let compiled = match cached {
             Some(compiled) => compiled,
             None => {
+                let planning = std::time::Instant::now();
                 let span =
                     tracing::info_span!("graphql.plan", graphql.operation = %operation_label);
                 let plan = match span.in_scope(|| planner.plan_operation(operation)) {
@@ -992,6 +1046,7 @@ pub(crate) async fn graphql_handler(
                         ("graphql_type", kind),
                     ]);
                 }
+                crate::telemetry::metrics().planning("graphql", planning.elapsed().as_secs_f64());
                 let compiled = Arc::new(compiled);
                 state.cache.store_operation(
                     &req.query,

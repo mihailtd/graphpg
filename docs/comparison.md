@@ -200,8 +200,8 @@ What it shows: both are limited by PostgreSQL where a query is expensive (`offse
 | :--- | :--- | :--- |
 | Schema reload | Dev: automatic on DDL (event trigger). Prod: restart | `NOTIFY pgrst, 'reload schema'` or a signal, no restart |
 | Configuration reload | Restart | `NOTIFY pgrst, 'reload config'`, in-database settings, per-role settings |
-| Health and metrics | `GET /health` | `/live`, `/ready` and Prometheus `/metrics` on an admin port |
-| Tracing and logs | OpenTelemetry spans (OTLP), sqlcommenter tags, structured logs | Logs, `log-query`, `Server-Timing`, trace-header echo |
+| Health and metrics | `/health`, `/live`, `/ready`, Prometheus `/metrics` (optionally on a port of its own) and OTLP metrics, named after the OpenTelemetry conventions | `/live`, `/ready` and Prometheus `/metrics` on an admin port |
+| Tracing and logs | OpenTelemetry traces with W3C `traceparent` propagation, OTLP logs, JSON logs with trace ids, sqlcommenter tags | Logs, `log-query`, `Server-Timing`, trace-header echo |
 | Read replicas | Built in (WAL-position aware routing) | Not built in (use a load balancer or pooler) |
 | Connection pooling | Built-in pool; replicas separately | Built-in pool (`db-pool`, acquisition timeout, lifetime) |
 | Graceful shutdown | Yes (`SIGTERM`) | Yes |
@@ -239,7 +239,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 - You rely on **embedded filters, ordering and limits**, spread, or `!inner` joins in one URL.
 - You need JSON arrow operators in the URL (`->`, `->>`), or `NULLS FIRST` / `LAST`.
 - You want the token to **choose the PostgreSQL role**, or `Accept-Profile` to switch **schemas per request**.
-- You need **config and schema reload without a restart**, Prometheus metrics, or a custom status from SQL.
+- You need **config and schema reload without a restart**.
 - You value a **decade of production use**, a large ecosystem and client libraries (`postgrest-js`, ...).
 
 ### When graphpg fits better
@@ -254,7 +254,7 @@ Rows differ in three ways worth knowing: field names are **camelCase** (`created
 
 ### Known gaps
 
-What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, GeoJSON, XML and custom media types, `planned` / `estimated` counts, schema reload in production without a restart, a Prometheus metrics endpoint, and `Accept-Profile`-style schema selection.
+What graphpg's REST API does not do today, from the tables above, in the order we would expect people to hit them: update and delete by filter (GraphQL has it), embedded filters, ordering and limits, and column lists, GeoJSON, XML and custom media types, `planned` / `estimated` counts, schema reload in production without a restart, and `Accept-Profile`-style schema selection.
 
 ## Where graphpg is a fit
 

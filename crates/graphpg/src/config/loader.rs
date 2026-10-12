@@ -47,7 +47,7 @@ impl Mode {
     fn defaults(self) -> &'static str {
         match self {
             Mode::Dev => {
-                "server:\n  cors:\n    origins: ['*']\nheaders:\n  preset: relaxed\nerrors:\n  detail: full\ngraphql:\n  ui: true\n  introspection: true\n  sdl: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\n"
+                "server:\n  cors:\n    origins: ['*']\nheaders:\n  preset: relaxed\nerrors:\n  detail: full\ngraphql:\n  ui: true\n  introspection: true\n  sdl: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\ntelemetry:\n  metrics:\n    enabled: true\n"
             }
             Mode::Prod => "{}",
         }
@@ -219,6 +219,7 @@ impl Config {
             }
             let mut problems = config.limits.problems();
             problems.extend(config.server.cors.problems());
+            problems.extend(config.telemetry.problems());
             if !problems.is_empty() {
                 let problems = if m == mode {
                     problems

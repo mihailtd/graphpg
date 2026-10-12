@@ -239,6 +239,21 @@ pub fn health_routes() -> Router<Arc<ServerState>> {
         .route("/ready", get(ready_handler))
 }
 
+/// Mounts the Prometheus endpoint at `telemetry.metrics.path`, unless it is off or has a
+/// listener of its own (`telemetry.metrics.listen`).
+pub fn metrics_routes(state: &ServerState) -> Router<Arc<ServerState>> {
+    let mut router = Router::new();
+    if let Some(metrics) = state
+        .config
+        .as_ref()
+        .map(|c| &c.telemetry.metrics)
+        .filter(|m| m.enabled && m.listen.is_none())
+    {
+        router = router.route(&metrics.path, get(crate::telemetry::http::metrics_handler));
+    }
+    router
+}
+
 /// Applies global middleware layers configured by [`Config`].
 pub fn apply_layers(router: Router, config: &Config) -> Router {
     apply_layers_with_mode(router, config, false)
@@ -247,6 +262,8 @@ pub fn apply_layers(router: Router, config: &Config) -> Router {
 /// Applies global middleware layers configured by [`Config`] and the runtime mode.
 pub fn apply_layers_with_mode(router: Router, config: &Config, is_dev: bool) -> Router {
     let headers = Arc::new(config.headers.clone());
+    // Innermost: it runs after routing (for the route template) and inside the request id
+    let router = router.layer(axum::middleware::from_fn(crate::telemetry::http::track));
     let router = router.layer(axum::middleware::from_fn(
         move |mut request: axum::extract::Request, next: axum::middleware::Next| {
             let headers = headers.clone();
@@ -375,6 +392,7 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
 
     router = router.merge(health_routes());
     router = router.merge(ui_routes(&state));
+    router = router.merge(metrics_routes(&state));
 
     let config = state.config.as_ref().cloned().unwrap_or_default();
     let is_dev = state.mode == crate::config::Mode::Dev;

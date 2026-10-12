@@ -5,6 +5,12 @@ Releases are tagged `vX.Y.Z`; each one has generated notes on the
 
 ## Unreleased
 
+- **Observability** (`telemetry:`, [guide](docs/observability.md)), for Prometheus, OpenTelemetry collectors and the Grafana LGTM stack. Metric names follow the OpenTelemetry semantic conventions, so scraped and pushed metrics read the same:
+  - *Metrics:* Prometheus at `/metrics` (`telemetry.metrics`: on in dev, off in prod, optionally on a port of its own). They cover HTTP requests by route template, GraphQL operations by name and error code, database operations by type and SQLSTATE, connection pools, cache hits and planning time.
+  - *OTLP/HTTP export* of traces, metrics and logs (`telemetry.otlp`: endpoint, headers, per-signal switches).
+  - *Traces:* a server span per request with W3C `traceparent` propagation and PostgreSQL client spans; `telemetry.traces.sample_ratio`.
+  - *Logs:* JSON log lines with request and trace ids (`telemetry.logs`).
+  - *Build:* the `otel` feature is now on by default.
 - **REST API** at `/rest`, planned onto the same engine as GraphQL: typed filters, ordering, keyset pagination, embedding, single-row reads and writes with `ETag` / `If-Match`, nested writes, bulk creates, aggregates and grouped aggregates, functions (`/rest/rpc/…`), search methods and global search, `Prefer: previous` (`RETURNING OLD`), views. Errors are RFC 9457 `application/problem+json` with the typed constraint codes, masked in production.
 - **Planned & estimated counts over REST**: `Prefer: count=planned` uses PostgreSQL planner row estimates (`EXPLAIN` / `reltuples`); `Prefer: count=estimated` uses exact counting below `limits.count_threshold` (new, default 10,000) and planner estimates above it. Emits `Preference-Applied: count=...`, `X-Total-Count`, and `X-Total-Count-Estimate: true` headers.
 - **Custom SQL problem responses**: PostgREST `PTxxx` SQLSTATE codes (e.g. `ERRCODE = 'PT402'`) and the new `errors.map` configuration map database exceptions and constraint names to custom RFC 9457 Problem Details responses (status, code, title, type, hint, extensions) and GraphQL `extensions.code`, unmasked in production for `PTxxx`, masked to the title for `errors.map` entries.

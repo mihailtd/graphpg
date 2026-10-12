@@ -1216,6 +1216,7 @@ impl Ctx {
         method: &str,
         write: bool,
     ) -> Result<serde_json::Value, ProblemDetails> {
+        let planning = std::time::Instant::now();
         let plan = QueryPlanner::new(&self.catalog, schema)
             .with_limits(self.state.limits.plan_limits())
             .plan_request(&op)
@@ -1225,6 +1226,7 @@ impl Ctx {
             })?;
 
         let mut compiled = SqlCompiler::compile_operation(&plan);
+        crate::telemetry::metrics().planning("rest", planning.elapsed().as_secs_f64());
         if self.state.sql_comments {
             compiled.tag(&[
                 ("application", "graphpg"),

@@ -76,7 +76,8 @@ Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) 
 | [REST API](docs/rest-api.md) | Filtering, pagination, embedding, writes and nested writes, aggregates, functions, search, errors, limits |
 | [Authentication](docs/authentication.md) | OAuth 2.0 resource server and Row-Level Security |
 | [Federation and RBAC](docs/federation-and-rbac.md) | Apollo Federation subgraphs and schema pruning by role |
-| [Performance](docs/performance.md) | Indexes and settings, replicas, observability |
+| [Performance](docs/performance.md) | Indexes and settings, replicas |
+| [Observability](docs/observability.md) | Prometheus metrics, OpenTelemetry traces, metrics and logs (OTLP), JSON logs; Grafana LGTM |
 | [Comparison](docs/comparison.md) | How graphpg differs from PostGraphile and Hasura (GraphQL) and from PostgREST (REST) |
 | [GraphQL and OpenAPI parity](docs/graphql-openapi-parity.md) | What each API knows about the database that the other does not, and whether it could be ported |
 

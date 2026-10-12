@@ -38,7 +38,7 @@ The image is a statically linked binary on `gcr.io/distroless/static`: no shell,
 | `sha-<short hash>` | never | One exact commit of `main` |
 | `edge` | with each commit on `main` | Testing unreleased changes |
 
-OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOINT`.
+OpenTelemetry export is compiled into the image: set `telemetry.otlp.endpoint` (or `OTEL_EXPORTER_OTLP_ENDPOINT`). See [observability](observability.md).
 
 ### Endpoints
 
@@ -53,6 +53,8 @@ OpenTelemetry export is compiled into the image: set `OTEL_EXPORTER_OTLP_ENDPOIN
 | `/export` | `POST` | A connection query streamed as NDJSON or CSV (404 when `graphql.enabled: false`) |
 | `/import/{Type}` | `POST` | NDJSON rows of `Create<Type>Input`, inserted all-or-nothing with `COPY` (404 when `graphql.enabled: false`) |
 | `/health` | `GET` | Liveness |
+| `/live`, `/ready` | `GET` | Liveness, and readiness (the database answers) |
+| `/metrics` | `GET` | Prometheus metrics, when `telemetry.metrics.enabled` (on in dev, off in prod); path `telemetry.metrics.path`, or a port of its own with `telemetry.metrics.listen`. See [observability](observability.md) |
 
 ### Secret environment variables
 
@@ -149,6 +151,11 @@ openapi:
   ui: false                     # the Scalar API reference: on by default in dev mode only
   spec: false                   # serve the OpenAPI 3.1 document: on by default in dev mode, off in prod (alias: schema)
   path: /openapi.json           # path to serve the OpenAPI document at (alias: spec_path)
+
+telemetry:                      # logs, metrics, traces: see observability.md
+  logs: { level: info, format: json }
+  metrics: { enabled: true, path: /metrics }   # default: on in dev, off in prod
+  otlp: { endpoint: http://otel-collector:4318 }
 
 dev:                            # settings that differ in dev mode
   debug:
