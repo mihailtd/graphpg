@@ -151,6 +151,14 @@ entities:
 
 Tables keyed with `uuid DEFAULT uuidv7()` (PostgreSQL 18) get time-ordered, index-friendly keys. The engine treats them as ordinary `uuid` keys: `databaseId` is the raw value and `id` is the Relay global ID.
 
+## Constraints that are not enforced, or not validated
+
+graphpg derives a lot from constraints: enums from `CHECK (status IN (...))`, `@constraint` input rules and OpenAPI keywords from other checks, typed error codes from every constraint. It only derives them from what PostgreSQL checks:
+
+- **`NOT ENFORCED`** (PostgreSQL 18, on `CHECK` and `FOREIGN KEY`): the database checks nothing, so an unenforced check is ignored entirely. An unenforced foreign key still states a relationship, so it stays a **relation**, as useful as an enforced one, and a dangling key reads as `null`. It gets no `<RELATION>_NOT_FOUND` code, since no write can fail on it.
+- **`NOT VALID`**: writes are checked, existing rows were not. Such a value list does **not** become an enum (an older row could hold another value). It still describes and constrains input, since every new write must satisfy it.
+- **Virtual generated columns** (`GENERATED ALWAYS AS (...) VIRTUAL`, the default kind in PostgreSQL 18) are read like stored ones and never written: they are left out of create and update inputs.
+
 ## Functions
 
 Auto-CRUD cannot express every piece of business logic, so any SQL function becomes a field, with no config: searches, reports, state transitions, workflows. What a function returns decides its type, and its volatility decides where it goes: `STABLE`/`IMMUTABLE` functions are Query fields, `VOLATILE` ones Mutation fields. PostgreSQL's default when none is declared is `VOLATILE`, so declare `STABLE` for functions that only read.
