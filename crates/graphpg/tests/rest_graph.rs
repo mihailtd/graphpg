@@ -98,6 +98,7 @@ async fn env() -> Env {
         .unwrap();
     if exists.is_none() {
         lock.batch_execute(SQL).await.unwrap();
+        lock.batch_execute("RESET search_path").await.unwrap();
         lock.batch_execute("COMMENT ON SCHEMA rest_graph IS 'v3'")
             .await
             .unwrap();

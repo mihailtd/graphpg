@@ -26,7 +26,7 @@ use tower::ServiceExt;
 /// Created once (serialised by an advisory lock, since tests run concurrently).
 const FIXTURE_SQL: &str = r#"
 CREATE SCHEMA polymorphism_fixture;
-SET search_path = polymorphism_fixture;
+SET LOCAL search_path = polymorphism_fixture;
 
 CREATE TABLE owners (id int PRIMARY KEY, name text NOT NULL);
 CREATE TABLE shelters (id int PRIMARY KEY, name text NOT NULL);

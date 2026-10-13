@@ -21,7 +21,7 @@ const FIXTURE_VERSION: &str = "relational_fixture v1";
 const FIXTURE_SQL: &str = r#"
 CREATE EXTENSION IF NOT EXISTS ltree;
 CREATE SCHEMA relational_fixture;
-SET search_path = relational_fixture, public;
+SET LOCAL search_path = relational_fixture, public;
 
 CREATE TABLE authors (id serial PRIMARY KEY, name text NOT NULL);
 CREATE TABLE forums (id serial PRIMARY KEY, name text NOT NULL, owner_id int REFERENCES authors(id));
