@@ -66,6 +66,56 @@ fn number(text: &str) -> Option<Value> {
         .map(|f| json!(f))
 }
 
+/// The JSON Schema a `CHECK (json[b]_matches_schema('<schema>', <column>))` (pg_jsonschema)
+/// gives a column: the whole constraint is that call on that column, the schema a literal.
+pub fn json_schema(table: &TableMetadata, column: &ColumnMetadata) -> Option<Value> {
+    table
+        .constraints
+        .iter()
+        .filter(|c| c.kind == ConstraintKind::Check && c.columns == [column.name.clone()])
+        .find_map(|c| json_schema_of(&c.definition, &column.name))
+}
+
+fn json_schema_of(definition: &str, column: &str) -> Option<Value> {
+    let call = unwrap(definition.trim().strip_prefix("CHECK ")?);
+    let open = call.find("matches_schema('")?;
+    // The function, possibly schema-qualified: `jsonb_matches_schema`, `json_matches_schema`
+    let function = &call[..open];
+    let function = function.rsplit('.').next().unwrap_or(function);
+    if !matches!(function, "jsonb_" | "json_") {
+        return None;
+    }
+    // The literal, `''` an escaped quote
+    let mut literal = String::new();
+    let mut chars = call[open + "matches_schema('".len()..]
+        .char_indices()
+        .peekable();
+    let rest = loop {
+        let (i, c) = chars.next()?;
+        if c == '\'' {
+            if chars.peek().map(|(_, c)| *c) == Some('\'') {
+                chars.next();
+                literal.push('\'');
+                continue;
+            }
+            break &call[open + "matches_schema('".len() + i + 1..];
+        }
+        literal.push(c);
+    };
+    let rest = rest
+        .strip_prefix("::jsonb")
+        .or_else(|| rest.strip_prefix("::json"))
+        .unwrap_or(rest);
+    let argument = rest.strip_prefix(", ")?.strip_suffix(')')?;
+    let quoted = format!("\"{column}\"");
+    if argument != column && argument != quoted {
+        return None;
+    }
+    serde_json::from_str::<Value>(&literal)
+        .ok()
+        .filter(|v| v.is_object() || v.is_boolean())
+}
+
 /// The keywords a table's `CHECK` constraints give a column.
 pub fn keywords(table: &TableMetadata, column: &ColumnMetadata) -> Map<String, Value> {
     keywords_of(&table.constraints, column)
@@ -152,6 +202,37 @@ fn limit(out: &mut Map<String, Value>, op: &str, n: &str, min: &str, max: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_schema_checks() {
+        let schema = json_schema_of(
+            r#"CHECK (jsonb_matches_schema('{"type": "object", "properties": {"it''s": {"type": "integer"}}}'::json, settings))"#,
+            "settings",
+        )
+        .unwrap();
+        assert_eq!(schema["properties"]["it's"]["type"], "integer");
+        assert!(json_schema_of(
+            "CHECK (extensions.json_matches_schema('{\"type\": \"array\"}'::json, \"Data\"))",
+            "Data"
+        )
+        .is_some());
+        // Another column, more than the call, or not a literal: not the column's type
+        assert!(json_schema_of(
+            "CHECK (jsonb_matches_schema('{}'::json, other))",
+            "settings"
+        )
+        .is_none());
+        assert!(json_schema_of(
+            "CHECK ((jsonb_matches_schema('{}'::json, settings) AND (settings ? 'a'::text)))",
+            "settings"
+        )
+        .is_none());
+        assert!(json_schema_of(
+            "CHECK (jsonb_matches_schema(schema_of(settings), settings))",
+            "settings"
+        )
+        .is_none());
+    }
     use crate::catalog::{ConstraintMetadata, FunctionArgument};
 
     fn of(column: &str, pg_type: PgType, check: &str) -> Value {
