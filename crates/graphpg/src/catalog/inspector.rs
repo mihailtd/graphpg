@@ -325,6 +325,140 @@ impl<'a> CatalogInspector<'a> {
         Ok(advice)
     }
 
+    /// Advice on foreign tables (see `docs/foreign-data.md`): what makes them slow or unsafe
+    /// as they are set up. `auth`: the roles requests run as, and whether they are users at
+    /// all (Row-Level Security cannot apply to a foreign table).
+    pub async fn advise_foreign_tables(
+        &self,
+        schema_names: &[&str],
+        catalog: &DatabaseCatalog,
+        auth: &crate::config::models::AuthConfig,
+    ) -> Result<Vec<Advice>, CatalogError> {
+        let rows = self
+            .client
+            .query(
+                "SELECT n.nspname::text, c.relname::text, s.srvname::text, w.fdwname::text,
+                        coalesce(ft.ftoptions, '{}')::text[], coalesce(s.srvoptions, '{}')::text[],
+                        c.reltuples::float8
+                 FROM pg_foreign_table ft
+                 JOIN pg_class c ON c.oid = ft.ftrelid
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 JOIN pg_foreign_server s ON s.oid = ft.ftserver
+                 JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw
+                 WHERE n.nspname = ANY($1)
+                 ORDER BY 1, 2",
+                &[&schema_names],
+            )
+            .await?;
+        // The roles requests run as: the configured ones, else the connecting user
+        let mut roles: Vec<String> = [&auth.roles.authenticated, &auth.roles.anonymous]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+        if roles.is_empty() || (auth.enabled && auth.roles.authenticated.is_none()) {
+            roles.push(
+                self.client
+                    .query_one("SELECT current_user::text", &[])
+                    .await?
+                    .get(0),
+            );
+        }
+        let mut advice = Vec::new();
+        let mut warn = |level, message: String| advice.push(Advice { level, message });
+        for row in rows {
+            let (schema, name, server, wrapper): (String, String, String, String) =
+                (row.get(0), row.get(1), row.get(2), row.get(3));
+            let (table_options, server_options): (Vec<String>, Vec<String>) =
+                (row.get(4), row.get(5));
+            let reltuples: f64 = row.get(6);
+            let Some(t) = catalog.find_table(&schema, &name) else {
+                continue;
+            };
+            let at = format!("foreign table `{schema}.{name}` ({wrapper}, server `{server}`)");
+            let exposed = t.operations.read || t.operations.list || t.operations.connection;
+            let file = matches!(wrapper.as_str(), "file_fdw" | "parquet_fdw");
+
+            if t.primary_key.is_empty() && exposed {
+                warn(AdviceLevel::Warning, format!(
+                    "{at} has no key: declare the remote side's (`primary_key` in graphpg.yaml, or `@primaryKey` in its comment) for lookups, Relay ids, updates and relations"
+                ));
+            }
+            let remote_estimate = |options: &[String]| {
+                options
+                    .iter()
+                    .find_map(|o| o.strip_prefix("use_remote_estimate="))
+                    .map(|v| v == "true")
+            };
+            if wrapper == "postgres_fdw"
+                && remote_estimate(&table_options).or_else(|| remote_estimate(&server_options))
+                    != Some(true)
+            {
+                warn(AdviceLevel::Info, format!(
+                    "{at}: `use_remote_estimate` is off, so PostgreSQL plans its joins with guesses. Consider: ALTER SERVER {} OPTIONS (ADD use_remote_estimate 'true');",
+                    quote_ident(&server)
+                ));
+            }
+            if reltuples < 0.0 {
+                warn(AdviceLevel::Info, format!(
+                    "{at} has never been analyzed, so its row estimates are guesses. Consider: ANALYZE {}.{};",
+                    quote_ident(&schema), quote_ident(&name)
+                ));
+            }
+            // To-many relations into it: one remote query (or file read) per parent row
+            for parent in catalog
+                .tables
+                .iter()
+                .filter(|p| p.kind != RelationKind::ForeignTable)
+            {
+                for fk in t.foreign_keys.iter().filter(|fk| {
+                    fk.foreign_schema == parent.schema
+                        && fk.foreign_table == parent.name
+                        && !fk.omit_reverse
+                        && !fk.omit
+                }) {
+                    let cost = if file {
+                        "reads the whole file once per parent row"
+                    } else {
+                        "runs one remote query per parent row"
+                    };
+                    warn(AdviceLevel::Info, format!(
+                        "the to-many relation from `{}.{}` to {at} (`{}`) {cost}: keep its parents' pages small, query from `{name}` instead, or serve a materialized view of it with an index on ({})",
+                        parent.schema, parent.name, fk.constraint_name, fk.columns.join(", ")
+                    ));
+                }
+            }
+            if auth.enabled && exposed {
+                let allowed = if file {
+                    "its role's GRANTs allow"
+                } else {
+                    "its role's GRANTs and user mapping allow"
+                };
+                warn(AdviceLevel::Warning, format!(
+                    "{at} has root fields while requests are authenticated, but Row-Level Security cannot apply to a foreign table: every request reads every row {allowed}. Reach it through its parents only (`omit_operations: [read, list, connection]`) or through a `security_barrier` view"
+                ));
+            }
+            for role in &roles {
+                let mapped: bool = self
+                    .client
+                    .query_one(
+                        "SELECT EXISTS (SELECT 1 FROM pg_user_mappings
+                                        WHERE srvname = $1 AND (usename = $2 OR usename = 'public'))",
+                        &[&server, role],
+                    )
+                    .await?
+                    .get(0);
+                if !mapped && wrapper != "file_fdw" {
+                    warn(AdviceLevel::Warning, format!(
+                        "{at}: role `{role}` has no user mapping for server `{server}`, so its requests reading it fail. Consider: CREATE USER MAPPING FOR {} SERVER {} OPTIONS (user '...', password '...');",
+                        quote_ident(role), quote_ident(&server)
+                    ));
+                }
+            }
+        }
+        Ok(advice)
+    }
+
     /// Validates `extensions.expose` against the installed extensions.
     async fn extension_filter(
         &self,

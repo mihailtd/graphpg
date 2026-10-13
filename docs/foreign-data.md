@@ -229,6 +229,8 @@ Materialized views lose `NOT NULL`, so their fields are nullable in the schema.
 
 ## Checklist
 
+`graphpg advise` (and the startup log) checks most of these for you.
+
 - [ ] Foreign tables in a schema of their own, listed in `database.schemas`
 - [ ] `primary_key` and relations declared in `graphpg.yaml`, matching what the remote side enforces
 - [ ] User mappings for `auth.roles.authenticated` / `anonymous` (or `PUBLIC`), with a least-privilege remote user

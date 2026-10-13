@@ -431,3 +431,70 @@ async fn a_unique_index_on_the_declared_key_is_one_lookup() {
     assert!(schema.contains("\"countryListById\""), "{schema}");
     assert!(!schema.contains("countryListByIdByCode"), "{schema}");
 }
+
+/// Startup advice names what makes foreign tables slow or unsafe as they are set up.
+#[tokio::test]
+async fn startup_advice_for_foreign_tables() {
+    prepare().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let config = Config::from_yaml(CONFIG).unwrap();
+    let inspector = CatalogInspector::new(&client);
+    let catalog = inspector
+        .inspect_schema_with_config(SCHEMA, &config)
+        .await
+        .unwrap();
+    let auth = graphpg::config::models::AuthConfig {
+        enabled: true,
+        roles: graphpg::config::models::RolesConfig {
+            authenticated: Some("fdw_unmapped_role".to_string()),
+            anonymous: None,
+        },
+        ..Default::default()
+    };
+    let advice: Vec<String> = inspector
+        .advise_foreign_tables(&[SCHEMA], &catalog, &auth)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|a| a.message)
+        .collect();
+    let has = |needle: &[&str]| advice.iter().any(|a| needle.iter().all(|n| a.contains(n)));
+    assert!(
+        has(&["fdw_app.invoices", "use_remote_estimate"]),
+        "{advice:#?}"
+    );
+    assert!(
+        has(&[
+            "`fdw_app.customers`",
+            "fdw_app.invoices",
+            "one remote query per parent row"
+        ]),
+        "{advice:#?}"
+    );
+    assert!(has(&["fdw_app.outages", "has no key"]), "{advice:#?}");
+    assert!(
+        has(&["fdw_app.invoices", "Row-Level Security"]),
+        "{advice:#?}"
+    );
+    assert!(
+        has(&[
+            "fdw_app.invoices",
+            "`fdw_unmapped_role` has no user mapping"
+        ]),
+        "{advice:#?}"
+    );
+    // A file needs no user mapping; analyzed tables get no ANALYZE advice
+    assert!(
+        !has(&["fdw_app.countries", "has no user mapping"]),
+        "{advice:#?}"
+    );
+    assert!(
+        !has(&["fdw_app.countries", "never been analyzed"]),
+        "{advice:#?}"
+    );
+}
