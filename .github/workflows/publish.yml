@@ -38,7 +38,7 @@ jobs:
 
   verify-tag:
     if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,21 +54,34 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $crate"; exit 1
           fi
 
-  # arm64 runners are free for public repositories only: add that image when the repo is public
+  # Runners: `vars.CI_RUNS_ON` (as in CI; GitHub-hosted by default) for everything but the arm64
+  # build, which needs a native arm runner: `vars.ARM_RUNS_ON`, else GitHub's (free for public
+  # repositories only, so the arm64 image is built for public repositories). On self-hosted
+  # runners without an arm one, `edge` images from main are amd64 only; a release still needs
+  # arm64, and fails rather than publish half of it.
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     outputs:
       platforms: ${{ steps.p.outputs.platforms }}
     steps:
       - id: p
         env:
           PRIVATE: ${{ github.event.repository.private }}
+          RUNS_ON: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}
+          SELF_HOSTED: ${{ vars.CI_RUNS_ON != '' }}
+          ARM_RUNS_ON: ${{ vars.ARM_RUNS_ON }}
+          TAG: ${{ github.ref_type == 'tag' }}
         run: |
-          platforms='[{"platform":"linux/amd64","runner":"ubuntu-latest","slug":"amd64"}'
-          if [ "$PRIVATE" != "true" ]; then
-            platforms+=',{"platform":"linux/arm64","runner":"ubuntu-24.04-arm","slug":"arm64"}'
+          platforms="[{\"platform\":\"linux/amd64\",\"runner\":${RUNS_ON},\"slug\":\"amd64\"}"
+          arm="${ARM_RUNS_ON}"
+          if [ -z "$arm" ] && { [ "$SELF_HOSTED" != "true" ] || [ "$TAG" = "true" ]; }; then
+            arm='"ubuntu-24.04-arm"'
+          fi
+          if [ "$PRIVATE" != "true" ] && [ -n "$arm" ]; then
+            platforms+=",{\"platform\":\"linux/arm64\",\"runner\":${arm},\"slug\":\"arm64\"}"
           fi
           echo "platforms=${platforms}]" >> "$GITHUB_OUTPUT"
+          echo "platforms: ${platforms}]"
 
   # One native build per platform, pushed by digest (untagged) and scanned before any tag exists
   build:
@@ -138,7 +151,7 @@ jobs:
     needs: build
     # verify-tag is skipped on branch pushes; without this, that skip would propagate through `build` and skip the merge too
     if: ${{ !cancelled() && needs.build.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     permissions:
       contents: read
       packages: write
@@ -189,7 +202,7 @@ jobs:
   release:
     if: github.ref_type == 'tag'
     needs: merge
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     permissions:
       contents: write
     steps:
