@@ -21,6 +21,7 @@ Beyond types and indexes, graphpg **integrates** with popular extensions: it inf
 | `pgroonga` | PGroonga | a `pgroonga` index | [Full-text search in any language](#pgroonga) |
 | `pg_stat_statements` | pg_stat_statements | (installed) | [`graphpg advise --statements`](#pg_stat_statements-and-hypopg) |
 | `pg_duckdb` | pg_duckdb | (installed) | (#175) |
+| `postgres_fdw` | postgres_fdw | a foreign table on a `postgres_fdw` server | [Keys imported from the remote catalog](foreign-data.md#keys-and-relations) |
 
 An extension that is installed but unused changes nothing.
 

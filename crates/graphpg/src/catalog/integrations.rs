@@ -15,10 +15,11 @@ pub enum Integration {
     PgRoonga,
     PgStatStatements,
     PgDuckdb,
+    PostgresFdw,
 }
 
 impl Integration {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::TimescaleDb,
         Self::PgJsonschema,
         Self::Pgmq,
@@ -27,6 +28,7 @@ impl Integration {
         Self::PgRoonga,
         Self::PgStatStatements,
         Self::PgDuckdb,
+        Self::PostgresFdw,
     ];
 
     /// The name under `extensions.integrations`.
@@ -40,6 +42,7 @@ impl Integration {
             Self::PgRoonga => "pgroonga",
             Self::PgStatStatements => "pg_stat_statements",
             Self::PgDuckdb => "pg_duckdb",
+            Self::PostgresFdw => "postgres_fdw",
         }
     }
 
@@ -54,6 +57,7 @@ impl Integration {
             Self::PgRoonga => "pgroonga",
             Self::PgStatStatements => "pg_stat_statements",
             Self::PgDuckdb => "pg_duckdb",
+            Self::PostgresFdw => "postgres_fdw",
         }
     }
 
@@ -78,6 +82,7 @@ impl Integration {
             Self::Pgvectorscale => INDEXES_USING_DISKANN,
             Self::VectorChord => INDEXES_USING_VCHORD,
             Self::PgRoonga => INDEXES_USING_PGROONGA,
+            Self::PostgresFdw => POSTGRES_FDW_TABLES,
             Self::PgStatStatements | Self::PgDuckdb => return None,
         })
     }
@@ -89,11 +94,17 @@ impl Integration {
             Self::PgJsonschema => "JSON Schema check",
             Self::Pgmq => "queue",
             Self::Pgvectorscale | Self::VectorChord | Self::PgRoonga => "index",
+            Self::PostgresFdw => "foreign table",
             Self::PgStatStatements | Self::PgDuckdb => "",
         }
     }
 }
 
+const POSTGRES_FDW_TABLES: &str =
+    "SELECT count(*) FROM pg_foreign_table ft JOIN pg_class c ON c.oid = ft.ftrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_foreign_server s ON s.oid = ft.ftserver
+    JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw
+    WHERE n.nspname = ANY($1) AND w.fdwname = 'postgres_fdw'";
 const INDEXES_USING_DISKANN: &str =
     "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
     JOIN pg_am am ON am.oid = c.relam JOIN pg_namespace n ON n.oid = c.relnamespace

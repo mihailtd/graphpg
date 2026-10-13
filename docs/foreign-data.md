@@ -39,7 +39,7 @@ IMPORT FOREIGN SCHEMA public LIMIT TO (invoices) FROM SERVER billing INTO billin
 ANALYZE billing.invoices;
 ```
 
-List the schema in `database.schemas` and declare what PostgreSQL cannot (next section):
+List the schema in `database.schemas`. The remote primary key and foreign keys are imported (next section); declare what the remote side does not have, here a relation to a local table:
 
 ```yaml
 database:
@@ -47,7 +47,6 @@ database:
 
 entities:
   billing.invoices:
-    primary_key: [id]
     foreign_keys:
       invoices_customer:                 # a new name declares a virtual foreign key
         columns: [customer_id]
@@ -68,7 +67,18 @@ curl -g 'localhost:4000/rest/customers/1?include=invoices'
 
 ## Keys and relations
 
-A foreign table has no indexes or constraints of its own: PostgreSQL rejects `PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY` on it. Declare them in `graphpg.yaml`, as for views:
+A foreign table has no indexes or constraints of its own: PostgreSQL rejects `PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY` on it.
+
+**From another PostgreSQL (`postgres_fdw`), graphpg imports them.** At startup it reads the remote table's primary key, unique constraints and foreign keys from the remote catalog, over the same foreign server and user mapping:
+
+- Columns are matched by their remote names (a `column_name` option renames them), and must all be columns of the foreign table.
+- A remote foreign key becomes a relation when the table it references is reached through a foreign table too (one in the same schema first). Foreign keys to tables graphpg cannot see are skipped.
+- Keys declared in `graphpg.yaml` win: an imported key never replaces a declared one.
+- The startup log lists each imported key. A server that cannot be read is logged as a warning and skipped; declare its keys instead.
+- The remote catalog is read through temporary foreign tables on its `pg_catalog`, in a transaction rolled back afterwards: nothing is created, and nothing is needed beyond the user mapping (and the right to create temporary tables, which every role has by default).
+- `extensions.integrations.postgres_fdw: off` turns the import off.
+
+Otherwise (other wrappers, files, a remote key you want different), declare them in `graphpg.yaml`, as for views:
 
 - `entities.<table>.primary_key` gives the type its key: the single-row lookup (`invoice(id:)`, `GET /rest/invoices/{id}`), Relay `id` / `node(id:)`, and the key of updates and deletes.
 - `entities.<table>.foreign_keys.<new name>` declares a relation in either direction: from a foreign table to a local one, from a local table to a foreign one (on the local table's entry), or between two foreign tables. The reverse field is generated as for a real foreign key.
@@ -251,7 +261,7 @@ Materialized views lose `NOT NULL`, so their fields are nullable in the schema.
 `graphpg advise` (and the startup log) checks most of these for you.
 
 - [ ] Foreign tables in a schema of their own, listed in `database.schemas`
-- [ ] `primary_key` and relations declared in `graphpg.yaml`, matching what the remote side enforces
+- [ ] Keys: imported from a `postgres_fdw` server, or `primary_key` and relations declared in `graphpg.yaml`, matching what the remote side enforces
 - [ ] User mappings for `auth.roles.authenticated` / `anonymous` (or `PUBLIC`), with a least-privilege remote user
 - [ ] Per-user rows: roots hidden and reached through local rows, or a `security_barrier` view
 - [ ] `use_remote_estimate`, `ANALYZE` and `fetch_size` set; `EXPLAIN` checked for the heavy queries

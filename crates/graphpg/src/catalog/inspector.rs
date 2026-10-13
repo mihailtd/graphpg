@@ -203,6 +203,13 @@ impl<'a> CatalogInspector<'a> {
         // Keys and relations the database cannot declare (views), and function mounts, feed
         // the detection passes below
         crate::config::apply_structure(catalog, config).map_err(CatalogError::Config)?;
+        // The keys of remote tables (postgres_fdw), where graphpg.yaml declares none
+        if catalog
+            .integration(super::integrations::Integration::PostgresFdw)
+            .is_some()
+        {
+            super::remote_keys::import(self.client, schema_names, catalog).await?;
+        }
 
         self.inspect_exclusive_arcs(schema_names, catalog).await?;
         self.inspect_polymorphism(schema_names, catalog).await;
