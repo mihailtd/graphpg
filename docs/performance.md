@@ -25,6 +25,8 @@ After five executions of a statement, PostgreSQL may switch to a *generic plan*,
 
 `offset` skips rows by reading them, so its cost grows with the offset; cursors don't. `totalCount`, `aggregates` and `groupedAggregates` read every matching row (in one scan together), so their cost follows the `filter`: indexes on the filtered columns keep it down.
 
+The exception is a root connection's `distinctCount`. PostgreSQL computes `count(DISTINCT x)` by sorting the values, in one process. graphpg instead counts the distinct values (`SELECT count(*) FROM (SELECT DISTINCT x ...)`), a hash aggregate that parallel workers share. It costs one more scan, but over 10M rows with `totalCount` it runs in 0.4 s instead of 1.6 s (PostgreSQL 18, 24 cores). Grouped and nested distinct counts keep `count(DISTINCT x)`, which is faster per group. Percentiles (`median`, `percentile`) sort their group's values in one process; on large tables, filter them down, or precompute them in a materialized view.
+
 ### Fuzzy search (`pg_trgm`)
 
 | To get | Do this at the database level |
