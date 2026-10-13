@@ -67,9 +67,16 @@ jobs:
   test:
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     needs: check
+    permissions:
+      contents: read
+      packages: read
     services:
+      # PostgreSQL 18 with the extensions graphpg integrates with (docker/test-pg)
       postgres:
-        image: pgvector/pgvector:pg18
+        image: ghcr.io/${{ github.repository_owner }}/graphpg-test-pg:18
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: graphpg_test

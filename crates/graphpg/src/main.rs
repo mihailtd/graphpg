@@ -377,6 +377,14 @@ async fn run(
                     .advise_foreign_tables(&schemas, &catalog, &config.auth)
                     .await?,
             );
+            for active in &catalog.integrations {
+                println!(
+                    "integration: {} {} ({})",
+                    active.integration.name(),
+                    active.version,
+                    active.detail
+                );
+            }
             for a in &advice {
                 let level = match a.level {
                     graphpg::catalog::AdviceLevel::Warning => "warning",
@@ -418,6 +426,14 @@ async fn run(
         pool_size = config.database.pool_size,
         "introspected database"
     );
+    for active in &catalog.integrations {
+        tracing::info!(
+            integration = active.integration.name(),
+            version = %active.version,
+            "extension integration on: {}",
+            active.detail
+        );
+    }
 
     // Pinned schemas: what the database generates now against the exported files
     {

@@ -188,6 +188,8 @@ impl<'a> CatalogInspector<'a> {
         config: &Config,
         catalog: &mut DatabaseCatalog,
     ) -> Result<(), CatalogError> {
+        self.inspect_integrations(schema_names, config, catalog)
+            .await?;
         catalog.tables = self
             .inspect_relations(schema_names, extensions, catalog.server_version, config)
             .await?;
@@ -204,6 +206,75 @@ impl<'a> CatalogInspector<'a> {
         self.inspect_polymorphism(schema_names, catalog).await;
         detect_many_to_many(catalog);
         self.inspect_search_indexes(schema_names, catalog).await?;
+        Ok(())
+    }
+
+    /// The integrations in use (see [`super::integrations`]): installed, not switched off, and
+    /// used in `schema_names`.
+    async fn inspect_integrations(
+        &self,
+        schema_names: &[&str],
+        config: &Config,
+        catalog: &mut DatabaseCatalog,
+    ) -> Result<(), CatalogError> {
+        use super::integrations::{ActiveIntegration, Integration};
+        let installed: HashMap<String, String> = self
+            .client
+            .query(
+                "SELECT extname::text, extversion::text FROM pg_extension",
+                &[],
+            )
+            .await?
+            .iter()
+            .map(|r| (r.get(0), r.get(1)))
+            .collect();
+        catalog.integrations.clear();
+        for integration in Integration::ALL {
+            let Some(version) = installed.get(integration.extension()) else {
+                continue;
+            };
+            if !config.extensions.integration_on(integration) {
+                continue;
+            }
+            let detail = match integration.use_query() {
+                None => "installed".to_string(),
+                Some(sql) => {
+                    // A failing probe (an incompatible version, no privilege) is no use. Inside a
+                    // transaction (the pruning role's) a savepoint keeps it from aborting it
+                    let in_transaction = self
+                        .client
+                        .batch_execute("SAVEPOINT graphpg_probe")
+                        .await
+                        .is_ok();
+                    let probed = self.client.query_one(sql, &[&schema_names]).await;
+                    if in_transaction {
+                        let end = if probed.is_ok() {
+                            "RELEASE SAVEPOINT graphpg_probe"
+                        } else {
+                            "ROLLBACK TO SAVEPOINT graphpg_probe; RELEASE SAVEPOINT graphpg_probe"
+                        };
+                        self.client.batch_execute(end).await?;
+                    }
+                    let uses: i64 = match probed {
+                        Ok(row) => row.get(0),
+                        Err(err) => {
+                            tracing::warn!(integration = integration.name(), error = %err, "could not detect the extension's use; integration off");
+                            0
+                        }
+                    };
+                    if uses == 0 {
+                        continue;
+                    }
+                    let unit = integration.unit();
+                    format!("{uses} {unit}{}", if uses == 1 { "" } else { "s" })
+                }
+            };
+            catalog.integrations.push(ActiveIntegration {
+                integration,
+                version: version.clone(),
+                detail,
+            });
+        }
         Ok(())
     }
 
