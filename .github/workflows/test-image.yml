@@ -20,7 +20,8 @@ concurrency:
 
 jobs:
   image:
-    runs-on: ubuntu-latest
+    # The self-hosted runners when CI_RUNS_ON names them, as in ci.yml
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     permissions:
       contents: read
       packages: write
