@@ -190,7 +190,7 @@ Settings that matter:
 | :--- | :--- | :--- |
 | `file_fdw` (ships with PostgreSQL) | CSV and text files **on the database server's disk**, or a program's output (`program 'gunzip -c ...'`) | Creating one needs `pg_read_server_files` (`pg_execute_server_program` for `program`); often unavailable on managed services |
 | [`parquet_fdw`](https://github.com/adjust/parquet_fdw) | Parquet files on the server's disk | Skips row groups using the files' statistics |
-| [`pg_duckdb`](https://github.com/duckdb/pg_duckdb) | Parquet, CSV, JSON, Iceberg and Delta, on disk or in S3 / GCS / Azure | Functions such as `read_parquet(...)`: wrap them in a view |
+| [`pg_duckdb`](https://github.com/duckdb/pg_duckdb) | Parquet, CSV, JSON, Iceberg and Delta, on disk or in S3 / GCS / Azure | Functions such as `read_parquet(...)`: load them into a materialized view (below) |
 | [Supabase Wrappers](https://github.com/supabase/wrappers) (S3) | CSV, JSON Lines and Parquet in S3 | Foreign tables |
 
 Only `file_fdw` is tested by graphpg. The others reach graphpg as foreign tables or views, the same shapes.
@@ -223,13 +223,17 @@ entities:
         reverse_field_name: customers
 ```
 
-With `pg_duckdb`, a view over S3 data takes keys like any view. Columns are read as `r['name']` in pg_duckdb 1.x; earlier versions used a column definition list, so check the syntax for your version:
+With `pg_duckdb`, **load the files into a materialized view**; do not serve a plain view over them. A statement that reads a DuckDB function runs entirely in DuckDB, and DuckDB does not parse the SQL/JSON constructors (`JSON_OBJECT(... RETURNING json)`) graphpg's statements are built with, so every request on such a view fails. A materialized view is a PostgreSQL table: it takes indexes and keys, and only its refresh runs in DuckDB. Columns are read as `r['name']` (pg_duckdb 1.x):
 
 ```sql
-CREATE VIEW analytics.sales AS
+CREATE MATERIALIZED VIEW analytics.sales AS
 SELECT r['id']::bigint AS id, r['customer_id']::int AS customer_id, r['total']::numeric AS total
 FROM read_parquet('s3://bucket/sales/*.parquet') r;
+CREATE UNIQUE INDEX ON analytics.sales (id);   -- a key, and REFRESH ... CONCURRENTLY
+REFRESH MATERIALIZED VIEW CONCURRENTLY analytics.sales;   -- when the files change (pg_cron)
 ```
+
+pg_duckdb must be in `shared_preload_libraries`. Its DuckDB threads can crash the server alongside other preloaded extensions built with pgrx (VectorChord 1.1 with pg_duckdb 1.1.1, on PostgreSQL 18); test the combination before production.
 
 Materialized views lose `NOT NULL`, so their fields are nullable in the schema.
 
