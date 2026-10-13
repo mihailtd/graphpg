@@ -3051,10 +3051,12 @@ impl<'a> PlanningContext<'a> {
                     document,
                     config,
                     source,
+                    pgroonga,
                 } => SearchOperation::FullText {
                     document: document.clone(),
                     config: config.clone(),
                     source: source.clone(),
+                    pgroonga: pgroonga.clone(),
                     query: query.clone(),
                 },
                 _ => SearchOperation::Fuzzy {
@@ -3303,6 +3305,7 @@ impl<'a> PlanningContext<'a> {
             document,
             config,
             source,
+            pgroonga,
         } = &idx.kind
         else {
             return None;
@@ -3311,6 +3314,7 @@ impl<'a> PlanningContext<'a> {
             document: document.clone(),
             config: config.clone(),
             source: source.clone(),
+            pgroonga: pgroonga.clone(),
             query: obj.get("query")?.as_str()?.to_string(),
         })
     }

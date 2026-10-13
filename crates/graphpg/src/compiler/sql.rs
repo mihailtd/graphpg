@@ -3873,9 +3873,41 @@ impl SqlCompiler {
         let (cte, from, rank, direction, score) = match search {
             SearchOperation::FullText {
                 document,
+                source,
+                pgroonga: Some(pgroonga),
+                query,
+                ..
+            } => {
+                // PGroonga: Groonga query syntax (`&@~`), its score and its highlights (which
+                // escape the text as HTML)
+                let ext = quote_ident(&pgroonga.schema);
+                let q = text(params, query);
+                where_clauses.push(format!("({document}) OPERATOR({ext}.&@~) {q}"));
+                if let (Some(h), Some(source)) = (highlight, source) {
+                    let start = Self::bind_str(params, h.start_sel.clone());
+                    let stop = Self::bind_str(params, h.stop_sel.clone());
+                    extra.push(format!(
+                        "replace(replace({ext}.pgroonga_highlight_html({source}, \
+                         {ext}.pgroonga_query_extract_keywords({q})), \
+                         '<span class=\"keyword\">', ${start}::text), '</span>', ${stop}::text) \
+                         AS \"__headline\""
+                    ));
+                }
+                let score = format!("{ext}.pgroonga_score({a}.tableoid, {a}.ctid)");
+                (
+                    String::new(),
+                    format!("{target} {a}"),
+                    score.clone(),
+                    "DESC",
+                    format!("{score}::float8"),
+                )
+            }
+            SearchOperation::FullText {
+                document,
                 config,
                 source,
                 query,
+                ..
             } => {
                 // The document and its text are over the table's own columns, the only ones
                 // in scope where they are evaluated

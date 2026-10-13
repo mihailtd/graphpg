@@ -12,7 +12,7 @@ pub use models::{
     DatabaseCatalog, DomainMetadata, ExclusiveArcMetadata, FieldKind, ForeignKeyMetadata,
     FunctionArgument, FunctionMetadata, FunctionReturn, JunctionRelationInfo, ManyToManyMetadata,
     MutationAction, MutationField, ObjectField, Operations, OrderTarget, PeriodKey, PgType,
-    Polymorphism, RelationInfo, RelationKind, SearchIndexKind, SearchIndexMetadata, SearchLimits,
-    SearchMethod, StiMetadata, StiVariant, TableMetadata, TreeInfo, TreeLink, TypeLimits,
-    UniqueKey, CUSTOM_SCALARS, RANGE_SCALARS,
+    Pgroonga, Polymorphism, RelationInfo, RelationKind, SearchIndexKind, SearchIndexMetadata,
+    SearchLimits, SearchMethod, StiMetadata, StiVariant, TableMetadata, TreeInfo, TreeLink,
+    TypeLimits, UniqueKey, CUSTOM_SCALARS, RANGE_SCALARS,
 };

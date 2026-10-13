@@ -679,7 +679,7 @@ impl SchemaBuilder {
                  \"\"\"Index to search (the first one by default).\"\"\" field: {type_name}Bm25Field"
             ),
             SearchMethod::FullText => format!(
-                "\"\"\"Web-search-style query: words (stemmed), `\\\"quoted phrases\\\"`, `or`, `-excluded`.\"\"\" query: String!, \
+                "\"\"\"Web-search-style query: words (stemmed), `\\\"quoted phrases\\\"`, `or` (`OR` for PGroonga indexes), `-excluded`.\"\"\" query: String!, \
                  \"\"\"Document to search (the first indexed one by default).\"\"\" field: {type_name}FullTextField"
             ),
             SearchMethod::Nearest => format!(

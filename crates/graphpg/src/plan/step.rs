@@ -735,6 +735,8 @@ pub enum SearchOperation {
         config: Option<String>,
         /// Text of the document, for highlights.
         source: Option<String>,
+        /// Searched with PGroonga, not `tsvector`.
+        pgroonga: Option<crate::catalog::Pgroonga>,
         query: String,
     },
     /// The rows whose geometry is nearest `near` (GeoJSON text) first.

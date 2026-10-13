@@ -16,7 +16,7 @@ Beyond types and indexes, graphpg **integrates** with popular extensions: it inf
 | `pgmq` | pgmq | a queue, named in `extensions.pgmq.queues` | [Queues as API](#pgmq) |
 | `pgvectorscale` | pgvectorscale | a `diskann` index | [Semantic search on its indexes](#pgvectorscale-and-vectorchord) |
 | `vectorchord` | VectorChord | a `vchordrq` / `vchordg` index | [Semantic search on its indexes](#pgvectorscale-and-vectorchord) |
-| `pgroonga` | PGroonga | a `pgroonga` index | (#176) |
+| `pgroonga` | PGroonga | a `pgroonga` index | [Full-text search in any language](#pgroonga) |
 | `pg_stat_statements` | pg_stat_statements | (installed) | (#174) |
 | `pg_duckdb` | pg_duckdb | (installed) | (#175) |
 
@@ -97,6 +97,22 @@ CREATE INDEX ON docs USING vchordrq (embedding vector_l2_ops);
 ```
 
 Their tuning settings (`diskann.query_search_list_size`, `vchordrq.probes`, ...) are PostgreSQL settings: set them on the role or the database (`ALTER ROLE ... SET`), and every request uses them.
+
+## PGroonga
+
+[PGroonga](https://pgroonga.github.io/) indexes text for full-text search in every language, Japanese, Chinese and Korean included, where `tsvector` needs a dictionary per language. A PGroonga full-text index gives the same `<list>FullTextSearch` field, `POST /rest/<resource>/search/full-text` and `globalSearch` as a `tsvector` index:
+
+```sql
+CREATE INDEX ON memos USING pgroonga (body);                    -- one column (text, varchar or text[])
+CREATE INDEX ON memos USING pgroonga ((ARRAY[title, body]));    -- several: field TITLE_AND_BODY
+```
+
+- **Query:** Groonga's query syntax: words (all must match), `"quoted phrases"`, `OR`, `-excluded`.
+- **Score:** `pgroonga_score`, higher for more occurrences.
+- **Highlights:** `highlight` marks the query's words with `startSel` / `stopSel`, in the whole text: `maxWords`, `minWords` and `maxFragments` are for `tsvector` documents. The text is HTML-escaped (`&` becomes `&amp;`).
+- **Small tables:** PGroonga scores only rows found through its index. On a table small enough for PostgreSQL to read without the index, every match scores 0: the matches are right, but unranked.
+
+The text columns need `pgroonga_text_full_text_search_ops_v2` (the default for `text`), `pgroonga_varchar_full_text_search_ops_v2` (for `varchar`, named in the index) or `pgroonga_text_array_full_text_search_ops_v2` (the default for `text[]`). Other PGroonga indexes (term search, regular expressions, `jsonb`) are not search fields.
 
 ## Testing against the real extensions
 
