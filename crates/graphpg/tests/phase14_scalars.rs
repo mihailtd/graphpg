@@ -19,7 +19,7 @@ const FIXTURE_VERSION: &str = "scalar_fixture v1";
 
 const FIXTURE_SQL: &str = r#"
 CREATE SCHEMA scalar_fixture;
-SET search_path = scalar_fixture, public;
+SET LOCAL search_path = scalar_fixture, public;
 
 CREATE DOMAIN email AS citext CHECK (value ~ '@');
 COMMENT ON DOMAIN email IS 'An email address';

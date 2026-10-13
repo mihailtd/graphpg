@@ -18,7 +18,7 @@ const FIXTURE_VERSION: &str = "function_fixture v3";
 
 const FIXTURE_SQL: &str = r#"
 CREATE SCHEMA function_fixture;
-SET search_path = function_fixture;
+SET LOCAL search_path = function_fixture;
 
 CREATE TYPE mood AS ENUM ('happy', 'grumpy');
 CREATE TYPE point2 AS (x int, y int);

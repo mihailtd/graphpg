@@ -41,6 +41,7 @@ async fn sdl() -> String {
         .await
         .unwrap();
     client.batch_execute(FIXTURE).await.unwrap();
+    client.batch_execute("RESET search_path").await.unwrap();
     let catalog = CatalogInspector::new(&client)
         .inspect_schema("pg18_constraints")
         .await
