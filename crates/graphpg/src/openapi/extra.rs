@@ -592,7 +592,7 @@ impl OpenApiGenerator {
                 continue;
             }
             paths.insert(
-                format!("{REST_PREFIX}/{RPC_RESOURCE}/{}", f.name),
+                format!("{REST_PREFIX}/{RPC_RESOURCE}/{}", f.rest_name()),
                 Self::function_path(catalog, f, table, &config.limits),
             );
         }

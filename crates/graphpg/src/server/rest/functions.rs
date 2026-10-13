@@ -38,7 +38,7 @@ pub fn rpc_functions<'a>(
         .collect();
     all.sort_by_key(|f| f.schema != default_schema);
     let mut seen = std::collections::HashSet::new();
-    all.retain(|f| seen.insert(f.name.clone()));
+    all.retain(|f| seen.insert(f.rest_name().to_string()));
     all
 }
 
@@ -216,7 +216,7 @@ pub async fn rest_rpc_handler(
             let ctx = Ctx::new(&state, &headers, schema.clone(), name.clone()).await?;
             let f = rpc_functions(&ctx.catalog, &state.default_schema, ctx.schema.as_deref())
                 .into_iter()
-                .find(|f| f.name == name)
+                .find(|f| f.rest_name() == name)
                 .ok_or_else(|| ProblemDetails::not_found(format!("Function `{name}` not found")))?;
             let is_get = method == Method::GET;
             if is_get && f.volatile {
