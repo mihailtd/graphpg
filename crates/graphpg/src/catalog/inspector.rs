@@ -1708,6 +1708,11 @@ impl<'a> CatalogInspector<'a> {
                 OR (am.amname = ANY($2) AND op.opcname IN ('vector_l2_ops', 'vector_cosine_ops', 'vector_ip_ops'))
                 OR (am.amname = 'bm25')
                 OR (am.amname IN ('gin', 'gist') AND op.opcname IN ('tsvector_ops', 'gist_tsvector_ops'))
+                -- PGroonga, when its integration is on: full-text indexes on text
+                OR ($3 AND am.amname = 'pgroonga' AND op.opcname IN (
+                  'pgroonga_text_full_text_search_ops_v2',
+                  'pgroonga_varchar_full_text_search_ops_v2',
+                  'pgroonga_text_array_full_text_search_ops_v2'))
                 OR (am.amname IN ('gist', 'spgist') AND (op.opcname LIKE '%geometry_ops%' OR op.opcname LIKE '%geography_ops%'))
               )
             ORDER BY c.relname, i.relname;
@@ -1720,9 +1725,15 @@ impl<'a> CatalogInspector<'a> {
         if catalog.integration(Integration::VectorChord).is_some() {
             vector_methods.extend(["vchordrq", "vchordg"]);
         }
+        let pgroonga_schema = catalog
+            .integration(Integration::PgRoonga)
+            .map(|i| i.schema.clone());
         for r in self
             .client
-            .query(search_idx_query, &[&schemas_vec, &vector_methods])
+            .query(
+                search_idx_query,
+                &[&schemas_vec, &vector_methods, &pgroonga_schema.is_some()],
+            )
             .await?
         {
             let table_name: String = r.get(0);
@@ -1737,7 +1748,32 @@ impl<'a> CatalogInspector<'a> {
             };
 
             let mut columns = Vec::new();
-            let kind = if access_method == "bm25" {
+            let kind = if access_method == "pgroonga" {
+                // The text column, or an expression over columns (`ARRAY[title, body]`)
+                let document = if column_name.is_empty() {
+                    columns = sql_identifiers(&key_expression)
+                        .into_iter()
+                        .filter(|i| table.get_column(i).is_some())
+                        .collect();
+                    columns.dedup();
+                    key_expression.clone()
+                } else {
+                    quote_ident(&column_name)
+                };
+                let source = if operator_class.contains("array") {
+                    format!("array_to_string({document}, ' ')")
+                } else {
+                    document.clone()
+                };
+                super::models::SearchIndexKind::FullText {
+                    document,
+                    config: None,
+                    source: Some(source),
+                    pgroonga: Some(super::models::Pgroonga {
+                        schema: pgroonga_schema.clone().unwrap_or_default(),
+                    }),
+                }
+            } else if access_method == "bm25" {
                 super::models::SearchIndexKind::Bm25
             } else if access_method == "hnsw"
                 || access_method == "ivfflat"
@@ -1771,6 +1807,7 @@ impl<'a> CatalogInspector<'a> {
                     document,
                     config: parsed.as_ref().and_then(|(config, _)| config.clone()),
                     source: parsed.map(|(_, source)| source),
+                    pgroonga: None,
                 }
             } else if operator_class.contains("geometry") || operator_class.contains("geography") {
                 if column_name.is_empty() {

@@ -1436,9 +1436,20 @@ pub enum SearchIndexKind {
         /// SQL of the text the document is built from, for highlights; `None` when unknown
         /// (e.g. a column a trigger maintains).
         source: Option<String>,
+        /// A PGroonga index instead of a `tsvector` one: the document is the text column.
+        #[serde(default)]
+        pgroonga: Option<Pgroonga>,
     },
     /// A GiST (or SP-GiST) index on a PostGIS column: nearest-neighbour ordering (`<->`).
     Spatial,
+}
+
+/// A PGroonga full-text index (the `pgroonga` integration): searched with `&@~` (Groonga query
+/// syntax), ranked by `pgroonga_score`, highlighted by `pgroonga_highlight_html`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pgroonga {
+    /// Schema of the extension's operators and functions.
+    pub schema: String,
 }
 
 /// A way of searching a table, each a root query field of its own (`usersFuzzySearch`)
@@ -1453,7 +1464,8 @@ pub enum SearchMethod {
     Bm25,
     /// Vector and lexical rankings fused by reciprocal rank.
     Hybrid,
-    /// Full-text search (`tsvector` documents): `websearch_to_tsquery`, ranked by `ts_rank`.
+    /// Full-text search: `tsvector` documents (`websearch_to_tsquery`, ranked by `ts_rank`), or
+    /// PGroonga indexes.
     FullText,
     /// Nearest geometries first (PostGIS `<->`).
     Nearest,

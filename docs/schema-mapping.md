@@ -31,7 +31,7 @@ How a PostgreSQL database becomes a GraphQL schema. graphpg reads the system cat
 | **Row Versions** | `xmin` (every table), or a configured version column | `rowVersion`, `expectedVersion` on single-row updates/deletes | Read by key | The row is locked and checked first (`STALE_VERSION`) |
 | **`RETURNING OLD`** (PG 18) | `server_version_num` | `previous<Type>` payload fields of updates and upserts | `to_json(old)` | Same statement as the write |
 | **Hierarchies** | Foreign keys referencing their own table; `ltree` columns | `ancestors` / `descendants` (`maxDepth`, `filter`, `orderBy`); `LTreeFilter` | `WITH RECURSIVE ... CYCLE`; `@>` / `<@` on paths | — |
-| **Full-Text Search** | GIN/GiST `tsvector_ops` indexes on columns or `to_tsvector(...)` expressions | `<list>FullTextSearch` (with `highlight`), `FullTextFilter`, `globalSearch` across tables | `websearch_to_tsquery`, `ts_rank`, `ts_headline` | — |
+| **Full-Text Search** | GIN/GiST `tsvector_ops` indexes on columns or `to_tsvector(...)` expressions; [PGroonga](extensions.md#pgroonga) full-text indexes | `<list>FullTextSearch` (with `highlight`), `FullTextFilter`, `globalSearch` across tables | `websearch_to_tsquery`, `ts_rank`, `ts_headline` | — |
 | **PostGIS** | `geometry` / `geography` columns and their GiST/SP-GiST indexes | `GeoJSON` scalar, `GeoJSONFilter`, `<list>NearestSearch` | `ST_Intersects`, `ST_DWithin`, KNN `<->` | Written from GeoJSON |
 | **Multiranges** | `tstzmultirange`, `int4multirange`, ... | Lists of ranges, `<Scalar>MultirangeFilter` | `@>`, `&&`, `<@` | Written from lists of ranges |
 
