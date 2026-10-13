@@ -300,6 +300,24 @@ watch:
   export: true    # auto-export schemas on DDL changes; default: true
 ```
 
+### Reloading the schema without a restart
+
+In any mode, graphpg reads the database again when asked, and swaps the new schema in at once. Requests in flight finish on the schema they started with. End a migration with:
+
+```sql
+NOTIFY graphpg_reload;
+```
+
+or send the process `SIGHUP`. The listener has a connection of its own, reconnects when it drops, and never affects serving; it needs a session (a pooler in transaction mode cannot `LISTEN`, so point it at the database directly or reload with `SIGHUP`).
+
+```yaml
+reload:
+  enabled: true            # default
+  channel: graphpg_reload  # the NOTIFY channel
+```
+
+A reload runs the checks a startup runs, and **keeps the schema being served** when one fails, logging why: pinned schemas with `export.pin: fail` (the deployed files must match the new schema, so ship them with the migration), and in prod the persisted query manifest. Only the database is read again: configuration changes need a restart. Dev mode also reloads on its own when the schema changes (see below).
+
 ### Pinned schemas
 
 The server needs the database catalog at startup whatever else it has, so an exported schema cannot replace introspection. It can *pin* it. CI exports the schemas and commits them; the server compares what the database generates now with those files (`export.graphql`, `export.openapi`, and `export.subgraph` when federation is on):

@@ -529,6 +529,14 @@ async fn run(
         });
     }
 
+    if config.reload.enabled {
+        graphpg::server::reload::start_reload_listener(
+            secrets.database_url.clone(),
+            config.reload.channel.clone(),
+            state.clone(),
+        );
+    }
+
     if config.watch.enabled {
         let watcher_options = graphpg::server::WatcherOptions {
             database_url: secrets.database_url.clone(),

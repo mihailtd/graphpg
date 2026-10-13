@@ -265,6 +265,18 @@ impl ConfigSchemaGenerator {
             }),
         );
         settings.insert(
+            "reload".to_string(),
+            json!({
+                "type": "object",
+                "description": "Schema reload without a restart, in any mode: on NOTIFY <channel> and SIGHUP. The configuration is the one the server started with",
+                "properties": {
+                    "enabled": Self::switch_described("Listen for reload requests (default true)"),
+                    "channel": { "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,62}$", "description": "The NOTIFY channel (default graphpg_reload)" }
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
             "export".to_string(),
             json!({
                 "type": "object",

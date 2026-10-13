@@ -45,6 +45,9 @@ pub struct Config {
     /// Schema watching on DDL changes and auto-export.
     #[serde(default)]
     pub watch: WatchConfig,
+    /// Schema reload on request (`NOTIFY`, `SIGHUP`), in any mode.
+    #[serde(default)]
+    pub reload: ReloadConfig,
     /// File paths for exported schemas.
     #[serde(default)]
     pub export: ExportConfig,
@@ -1322,6 +1325,57 @@ pub struct WatchConfig {
     /// On each schema change, write the export files.
     #[serde(default = "default_true", deserialize_with = "switch")]
     pub export: bool,
+}
+
+/// Reloads the schema without a restart when asked: `NOTIFY <channel>` (from a migration) or
+/// `SIGHUP`. Only the database is read again; the configuration is the one the server started
+/// with. A reload that fails the startup checks (pinned schemas with `export.pin: fail`, the
+/// persisted query manifest in prod) keeps the schema being served.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ReloadConfig {
+    /// Listen for reload requests (a connection of its own) and handle `SIGHUP`.
+    #[serde(default = "default_true", deserialize_with = "switch")]
+    pub enabled: bool,
+    /// The channel `NOTIFY` reloads on: `NOTIFY graphpg_reload` (any payload).
+    #[serde(default = "default_reload_channel")]
+    pub channel: String,
+}
+
+fn default_reload_channel() -> String {
+    "graphpg_reload".to_string()
+}
+
+impl Default for ReloadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            channel: default_reload_channel(),
+        }
+    }
+}
+
+impl ReloadConfig {
+    pub fn problems(&self) -> Vec<String> {
+        let valid = self
+            .channel
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+            && self
+                .channel
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            && self.channel.len() <= 63;
+        if valid {
+            Vec::new()
+        } else {
+            vec![format!(
+                "reload.channel: `{}` is not a channel name (lowercase letters, digits and `_`, at most 63)",
+                self.channel
+            )]
+        }
+    }
 }
 
 impl Default for WatchConfig {

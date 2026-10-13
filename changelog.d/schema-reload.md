@@ -1,0 +1,1 @@
+- **Schema reload without a restart** (`reload:`, on by default): `NOTIFY graphpg_reload` (from a migration) or `SIGHUP` reads the database again and swaps the schema in atomically. A reload that fails a startup check (pinned schemas with `export.pin: fail`, the persisted query manifest in prod) is refused, and the previous schema keeps serving.
