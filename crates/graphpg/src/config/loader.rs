@@ -223,6 +223,7 @@ impl Config {
             problems.extend(config.graphql.persisted_queries.problems());
             problems.extend(config.reload.problems());
             problems.extend(config.events.problems());
+            problems.extend(config.extensions.problems());
             if !problems.is_empty() {
                 let problems = if m == mode {
                     problems

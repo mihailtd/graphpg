@@ -31,6 +31,10 @@ env:
 jobs:
   test:
     uses: ./.github/workflows/ci.yml
+    # The test job pulls the test database image from the registry
+    permissions:
+      contents: read
+      packages: read
 
   verify-tag:
     if: github.ref_type == 'tag'

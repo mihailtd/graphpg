@@ -1602,6 +1602,9 @@ impl<'a> Polymorphism<'a> {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DatabaseCatalog {
+    /// Extensions the schema uses that graphpg integrates with.
+    #[serde(default)]
+    pub integrations: Vec<super::integrations::ActiveIntegration>,
     pub tables: Vec<TableMetadata>,
     pub functions: Vec<FunctionMetadata>,
     pub exclusive_arcs: Vec<ExclusiveArcMetadata>,
@@ -1967,6 +1970,14 @@ pub struct RelationInfo {
 }
 
 impl DatabaseCatalog {
+    /// Integration `i`, when the schema uses its extension and it is not switched off.
+    pub fn integration(
+        &self,
+        i: super::integrations::Integration,
+    ) -> Option<&super::integrations::ActiveIntegration> {
+        self.integrations.iter().find(|a| a.integration == i)
+    }
+
     fn index(&self) -> &CatalogIndex {
         self.index.get_or_init(|| CatalogIndex::build(self))
     }

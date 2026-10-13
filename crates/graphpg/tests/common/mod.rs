@@ -90,3 +90,28 @@ pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
         .expect("a runtime")
         .block_on(future)
 }
+
+/// Creates `extensions` (`CREATE EXTENSION IF NOT EXISTS`); `false`, saying why, when one is not
+/// available: a test of an extension integration then skips. CI's test image
+/// (`docker/test-pg`, `docker compose up`) has them all.
+pub async fn with_extensions(extensions: &[&str]) -> bool {
+    let (client, connection) = tokio_postgres::connect(db_url(), NoTls)
+        .await
+        .expect("Failed to connect to the test database (set TEST_DATABASE_URL)");
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    for ext in extensions {
+        if let Err(err) = client
+            .batch_execute(&format!("CREATE EXTENSION IF NOT EXISTS {ext} CASCADE"))
+            .await
+        {
+            eprintln!(
+                "SKIPPED: extension `{ext}` is not available ({}); use the test image (docker compose up)",
+                err.as_db_error().map_or(err.to_string(), |d| d.message().to_string())
+            );
+            return false;
+        }
+    }
+    true
+}

@@ -1096,9 +1096,37 @@ pub struct ExtensionsConfig {
     /// Extensions whose objects are exposed; `"*"` exposes every extension's objects.
     #[serde(default)]
     pub expose: Vec<String>,
+    /// What graphpg infers from the extensions the database uses (see `docs/extensions.md`),
+    /// by integration: `auto` (the default) when the schema uses the extension, or `off`.
+    #[serde(default)]
+    pub integrations: BTreeMap<String, crate::catalog::integrations::IntegrationMode>,
 }
 
 impl ExtensionsConfig {
+    /// Whether integration `i` may be used.
+    pub fn integration_on(&self, i: crate::catalog::integrations::Integration) -> bool {
+        self.integrations.get(i.name()).copied().unwrap_or_default()
+            != crate::catalog::integrations::IntegrationMode::Off
+    }
+
+    /// Problems with the values.
+    pub fn problems(&self) -> Vec<String> {
+        self.integrations
+            .keys()
+            .filter(|k| crate::catalog::integrations::Integration::from_name(k).is_none())
+            .map(|k| {
+                let known: Vec<&str> = crate::catalog::integrations::Integration::ALL
+                    .iter()
+                    .map(|i| i.name())
+                    .collect();
+                format!(
+                    "extensions.integrations.{k}: unknown integration ({})",
+                    known.join(", ")
+                )
+            })
+            .collect()
+    }
+
     pub fn exposes_all(&self) -> bool {
         self.expose.iter().any(|e| e == "*")
     }

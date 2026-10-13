@@ -394,6 +394,15 @@ impl ConfigSchemaGenerator {
                         "items": { "type": "string", "enum": std::iter::once("*").chain(catalog.extensions.iter().map(String::as_str)).collect::<Vec<_>>() },
                         "uniqueItems": true,
                         "description": "Extensions whose tables, views and functions are exposed (\"*\": all)"
+                    },
+                    "integrations": {
+                        "type": "object",
+                        "description": "What graphpg infers from the extensions the schema uses (docs/extensions.md): auto (default) or off, by integration",
+                        "properties": crate::catalog::integrations::Integration::ALL
+                            .iter()
+                            .map(|i| (i.name().to_string(), json!({ "enum": ["auto", "off"] })))
+                            .collect::<Map<String, Value>>(),
+                        "additionalProperties": false
                     }
                 },
                 "additionalProperties": false
