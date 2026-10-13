@@ -1271,6 +1271,12 @@ impl SchemaBuilder {
                     }
                 };
                 connection_types_sdl.push_str(&format!("{doc}  {name}_ASC\n{doc}  {name}_DESC\n"));
+                // NULLs last ascending and first descending by default; the other placements
+                if catalog.order_target_nullable(table, &target) {
+                    connection_types_sdl.push_str(&format!(
+                        "  \"\"\"Ascending, NULLs first.\"\"\"\n  {name}_ASC_NULLS_FIRST\n  \"\"\"Descending, NULLs last.\"\"\"\n  {name}_DESC_NULLS_LAST\n"
+                    ));
+                }
             }
             connection_types_sdl.push_str("}\n\n");
 

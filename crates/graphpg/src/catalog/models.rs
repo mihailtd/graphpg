@@ -3436,6 +3436,16 @@ impl DatabaseCatalog {
     /// relations lead to (`AUTHOR_NAME`), the number of rows of its to-many relations
     /// (`MESSAGES_COUNT`), and its computed columns returning an orderable value that need
     /// no other argument. The first value claiming a name wins.
+    /// Whether an order option can be NULL, so where NULLs go can be chosen: a nullable
+    /// column, a related row (missing when there is none), a computed value. A count cannot.
+    pub fn order_target_nullable(&self, table: &TableMetadata, target: &OrderTarget) -> bool {
+        match target {
+            OrderTarget::Column(column) => table.get_column(column).is_none_or(|c| c.is_nullable),
+            OrderTarget::Count(_) => false,
+            OrderTarget::Related { .. } | OrderTarget::Function(_) => true,
+        }
+    }
+
     pub fn order_options(&self, table: &TableMetadata) -> Vec<(String, OrderTarget)> {
         let mut out: Vec<(String, OrderTarget)> = Vec::new();
         let mut push = |name: String, target: OrderTarget| {

@@ -27,13 +27,42 @@ pub struct SortKey {
     /// The column, or a name unique within the order for an expression.
     pub column: String,
     pub descending: bool,
-    /// The column can hold NULLs, which sort as its largest value (Postgres' default:
-    /// last ascending, first descending).
+    /// The column can hold NULLs.
     pub nullable: bool,
     pub compare: SortCompare,
     /// Sorted by this expression of the row instead of `column`.
     #[serde(default)]
     pub expr: Option<SortExpr>,
+    /// Where NULLs go when asked (`NULLS FIRST` / `LAST`); PostgreSQL's default otherwise:
+    /// last ascending, first descending, as if NULL were the largest value.
+    #[serde(default)]
+    pub nulls_first: Option<bool>,
+}
+
+impl SortKey {
+    /// Whether NULLs come first.
+    pub fn nulls_first(&self) -> bool {
+        self.nulls_first.unwrap_or(self.descending)
+    }
+
+    /// Whether NULLs sort above every value in this key's comparisons (`>`), as by default.
+    pub fn nulls_high(&self) -> bool {
+        self.nulls_first() == self.descending
+    }
+
+    /// `ASC` / `DESC` of this key, read backwards when `reversed`, with `NULLS FIRST` /
+    /// `NULLS LAST` when it is not PostgreSQL's default for the direction (so an index in
+    /// the default order still serves the default).
+    pub fn direction_sql(&self, reversed: bool) -> &'static str {
+        let descending = self.descending != reversed;
+        let nulls_first = self.nulls_first() != reversed;
+        match (descending, nulls_first == descending) {
+            (false, true) => "ASC",
+            (true, true) => "DESC",
+            (false, false) => "ASC NULLS FIRST",
+            (true, false) => "DESC NULLS LAST",
+        }
+    }
 }
 
 /// A value of a row rows are sorted by, other than one of its columns. Its values go into

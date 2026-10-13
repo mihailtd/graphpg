@@ -141,12 +141,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
+            "description": "What to order by: `column`, `-column` or `column:desc`, and where NULLs go with `:nullsfirst` / `:nullslast` (by default last ascending, first descending). Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount|natural|primary_key|messagesCount|uniqueAuthorCount)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount|natural|primary_key|messagesCount|uniqueAuthorCount)(:(asc|desc))?(:(nullsfirst|nullslast))?$"
               }
             }
           },
@@ -1425,12 +1425,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
+            "description": "What to order by: `column`, `-column` or `column:desc`, and where NULLs go with `:nullsfirst` / `:nullslast` (by default last ascending, first descending). Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount|natural|primary_key|messagesCount|uniqueAuthorCount)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|name|archivedAt|uniqueAuthorCount|natural|primary_key|messagesCount|uniqueAuthorCount)(:(asc|desc))?(:(nullsfirst|nullslast))?$"
               }
             }
           },
@@ -3629,12 +3629,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
+            "description": "What to order by: `column`, `-column` or `column:desc`, and where NULLs go with `:nullsfirst` / `:nullslast` (by default last ascending, first descending). Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt|natural|primary_key|author\\.id|author\\.username|author\\.gravatarUrl|author\\.createdAt|user\\.id|user\\.username|user\\.gravatarUrl|user\\.createdAt|forum\\.id|forum\\.name|forum\\.archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt|natural|primary_key|author\\.id|author\\.username|author\\.gravatarUrl|author\\.createdAt|user\\.id|user\\.username|user\\.gravatarUrl|user\\.createdAt|forum\\.id|forum\\.name|forum\\.archivedAt)(:(asc|desc))?(:(nullsfirst|nullslast))?$"
               }
             }
           },
@@ -4859,12 +4859,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
+            "description": "What to order by: `column`, `-column` or `column:desc`, and where NULLs go with `:nullsfirst` / `:nullslast` (by default last ascending, first descending). Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt|natural|primary_key|author\\.id|author\\.username|author\\.gravatarUrl|author\\.createdAt|user\\.id|user\\.username|user\\.gravatarUrl|user\\.createdAt|forum\\.id|forum\\.name|forum\\.archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt|natural|primary_key|author\\.id|author\\.username|author\\.gravatarUrl|author\\.createdAt|user\\.id|user\\.username|user\\.gravatarUrl|user\\.createdAt|forum\\.id|forum\\.name|forum\\.archivedAt)(:(asc|desc))?(:(nullsfirst|nullslast))?$"
               }
             }
           },
@@ -6854,12 +6854,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
+            "description": "What to order by: `column`, `-column` or `column:desc`, and where NULLs go with `:nullsfirst` / `:nullslast` (by default last ascending, first descending). Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt|natural|primary_key|messagesCount)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt|natural|primary_key|messagesCount)(:(asc|desc))?(:(nullsfirst|nullslast))?$"
               }
             }
           },
@@ -8080,12 +8080,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
+            "description": "What to order by: `column`, `-column` or `column:desc`, and where NULLs go with `:nullsfirst` / `:nullslast` (by default last ascending, first descending). Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt|natural|primary_key|messagesCount)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt|natural|primary_key|messagesCount)(:(asc|desc))?(:(nullsfirst|nullslast))?$"
               }
             }
           },
@@ -10142,12 +10142,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
+            "description": "What to order by: `column`, `-column` or `column:desc`, and where NULLs go with `:nullsfirst` / `:nullslast` (by default last ascending, first descending). Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt|natural|primary_key|author\\.id|author\\.username|author\\.gravatarUrl|author\\.createdAt|user\\.id|user\\.username|user\\.gravatarUrl|user\\.createdAt|forum\\.id|forum\\.name|forum\\.archivedAt)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|forumId|authorId|body|featured|createdAt|archivedAt|natural|primary_key|author\\.id|author\\.username|author\\.gravatarUrl|author\\.createdAt|user\\.id|user\\.username|user\\.gravatarUrl|user\\.createdAt|forum\\.id|forum\\.name|forum\\.archivedAt)(:(asc|desc))?(:(nullsfirst|nullslast))?$"
               }
             }
           },
@@ -10537,7 +10537,7 @@ expression: openapi
                     "$ref": "#/components/schemas/messagesFilter"
                   },
                   "order": {
-                    "description": "Columns to order by: `column`, `-column` or `column:desc`",
+                    "description": "Columns to order by: `column`, `-column` or `column:desc`, with `:nullsfirst` / `:nullslast`",
                     "oneOf": [
                       {
                         "type": "string"
@@ -11571,12 +11571,12 @@ expression: openapi
             "in": "query",
             "style": "form",
             "explode": false,
-            "description": "What to order by: `column`, `-column` or `column:desc`. Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
+            "description": "What to order by: `column`, `-column` or `column:desc`, and where NULLs go with `:nullsfirst` / `:nullslast` (by default last ascending, first descending). Besides the columns: a column of the row a to-one relation leads to (`author.username`), the number of rows of a to-many relation (`messagesCount`) and a computed column that returns an orderable value (`uniqueAuthorCount`); `natural` and `primary_key`",
             "schema": {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt|natural|primary_key|messagesCount)(:(asc|desc))?$"
+                "pattern": "^[+-]?(id|username|gravatarUrl|createdAt|natural|primary_key|messagesCount)(:(asc|desc))?(:(nullsfirst|nullslast))?$"
               }
             }
           },
@@ -11979,7 +11979,7 @@ expression: openapi
                     "$ref": "#/components/schemas/usersFilter"
                   },
                   "order": {
-                    "description": "Columns to order by: `column`, `-column` or `column:desc`",
+                    "description": "Columns to order by: `column`, `-column` or `column:desc`, with `:nullsfirst` / `:nullslast`",
                     "oneOf": [
                       {
                         "type": "string"
@@ -13069,7 +13069,7 @@ expression: openapi
             "$ref": "#/components/schemas/forumsFilter"
           },
           "order": {
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "Columns to order by: `column`, `-column` or `column:desc`, with `:nullsfirst` / `:nullslast`",
             "oneOf": [
               {
                 "type": "string"
@@ -14215,7 +14215,7 @@ expression: openapi
             "$ref": "#/components/schemas/messagesFilter"
           },
           "order": {
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "Columns to order by: `column`, `-column` or `column:desc`, with `:nullsfirst` / `:nullslast`",
             "oneOf": [
               {
                 "type": "string"
@@ -15315,7 +15315,7 @@ expression: openapi
             "$ref": "#/components/schemas/usersFilter"
           },
           "order": {
-            "description": "Columns to order by: `column`, `-column` or `column:desc`",
+            "description": "Columns to order by: `column`, `-column` or `column:desc`, with `:nullsfirst` / `:nullslast`",
             "oneOf": [
               {
                 "type": "string"

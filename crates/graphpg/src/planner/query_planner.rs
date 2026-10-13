@@ -259,7 +259,7 @@ impl<'a> QueryPlanner<'a> {
                 format!(
                     "{} {}",
                     SqlCompiler::sort_expression(table_alias, k),
-                    if k.descending { "DESC" } else { "ASC" }
+                    k.direction_sql(false)
                 )
             })
             .collect();
@@ -2772,6 +2772,7 @@ impl<'a> PlanningContext<'a> {
                 nullable: false,
                 compare: SortCompare::Cast("int8".to_string()),
                 expr: None,
+                nulls_first: None,
             }]
         } else {
             key.iter().map(|c| sort_key(table_meta, c, false)).collect()
@@ -5178,8 +5179,28 @@ fn order_items(val: &serde_json::Value) -> Vec<&str> {
     }
 }
 
-/// The keyset columns (or expressions) of one `<Type>OrderBy` value.
+/// The keyset columns (or expressions) of one `<Type>OrderBy` value: `NAME_ASC`, `NAME_DESC`,
+/// and either with `_NULLS_FIRST` / `_NULLS_LAST`.
 fn sort_keys_of(catalog: &DatabaseCatalog, item: &str, table_meta: &TableMetadata) -> Vec<SortKey> {
+    let (item, nulls_first) = match item.strip_suffix("_NULLS_FIRST") {
+        Some(rest) => (rest, Some(true)),
+        None => match item.strip_suffix("_NULLS_LAST") {
+            Some(rest) => (rest, Some(false)),
+            None => (item, None),
+        },
+    };
+    let mut keys = sort_keys_in_default_nulls(catalog, item, table_meta);
+    for key in &mut keys {
+        key.nulls_first = nulls_first;
+    }
+    keys
+}
+
+fn sort_keys_in_default_nulls(
+    catalog: &DatabaseCatalog,
+    item: &str,
+    table_meta: &TableMetadata,
+) -> Vec<SortKey> {
     let key = |descending| -> Vec<SortKey> {
         table_meta
             .primary_key
@@ -5211,6 +5232,7 @@ fn sort_keys_of(catalog: &DatabaseCatalog, item: &str, table_meta: &TableMetadat
         nullable,
         compare,
         expr: Some(expr),
+        nulls_first: None,
     };
     let cast = |t: &PgType| t.sql_cast().map_or(SortCompare::Text, SortCompare::Cast);
     let key = match target {
@@ -5279,6 +5301,7 @@ fn sort_key(table_meta: &TableMetadata, column: &str, descending: bool) -> SortK
         nullable: meta.is_none_or(|c| c.is_nullable),
         compare,
         expr: None,
+        nulls_first: None,
     }
 }
 

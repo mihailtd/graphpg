@@ -639,7 +639,8 @@ pub(super) fn segments_to_filter(
 /// Parses an order string into the planner's `orderBy` enum values.
 ///
 /// Items are `column`, `-column`, `+column`, `column:asc|desc`, `natural`, `primary_key`, or an
-/// enum value such as `NAME_DESC`. An unknown column is an error.
+/// enum value such as `NAME_DESC`, each optionally followed by `:nullsfirst` or `:nullslast`.
+/// An unknown column is an error.
 pub fn parse_order_string(
     order_str: &str,
     table_meta: &TableMetadata,
@@ -651,6 +652,17 @@ pub fn parse_order_string(
         if raw.is_empty() {
             continue;
         }
+        // Where NULLs go: a last `:nullsfirst` / `:nullslast`
+        let (raw, nulls) = match raw.rsplit_once(':') {
+            Some((rest, n)) if n.trim().eq_ignore_ascii_case("nullsfirst") => {
+                (rest.trim(), "_NULLS_FIRST")
+            }
+            Some((rest, n)) if n.trim().eq_ignore_ascii_case("nullslast") => {
+                (rest.trim(), "_NULLS_LAST")
+            }
+            _ => (raw, ""),
+        };
+        let before = items.len();
         let (name, dir) = if let Some(stripped) = raw.strip_prefix('-') {
             (stripped.trim(), "DESC")
         } else if let Some(stripped) = raw.strip_prefix('+') {
@@ -673,7 +685,10 @@ pub fn parse_order_string(
             items.push("NATURAL".to_string());
         } else if is_pk {
             items.push(format!("PRIMARY_KEY_{dir}"));
-        } else if name.ends_with("_ASC") || name.ends_with("_DESC") {
+        } else if ["_ASC", "_DESC", "_NULLS_FIRST", "_NULLS_LAST"]
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+        {
             items.push(name.to_string());
         } else if let Some(col) = table_meta
             .visible_columns()
@@ -715,6 +730,12 @@ pub fn parse_order_string(
                 "Unknown order column `{name}` for resource `{}`",
                 table_meta.name
             ));
+        }
+        if !nulls.is_empty() {
+            match items.get_mut(before..) {
+                Some([item]) if item != "NATURAL" => item.push_str(nulls),
+                _ => return Err(format!("`{raw}` cannot place NULLs: it is not a column")),
+            }
         }
     }
     Ok(serde_json::Value::Array(

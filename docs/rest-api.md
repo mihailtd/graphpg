@@ -25,7 +25,7 @@ The key is the primary key (composite keys: the values separated by commas). The
 | Parameter | |
 | :--- | :--- |
 | `filter[column][operator]=value` | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `like`, `ilike`, `startsWith`, `endsWith`, `isNull`, and the other operators of the GraphQL filter. Several filters are combined with `AND`. Through a relation: `filter[author][username][eq]=ada`; to-many relations: `filter[posts][some][title][like]=%25sql%25`. `filter={json}` takes a whole filter object. More operators are below. |
-| `order=name,-created_at` | `column`, `-column` or `column:desc`; unknown columns are a 400 |
+| `order=name,-created_at` | `column`, `-column` or `column:desc`; unknown columns are a 400. NULLs go last ascending and first descending, or where `:nullsfirst` / `:nullslast` puts them (`order=-rank:nullslast`) |
 | `first=n&after=<cursor>` | Keyset pagination forwards. Default page size 100, **at most 1000** |
 | `last=n&before=<cursor>` | Keyset pagination backwards |
 | `offset=n` | Rows to skip |
