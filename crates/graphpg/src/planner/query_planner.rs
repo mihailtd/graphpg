@@ -295,6 +295,23 @@ impl<'a> QueryPlanner<'a> {
         ctx.plan(request)
     }
 
+    /// The fields of a row of `table` read from `alias`, for `selection` (the REST API's
+    /// columns, say), with the plan holding the steps they need: the row as a response
+    /// shows it.
+    pub fn plan_row(
+        &self,
+        selection: &[RequestField],
+        table: &TableMetadata,
+        alias: &str,
+    ) -> Result<(Vec<SelectedField>, Option<RowPolymorphism>, OperationPlan), PlannerError> {
+        let ctx = PlanningContext {
+            planner: self,
+            step_memo: RefCell::new(HashMap::new()),
+            join_aliases: RefCell::new(HashMap::new()),
+        };
+        ctx.plan_row(selection, table, alias)
+    }
+
     pub fn to_snake_case(s: &str) -> String {
         crate::catalog::to_snake_case(s)
     }
@@ -4191,6 +4208,26 @@ impl<'a> PlanningContext<'a> {
             }
         }
         fields
+    }
+
+    fn plan_row(
+        &self,
+        selection: &[RequestField],
+        table: &TableMetadata,
+        alias: &str,
+    ) -> Result<(Vec<SelectedField>, Option<RowPolymorphism>, OperationPlan), PlannerError> {
+        let mut plan = OperationPlan::new();
+        let mut alias_counter = 1;
+        let (fields, polymorphism) = self.plan_row_shape(
+            &mut plan,
+            selection,
+            &table.schema,
+            &table.name,
+            alias,
+            table,
+            &mut alias_counter,
+        )?;
+        Ok((fields, polymorphism, plan))
     }
 
     /// Plans a selection on rows of `table_name` read from `alias`: plain fields, or — for a

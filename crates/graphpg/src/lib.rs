@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod compiler;
 pub mod config;
+pub mod events;
 pub mod execution;
 pub mod openapi;
 pub mod plan;

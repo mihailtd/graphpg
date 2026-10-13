@@ -187,6 +187,7 @@ pub struct Metrics {
     db_duration: Family<HistogramCell>,
     planning_duration: Family<HistogramCell>,
     cache_requests: Family<AtomicU64>,
+    event_deliveries: Family<AtomicU64>,
     operation_names: Mutex<HashSet<String>>,
     pools: RwLock<Vec<WatchedPool>>,
     started: SystemTime,
@@ -238,6 +239,13 @@ pub(super) const CACHE_REQUESTS: Descriptor = Descriptor {
     help: "Lookups in the GraphQL document and operation caches.",
     labels: &["graphpg.cache.name", "graphpg.cache.result"],
 };
+pub(super) const EVENT_DELIVERIES: Descriptor = Descriptor {
+    name: "graphpg.event.deliveries",
+    unit: "{delivery}",
+    help:
+        "Event webhook delivery attempts, by trigger and outcome (delivered, retry, dead, unknown).",
+    labels: &["graphpg.event.trigger", "graphpg.event.outcome"],
+};
 pub(super) const POOL_COUNT: Descriptor = Descriptor {
     name: "db.client.connection.count",
     unit: "{connection}",
@@ -279,6 +287,7 @@ impl Metrics {
             db_duration: Family::new(DB_DURATION),
             planning_duration: Family::new(PLANNING_DURATION),
             cache_requests: Family::new(CACHE_REQUESTS),
+            event_deliveries: Family::new(EVENT_DELIVERIES),
             operation_names: Mutex::new(HashSet::new()),
             pools: RwLock::new(Vec::new()),
             started: SystemTime::now(),
@@ -421,6 +430,20 @@ impl Metrics {
         }
     }
 
+    /// One event webhook delivery attempt of `trigger` (a configured name: bounded).
+    pub fn event_delivery(&self, trigger: &str, outcome: &str) {
+        let values = [trigger, outcome];
+        if self.prometheus() {
+            self.event_deliveries
+                .cell(&values, || AtomicU64::new(0))
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        #[cfg(feature = "otel")]
+        if let Some(otel) = self.otel() {
+            otel.event_deliveries(&values);
+        }
+    }
+
     /// `name` while fewer than [`MAX_OPERATION_NAMES`] names were seen, else `_OTHER`.
     fn bounded_operation_name(&self, name: &str) -> String {
         let mut names = self.operation_names.lock().expect("metrics lock");
@@ -492,15 +515,17 @@ impl Metrics {
         header(&mut out, &HTTP_ACTIVE, &name, "gauge");
         let _ = writeln!(out, "{name} {}", self.http_active.load(Ordering::Relaxed));
 
-        let name = self.cache_requests.descriptor.prometheus_name(true);
-        header(&mut out, &self.cache_requests.descriptor, &name, "counter");
-        for (values, cell) in self.cache_requests.sorted() {
-            let _ = writeln!(
-                out,
-                "{name}{} {}",
-                self.cache_requests.labels(&values, None),
-                cell.load(Ordering::Relaxed)
-            );
+        for family in [&self.cache_requests, &self.event_deliveries] {
+            let name = family.descriptor.prometheus_name(true);
+            header(&mut out, &family.descriptor, &name, "counter");
+            for (values, cell) in family.sorted() {
+                let _ = writeln!(
+                    out,
+                    "{name}{} {}",
+                    family.labels(&values, None),
+                    cell.load(Ordering::Relaxed)
+                );
+            }
         }
 
         let pools = self.pools();

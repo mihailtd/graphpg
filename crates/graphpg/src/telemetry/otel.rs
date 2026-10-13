@@ -3,8 +3,9 @@
 //! `service.version` resource (plus `OTEL_RESOURCE_ATTRIBUTES`). Incoming W3C `traceparent`
 //! headers continue the caller's trace.
 use super::metrics::{
-    metrics, Descriptor, CACHE_REQUESTS, DB_DURATION, DURATION_BUCKETS, GRAPHQL_DURATION,
-    HTTP_ACTIVE, HTTP_DURATION, PLANNING_DURATION, POOL_COUNT, POOL_MAX, POOL_PENDING,
+    metrics, Descriptor, CACHE_REQUESTS, DB_DURATION, DURATION_BUCKETS, EVENT_DELIVERIES,
+    GRAPHQL_DURATION, HTTP_ACTIVE, HTTP_DURATION, PLANNING_DURATION, POOL_COUNT, POOL_MAX,
+    POOL_PENDING,
 };
 use crate::config::TelemetryConfig;
 use opentelemetry::metrics::{Counter, Histogram, Meter, ObservableUpDownCounter, UpDownCounter};
@@ -201,6 +202,7 @@ pub struct Instruments {
     db_duration: Histogram<f64>,
     planning_duration: Histogram<f64>,
     cache_requests: Counter<u64>,
+    event_deliveries: Counter<u64>,
     /// Read from the watched pools at each export.
     _pools: Vec<ObservableUpDownCounter<i64>>,
 }
@@ -264,6 +266,11 @@ impl Instruments {
                 .with_unit(CACHE_REQUESTS.unit)
                 .with_description(CACHE_REQUESTS.help)
                 .build(),
+            event_deliveries: meter
+                .u64_counter(EVENT_DELIVERIES.name)
+                .with_unit(EVENT_DELIVERIES.unit)
+                .with_description(EVENT_DELIVERIES.help)
+                .build(),
             _pools: vec![
                 pool_gauge(&POOL_COUNT, |p| {
                     vec![(p.idle, Some("idle")), (p.used, Some("used"))]
@@ -301,5 +308,10 @@ impl Instruments {
     pub fn cache_requests(&self, values: &[&str]) {
         self.cache_requests
             .add(1, &attributes(&CACHE_REQUESTS, values));
+    }
+
+    pub fn event_deliveries(&self, values: &[&str]) {
+        self.event_deliveries
+            .add(1, &attributes(&EVENT_DELIVERIES, values));
     }
 }

@@ -62,6 +62,7 @@ curl -X POST localhost:4000/rest/authors -H 'content-type: application/json' \
 - **Authorization from the database**: OAuth 2.0 bearer tokens are verified and their claims are made available to **Row-Level Security** policies; with `rbac.enabled`, the GraphQL schema, REST API and OpenAPI document are pruned to what the connecting role may do, from `GRANT`s.
 - **Safety limits for both APIs**: page size, query depth, estimated cost, bulk size, request size and `statement_timeout`, enforced on the plan before any SQL runs; production errors never carry PostgreSQL's own messages ([limits](docs/configuration.md#safety-limits)). Optional [rate limits](docs/configuration.md#rate-limits) per client, and [persisted queries](docs/graphql-api.md#persisted-queries) with an allow-list of operations for production.
 - **Pinned schemas**: `graphpg schema export` writes the GraphQL SDL and the OpenAPI document; `--check` fails CI when they are out of date, and production refuses to start on drift.
+- **Event triggers**: signed webhooks on row changes, captured in the change's own transaction, and on cron schedules; at-least-once delivery shared by every instance, with retries and a dead letter ([events](docs/events.md)).
 - **Apollo Federation v2** subgraph mode, `@defer` / `@stream`, streaming NDJSON/CSV export and `COPY` import, read replicas, OpenTelemetry spans.
 
 Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) renames and hides things and declares keys for views; it is not required.
@@ -78,6 +79,7 @@ Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) 
 | [Federation and RBAC](docs/federation-and-rbac.md) | Apollo Federation subgraphs and schema pruning by role |
 | [Performance](docs/performance.md) | Indexes and settings, replicas |
 | [Observability](docs/observability.md) | Prometheus metrics, OpenTelemetry traces, metrics and logs (OTLP), JSON logs; Grafana LGTM |
+| [Event triggers](docs/events.md) | Webhooks on row changes (captured in the change's transaction) and on schedules: delivery, retries, signatures |
 | [Other databases and files](docs/foreign-data.md) | Foreign data wrappers (`postgres_fdw`, `file_fdw`, Parquet, S3): keys, relations, authorization, performance and caveats |
 | [Comparison](docs/comparison.md) | How graphpg differs from PostGraphile and Hasura (GraphQL) and from PostgREST (REST) |
 | [GraphQL and OpenAPI parity](docs/graphql-openapi-parity.md) | What each API knows about the database that the other does not, and whether it could be ported |

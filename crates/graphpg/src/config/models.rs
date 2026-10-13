@@ -73,6 +73,9 @@ pub struct Config {
     /// Logs, Prometheus metrics, traces, and OpenTelemetry (OTLP) export.
     #[serde(default)]
     pub telemetry: TelemetryConfig,
+    /// Event triggers: webhooks on row changes and on schedules.
+    #[serde(default)]
+    pub events: EventTriggersConfig,
 }
 
 /// A number given as text, which is what `${NAME}` produces: `port: '${PORT}'`.
@@ -166,6 +169,7 @@ impl Timeout {
             "s" => amount.saturating_mul(1000),
             "m" => amount.saturating_mul(60_000),
             "h" => amount.saturating_mul(3_600_000),
+            "d" => amount.saturating_mul(86_400_000),
             "" => {
                 return Err(format!(
                 "invalid duration {text:?}: a unit is needed (`ms`, `s`, `m` or `h`), like `30s`"
@@ -173,7 +177,7 @@ impl Timeout {
             }
             other => {
                 return Err(format!(
-                    "invalid duration {text:?}: unknown unit `{other}` (`ms`, `s`, `m` or `h`)"
+                    "invalid duration {text:?}: unknown unit `{other}` (`ms`, `s`, `m`, `h` or `d`)"
                 ))
             }
         };
@@ -1646,6 +1650,353 @@ pub enum EventOperation {
     Insert,
     Update,
     Delete,
+}
+
+/// Event triggers (see `docs/events.md`): webhooks called on row changes, captured in the same
+/// transaction as the change, and on schedules. Nothing is installed or run without a trigger
+/// or a schedule.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EventTriggersConfig {
+    /// Capture and deliver events at all. Off, nothing is installed, checked or delivered.
+    #[serde(default = "default_true", deserialize_with = "switch")]
+    pub enabled: bool,
+    /// The schema graphpg keeps its event table and functions in.
+    #[serde(default = "default_events_schema")]
+    pub schema: String,
+    /// `auto`: create and update the event table, functions and triggers at startup.
+    /// `manual`: only check them; `graphpg events sql` prints the DDL.
+    #[serde(default)]
+    pub install: EventInstall,
+    /// Webhooks on row changes, by name.
+    #[serde(default)]
+    pub triggers: BTreeMap<String, EventTriggerConfig>,
+    /// Webhooks on a schedule (`cron`), or for one-off events scheduled from SQL, by name.
+    #[serde(default)]
+    pub schedules: BTreeMap<String, ScheduleConfig>,
+    /// How events are delivered.
+    #[serde(default)]
+    pub delivery: DeliveryConfig,
+}
+
+fn default_events_schema() -> String {
+    "graphpg_events".to_string()
+}
+
+impl Default for EventTriggersConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            schema: default_events_schema(),
+            install: EventInstall::default(),
+            triggers: BTreeMap::new(),
+            schedules: BTreeMap::new(),
+            delivery: DeliveryConfig::default(),
+        }
+    }
+}
+
+impl EventTriggersConfig {
+    /// Whether anything is to be captured or delivered.
+    pub fn active(&self) -> bool {
+        self.enabled && !(self.triggers.is_empty() && self.schedules.is_empty())
+    }
+
+    /// The webhook of trigger or schedule `name`.
+    pub fn webhook(&self, name: &str) -> Option<WebhookConfig> {
+        self.triggers
+            .get(name)
+            .map(EventTriggerConfig::webhook)
+            .or_else(|| self.schedules.get(name).map(ScheduleConfig::webhook))
+    }
+
+    /// Problems with the values, all reported together.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        let name_ok = |n: &str| {
+            n.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+                && n.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                && n.len() <= 63
+        };
+        if !name_ok(&self.schema) {
+            problems.push(format!(
+                "events.schema: `{}` is not a lowercase identifier",
+                self.schema
+            ));
+        }
+        for (name, t) in &self.triggers {
+            let path = format!("events.triggers.{name}");
+            if !name_ok(name) || name.len() > 40 {
+                problems.push(format!(
+                    "{path}: the name must be a lowercase identifier of at most 40 characters"
+                ));
+            }
+            if self.schedules.contains_key(name) {
+                problems.push(format!("{path}: a schedule has the same name"));
+            }
+            if t.operations.is_empty() {
+                problems.push(format!("{path}.operations: name at least one"));
+            }
+            if !t.columns.is_empty() && !t.operations.contains(&EventOperation::Update) {
+                problems.push(format!(
+                    "{path}.columns: only updates are filtered by columns, and `update` is not among its operations"
+                ));
+            }
+            problems.extend(t.webhook().problems(&path));
+        }
+        for (name, s) in &self.schedules {
+            let path = format!("events.schedules.{name}");
+            if !name_ok(name) {
+                problems.push(format!("{path}: the name must be a lowercase identifier"));
+            }
+            if let Some(cron) = &s.cron {
+                if let Err(err) = crate::events::cron::Schedule::parse(cron) {
+                    problems.push(format!("{path}.cron: {err}"));
+                }
+            }
+            problems.extend(s.webhook().problems(&path));
+        }
+        let d = &self.delivery;
+        if d.concurrency == 0 || d.batch == 0 {
+            problems.push("events.delivery: concurrency and batch must be at least 1".to_string());
+        }
+        problems
+    }
+}
+
+/// Who installs the event table, functions and triggers.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EventInstall {
+    /// graphpg, at startup.
+    #[default]
+    Auto,
+    /// A migration (`graphpg events sql`); graphpg checks.
+    Manual,
+}
+
+/// Where and how an event is sent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WebhookConfig {
+    /// The endpoint: `POST`ed the event as JSON.
+    pub url: String,
+    /// Headers added to every request (values may read `${NAME}` from the environment).
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Signing secret (Standard Webhooks): `whsec_<base64>`, or any text.
+    #[serde(default)]
+    pub secret: Option<String>,
+    /// How long a request may take.
+    #[serde(default = "default_webhook_timeout")]
+    pub timeout: Timeout,
+    /// Retries of failed deliveries.
+    #[serde(default)]
+    pub retry: RetryConfig,
+}
+
+fn default_webhook_timeout() -> Timeout {
+    Timeout(std::time::Duration::from_secs(10))
+}
+
+impl WebhookConfig {
+    fn problems(&self, path: &str) -> Vec<String> {
+        let mut problems = Vec::new();
+        if !(self.url.starts_with("https://") || self.url.starts_with("http://")) {
+            problems.push(format!("{path}.url: `{}` is not an http(s) URL", self.url));
+        }
+        if self.retry.max_attempts == 0 {
+            problems.push(format!("{path}.retry.max_attempts: must be at least 1"));
+        }
+        problems
+    }
+}
+
+/// Retries: exponential backoff with jitter, then the event is dead.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RetryConfig {
+    /// Deliveries attempted at most, the first included.
+    #[serde(default = "default_max_attempts", deserialize_with = "lenient")]
+    pub max_attempts: u32,
+    /// Wait before the second attempt, doubled for each further one.
+    #[serde(default = "default_backoff")]
+    pub backoff: Timeout,
+    /// Longest wait between attempts.
+    #[serde(default = "default_max_backoff")]
+    pub max_backoff: Timeout,
+}
+
+fn default_max_attempts() -> u32 {
+    10
+}
+fn default_backoff() -> Timeout {
+    Timeout(std::time::Duration::from_secs(10))
+}
+fn default_max_backoff() -> Timeout {
+    Timeout(std::time::Duration::from_secs(3600))
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_max_attempts(),
+            backoff: default_backoff(),
+            max_backoff: default_max_backoff(),
+        }
+    }
+}
+
+/// A webhook on row changes of a table.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EventTriggerConfig {
+    /// The table, `table` or `schema.table`.
+    pub table: String,
+    /// The changes that raise an event (default: all of them).
+    #[serde(default = "EventOperation::all")]
+    pub operations: Vec<EventOperation>,
+    /// Updates raise an event only when one of these columns changes (default: any change).
+    #[serde(default)]
+    pub columns: Vec<String>,
+    pub url: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub secret: Option<String>,
+    #[serde(default = "default_webhook_timeout")]
+    pub timeout: Timeout,
+    #[serde(default)]
+    pub retry: RetryConfig,
+}
+
+/// A webhook on a schedule, or for one-off events scheduled from SQL.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleConfig {
+    /// When: 5-field cron in UTC (`0 3 * * *`), or `@hourly`, `@daily`, `@weekly`,
+    /// `@monthly`. Without it, only events scheduled from SQL are sent.
+    #[serde(default)]
+    pub cron: Option<String>,
+    /// The `payload` member of the event.
+    #[serde(default)]
+    pub payload: serde_json::Value,
+    /// Slots missed while no instance ran: `latest` sends the most recent one, `none` none.
+    #[serde(default)]
+    pub catch_up: CatchUp,
+    pub url: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub secret: Option<String>,
+    #[serde(default = "default_webhook_timeout")]
+    pub timeout: Timeout,
+    #[serde(default)]
+    pub retry: RetryConfig,
+}
+
+impl EventTriggerConfig {
+    pub fn webhook(&self) -> WebhookConfig {
+        WebhookConfig {
+            url: self.url.clone(),
+            headers: self.headers.clone(),
+            secret: self.secret.clone(),
+            timeout: self.timeout,
+            retry: self.retry.clone(),
+        }
+    }
+}
+
+impl ScheduleConfig {
+    pub fn webhook(&self) -> WebhookConfig {
+        WebhookConfig {
+            url: self.url.clone(),
+            headers: self.headers.clone(),
+            secret: self.secret.clone(),
+            timeout: self.timeout,
+            retry: self.retry.clone(),
+        }
+    }
+}
+
+/// Missed schedule slots.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CatchUp {
+    #[default]
+    Latest,
+    None,
+}
+
+impl Default for WebhookConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            headers: BTreeMap::new(),
+            secret: None,
+            timeout: default_webhook_timeout(),
+            retry: RetryConfig::default(),
+        }
+    }
+}
+
+/// How events are delivered.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryConfig {
+    /// Requests in flight at once, per instance.
+    #[serde(default = "default_concurrency", deserialize_with = "lenient")]
+    pub concurrency: usize,
+    /// Events claimed at a time.
+    #[serde(default = "default_batch", deserialize_with = "lenient")]
+    pub batch: usize,
+    /// Longest wait for new events when no notification arrives.
+    #[serde(default = "default_poll")]
+    pub poll: Timeout,
+    /// How long a claimed event is held: past it, another instance may deliver it again.
+    #[serde(default = "default_lease")]
+    pub lease: Timeout,
+    /// Delivered events are deleted after this long.
+    #[serde(default = "default_retention")]
+    pub retention: Timeout,
+    /// Dead events (out of attempts) are deleted after this long.
+    #[serde(default = "default_dead_retention")]
+    pub dead_retention: Timeout,
+}
+
+fn default_concurrency() -> usize {
+    4
+}
+fn default_batch() -> usize {
+    50
+}
+fn default_poll() -> Timeout {
+    Timeout(std::time::Duration::from_secs(5))
+}
+fn default_lease() -> Timeout {
+    Timeout(std::time::Duration::from_secs(60))
+}
+fn default_retention() -> Timeout {
+    Timeout(std::time::Duration::from_secs(7 * 86_400))
+}
+fn default_dead_retention() -> Timeout {
+    Timeout(std::time::Duration::from_secs(30 * 86_400))
+}
+
+impl Default for DeliveryConfig {
+    fn default() -> Self {
+        Self {
+            concurrency: default_concurrency(),
+            batch: default_batch(),
+            poll: default_poll(),
+            lease: default_lease(),
+            retention: default_retention(),
+            dead_retention: default_dead_retention(),
+        }
+    }
 }
 
 impl EventOperation {
