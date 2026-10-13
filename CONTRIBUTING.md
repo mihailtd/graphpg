@@ -59,7 +59,7 @@ How CI, publishing and dependency updates fit together is described in [docs/pip
 
 Releases are cut by tagging; the **Publish** workflow does the rest.
 
-1. Bump `version` in `Cargo.toml` (and `Cargo.lock`: run `cargo build`), and add a section to `CHANGELOG.md`. Merge to `main` through a pull request.
+1. Bump `version` in `Cargo.toml` (and `Cargo.lock`: run `cargo build`), and run `changelog.d/collect.sh <version>` to move the changelog fragments into a section of `CHANGELOG.md`. Merge to `main` through a pull request.
 2. Tag that commit and push the tag:
    ```bash
    git tag -a v1.0.2 -m "graphpg 1.0.2" && git push origin v1.0.2
