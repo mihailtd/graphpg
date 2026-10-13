@@ -52,7 +52,15 @@ pub enum Commands {
         out: Option<PathBuf>,
     },
     /// Inspect schemas and print advice / optimization suggestions
-    Advise,
+    Advise {
+        /// Also report graphpg's most expensive operations (pg_stat_statements), with the
+        /// indexes their plans lack (checked with hypopg when installed)
+        #[arg(long)]
+        statements: bool,
+        /// Number of operations `--statements` reports
+        #[arg(long, default_value_t = 10, value_name = "N")]
+        top: usize,
+    },
     /// Event triggers subcommands
     Events {
         #[command(subcommand)]
@@ -63,6 +71,57 @@ pub enum Commands {
         #[command(subcommand)]
         command: SchemaCommands,
     },
+}
+
+/// `graphpg advise --statements`.
+async fn print_statements(
+    client: &tokio_postgres::Client,
+    catalog: &graphpg::catalog::DatabaseCatalog,
+    top: usize,
+) -> Result<(), Box<dyn Error>> {
+    let report = graphpg::catalog::statements::top_statements(client, catalog, top).await?;
+    println!();
+    println!(
+        "statements: graphpg's {} most expensive operations by total time{}",
+        report.operations.len(),
+        report
+            .since
+            .as_deref()
+            .map(|s| format!(" (pg_stat_statements, since {s})"))
+            .unwrap_or_default()
+    );
+    for (i, op) in report.operations.iter().enumerate() {
+        println!(
+            "{:>3}. {}: {} calls, {:.1} ms total, {:.2} ms mean, {:.1} rows per call{}",
+            i + 1,
+            op.operation,
+            op.calls,
+            op.total_ms,
+            op.mean_ms(),
+            op.rows as f64 / op.calls.max(1) as f64,
+            if op.statements > 1 {
+                format!(", {} statement shapes", op.statements)
+            } else {
+                String::new()
+            }
+        );
+        for s in &op.suggestions {
+            match s.cost_with_index {
+                Some(after) => println!(
+                    "     index: {}; estimated cost {:.0} -> {:.0} (hypopg)",
+                    s.sql, s.cost, after
+                ),
+                None => println!(
+                    "     index: {}; unchecked (install hypopg to check it)",
+                    s.sql
+                ),
+            }
+        }
+    }
+    if report.operations.is_empty() {
+        println!("  (none yet: pg_stat_statements has no statement of graphpg's in this database)");
+    }
+    Ok(())
 }
 
 #[derive(Subcommand, Debug)]
@@ -365,7 +424,7 @@ async fn run(
             }
             return Ok(());
         }
-        Some(Commands::Advise) => {
+        Some(Commands::Advise { statements, top }) => {
             let client = pool.get().await?;
             let inspector = CatalogInspector::new(&client);
             let catalog = inspector
@@ -391,6 +450,9 @@ async fn run(
                     graphpg::catalog::AdviceLevel::Info => "info",
                 };
                 println!("{level}: {}", a.message);
+            }
+            if statements {
+                print_statements(&client, &catalog, top).await?;
             }
             return Ok(());
         }

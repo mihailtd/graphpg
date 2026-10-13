@@ -1,6 +1,7 @@
 pub mod inspector;
 pub mod integrations;
 pub mod models;
+pub mod statements;
 
 pub use inspector::{finalize, Advice, AdviceLevel, CatalogError, CatalogInspector};
 pub use models::{
