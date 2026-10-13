@@ -203,7 +203,7 @@ Settings that matter:
 | [`pg_duckdb`](https://github.com/duckdb/pg_duckdb) | Parquet, CSV, JSON, Iceberg and Delta, on disk or in S3 / GCS / Azure | Functions such as `read_parquet(...)`: load them into a materialized view (below) |
 | [Supabase Wrappers](https://github.com/supabase/wrappers) (S3) | CSV, JSON Lines and Parquet in S3 | Foreign tables |
 
-Only `file_fdw` is tested by graphpg. The others reach graphpg as foreign tables or views, the same shapes.
+graphpg's CI tests `file_fdw`, and `pg_duckdb` 1.1 (Parquet through a materialized view, and the failure of a plain view). The others reach graphpg as foreign tables or views, the same shapes.
 
 Files are read-only (graphpg generates no writes for them) and have **no indexes**. `file_fdw` reads the whole file for every scan, and a to-many relation into a file reads it once per parent row (see [Performance](#performance)). Read a file directly only when it is small or rarely queried. Otherwise load it into a materialized view with indexes and refresh it when the file changes:
 

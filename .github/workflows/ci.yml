@@ -84,6 +84,18 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres -d graphpg_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
+      # pg_duckdb on its own (tests/parquet.rs): its threads crash the server next to the pgrx
+      # extensions of the image above
+      duckdb:
+        image: docker.io/pgduckdb/pgduckdb:18-v1.1.1
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5435:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DUCKDB_DATABASE_URL: postgres://postgres:postgres@localhost:5435/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
