@@ -207,10 +207,8 @@ async fn queues_are_opt_in_and_must_exist() {
     if !common::with_extensions(&["pgmq"]).await {
         return;
     }
+    schema().await;
     let db = client().await;
-    db.batch_execute("CREATE SCHEMA IF NOT EXISTS pgmq_api")
-        .await
-        .unwrap();
     // None named: no queue fields
     let catalog = CatalogInspector::new(&db)
         .inspect_schema_with_config("pgmq_api", &Config::default())
