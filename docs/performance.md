@@ -37,7 +37,7 @@ After five executions of a statement, PostgreSQL may switch to a *generic plan*,
 
 | To get | Do this at the database level |
 | :--- | :--- |
-| Semantic search on a column at all | A vector index: `CREATE INDEX ON docs USING hnsw (embedding vector_cosine_ops)` (or `ivfflat`). graphpg uses the index's operator class (`vector_cosine_ops`, `vector_l2_ops`, `vector_ip_ops`) for both the distance it orders by and the score it returns. |
+| Semantic search on a column at all | A vector index: `CREATE INDEX ON docs USING hnsw (embedding vector_cosine_ops)` (or `ivfflat`, pgvectorscale `diskann`, VectorChord `vchordrq` / `vchordg`). graphpg uses the index's operator class (`vector_cosine_ops`, `vector_l2_ops`, `vector_ip_ops`) for both the distance it orders by and the score it returns. |
 | Up to `first` hits when `first` is above 40 | An HNSW scan returns at most `hnsw.ef_search` rows (default 40): raise it, e.g. `ALTER DATABASE app SET hnsw.ef_search = 100` |
 | `first` hits even when `condition`/`filter` excludes many rows | pgvector 0.8+: `hnsw.iterative_scan = relaxed_order` keeps scanning until enough rows pass the filter (bounded by `hnsw.max_scan_tuples`). graphpg re-sorts the hits by score, so the relaxed order is safe. For IVFFlat use `ivfflat.probes` and `ivfflat.iterative_scan`. |
 | Exact results | No index: every row is compared, which is exact but reads the whole table |
