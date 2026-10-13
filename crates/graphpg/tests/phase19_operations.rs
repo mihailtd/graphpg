@@ -382,6 +382,46 @@ async fn test_comment_hints_and_deprecations() {
     );
 }
 
+/// A root connection's distinct counts are counted over the distinct values (a parallel hash
+/// aggregate): alone (no scan of the rows besides), under the connection's filter and the
+/// aggregates' own, and over no rows.
+#[tokio::test]
+async fn test_distinct_counts_of_root_connections() {
+    let env = setup().await;
+    let data = env
+        .run(
+            r#"{
+                only: entriesConnection { aggregates { distinctCount { kind accountId } } }
+                filtered: entriesConnection(filter: { kind: { equalTo: "deposit" } }) { totalCount aggregates { distinctCount { kind } } }
+                ownFilter: entriesConnection { aggregates(filter: { kind: { equalTo: "deposit" } }) { distinctCount { kind } sum { amount } } }
+                none: entriesConnection(filter: { kind: { equalTo: "none" } }) { aggregates { distinctCount { kind } } }
+            }"#,
+        )
+        .await;
+    assert_eq!(
+        data["only"]["aggregates"]["distinctCount"],
+        json!({ "kind": 2, "accountId": 2 }),
+        "{data}"
+    );
+    assert_eq!(
+        data["filtered"]["aggregates"]["distinctCount"]["kind"], 1,
+        "{data}"
+    );
+    assert_eq!(
+        data["ownFilter"]["aggregates"]["distinctCount"]["kind"], 1,
+        "{data}"
+    );
+    assert_eq!(
+        data["ownFilter"]["aggregates"]["sum"]["amount"].as_f64(),
+        Some(650.0),
+        "{data}"
+    );
+    assert_eq!(
+        data["none"]["aggregates"]["distinctCount"]["kind"], 0,
+        "{data}"
+    );
+}
+
 #[tokio::test]
 async fn test_richer_aggregates() {
     let env = setup().await;
