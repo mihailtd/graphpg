@@ -1,0 +1,1 @@
+- **pg_jsonschema integration** (#171): a `json` / `jsonb` column with a `CHECK (jsonb_matches_schema('<schema>', column))` has that JSON Schema as its type in the OpenAPI document (nullable columns allow null), so typed REST clients get real types; violations are `<COLUMN>_INVALID`.

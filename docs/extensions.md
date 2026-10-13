@@ -12,7 +12,7 @@ Beyond types and indexes, graphpg **integrates** with popular extensions: it inf
 | Integration | Extension | On when the exposed schemas have | What graphpg does |
 | :--- | :--- | :--- | :--- |
 | `timescaledb` | TimescaleDB | a hypertable | [Fast totals, hypertables and continuous aggregates described, advice](#timescaledb) |
-| `pg_jsonschema` | pg_jsonschema | a `CHECK (jsonb_matches_schema(...))` | (#171) |
+| `pg_jsonschema` | pg_jsonschema | a `CHECK (jsonb_matches_schema(...))` | [The JSON Schema types the column](#pg_jsonschema) |
 | `pgmq` | pgmq | a queue | (#172) |
 | `pgvectorscale` | pgvectorscale | a `diskann` index | (#173) |
 | `vectorchord` | VectorChord | a `vchordrq` / `vchordg` index | (#173) |
@@ -47,6 +47,20 @@ Off, the integration does nothing, as if the extension were not installed. An un
 - **Advice.** A hypertable's unique indexes must include its time column, so many have no primary key, and then no single-row fields or stable cursors. `graphpg advise` says so and suggests the key to declare (`entities.<name>.primary_key: [device, time]`).
 
 Bucketing and gap filling need nothing TimescaleDB-specific: grouped aggregates already truncate or bin time (`date_trunc` / `date_bin`, which chunk exclusion and indexes serve as well as `time_bucket`) and fill gaps (`fillGaps`), on hypertables and plain tables alike.
+
+## pg_jsonschema
+
+A `json` / `jsonb` column constrained by a JSON Schema has that schema as its type:
+
+```sql
+settings jsonb NOT NULL CHECK (jsonb_matches_schema('{"type": "object", "required": ["theme"], ...}', settings))
+```
+
+- **OpenAPI:** the column's property is the JSON Schema (without `$schema`), in rows and in create and update bodies, so typed clients get real types. A nullable column allows `null` too, which passes the check.
+- **GraphQL:** the field stays `JSON` (GraphQL cannot express a JSON Schema), and its description states the check.
+- **Errors:** a value the schema rejects fails the check: `<COLUMN>_INVALID` (REST `422`), like any check.
+
+The constraint must be the call alone, on that column, with the schema as a literal. A check combining it with other conditions is documented, but does not type the column.
 
 ## Testing against the real extensions
 

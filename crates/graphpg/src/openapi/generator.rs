@@ -2610,6 +2610,30 @@ impl OpenApiGenerator {
         catalog: &DatabaseCatalog,
     ) -> Value {
         let mut schema = Self::column_to_json_schema(col, catalog);
+        // pg_jsonschema: a JSON Schema check is the column's type
+        if matches!(col.pg_type, PgType::Json | PgType::Jsonb)
+            && catalog
+                .integration(crate::catalog::integrations::Integration::PgJsonschema)
+                .is_some()
+        {
+            if let Some(mut stated) = super::constraints::json_schema(table, col) {
+                if let Some(object) = stated.as_object_mut() {
+                    object.remove("$schema");
+                }
+                let mut typed = if col.is_nullable {
+                    // NULL passes the check
+                    json!({ "anyOf": [stated, { "type": "null" }] })
+                } else {
+                    stated
+                };
+                for keyword in ["description", "deprecated"] {
+                    if let Some(value) = schema.get(keyword) {
+                        typed[keyword] = value.clone();
+                    }
+                }
+                return typed;
+            }
+        }
         for (keyword, value) in super::constraints::keywords(table, col) {
             // A `varchar(20)` limit and a `CHECK` on the length: the stricter one holds
             let tighter = match (schema.get(&keyword).and_then(Value::as_i64), value.as_i64()) {
