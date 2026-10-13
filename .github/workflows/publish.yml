@@ -129,6 +129,9 @@ jobs:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         with:
+          # The binary cache is saved under the GitHub-hosted runner's home (/home/runner), and
+          # restores elsewhere on a self-hosted runner: install Trivy there instead
+          cache: ${{ runner.environment == 'github-hosted' }}
           image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH
           ignore-unfixed: true
