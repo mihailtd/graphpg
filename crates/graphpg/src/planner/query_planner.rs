@@ -3486,12 +3486,17 @@ impl<'a> PlanningContext<'a> {
                 || provided(&a.name, &a.graphql_name()).is_some()
                 || !a.has_default
         });
-        let Some(last) = last else { return Vec::new() };
+        // Fixed arguments come first, whatever the request says
+        let fixed = func.fixed_arguments.iter().map(|(arg, value)| BoundArg {
+            name: arg.name.clone(),
+            value: ArgValue::Value(self.column_value(&arg.as_column(), value.clone(), "")),
+        });
+        let Some(last) = last else {
+            return fixed.collect();
+        };
 
-        func.arguments[..=last]
-            .iter()
-            .enumerate()
-            .map(|(i, arg)| {
+        fixed
+            .chain(func.arguments[..=last].iter().enumerate().map(|(i, arg)| {
                 let value = match (row.filter(|_| i == 0), parent_column(&arg.name)) {
                     (Some(row), _) => row.clone(),
                     (None, Some(column)) => ArgValue::Column(column.to_string()),
@@ -3508,7 +3513,7 @@ impl<'a> PlanningContext<'a> {
                     name: arg.name.clone(),
                     value,
                 }
-            })
+            }))
             .collect()
     }
 

@@ -1264,6 +1264,10 @@ pub struct FunctionColumn {
 pub struct FunctionMetadata {
     pub schema: String,
     pub name: String,
+    /// Arguments bound to fixed values, passed before `arguments` and not exposed: a pgmq
+    /// queue's name, so its operations are fields of their own (see the `pgmq` integration).
+    #[serde(default)]
+    pub fixed_arguments: Vec<(FunctionArgument, serde_json::Value)>,
     pub arguments: Vec<FunctionArgument>,
     /// Columns of a `Record` return.
     pub return_columns: Vec<FunctionColumn>,
@@ -1306,6 +1310,16 @@ pub struct FunctionMetadata {
 }
 
 impl FunctionMetadata {
+    /// The function's name under `/rest/rpc/`: its own, or for a function derived from an
+    /// extension's (a pgmq queue's operation, which shares the function), its field name.
+    pub fn rest_name(&self) -> &str {
+        if self.fixed_arguments.is_empty() {
+            &self.name
+        } else {
+            &self.field_name
+        }
+    }
+
     /// Whether the function is mounted as a field of `table`.
     pub fn is_mounted_on(&self, table: &TableMetadata) -> bool {
         self.parent_table.as_deref() == Some(table.name.as_str())
@@ -2980,7 +2994,12 @@ impl DatabaseCatalog {
             }
         }
         let mut func_name_counts: HashMap<String, usize> = HashMap::new();
-        for f in &self.functions {
+        // Functions derived from an extension's (pgmq queues) are named already
+        for f in self
+            .functions
+            .iter()
+            .filter(|f| f.fixed_arguments.is_empty())
+        {
             *func_name_counts.entry(f.name.clone()).or_default() += 1;
         }
         for f in &mut self.functions {

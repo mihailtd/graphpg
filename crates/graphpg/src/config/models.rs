@@ -1100,6 +1100,18 @@ pub struct ExtensionsConfig {
     /// by integration: `auto` (the default) when the schema uses the extension, or `off`.
     #[serde(default)]
     pub integrations: BTreeMap<String, crate::catalog::integrations::IntegrationMode>,
+    /// pgmq queues served as API (see `docs/extensions.md`).
+    #[serde(default)]
+    pub pgmq: PgmqConfig,
+}
+
+/// The pgmq queues whose operations are fields and REST functions. None by default: sending
+/// and reading are writes, so queues are named, or `"*"` for all of them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PgmqConfig {
+    #[serde(default)]
+    pub queues: Vec<String>,
 }
 
 impl ExtensionsConfig {
