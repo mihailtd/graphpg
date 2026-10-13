@@ -680,8 +680,34 @@ pub fn create_pool_with(
         recycling_method: RecyclingMethod::Fast,
     });
     cfg.pool = Some(PoolConfig::new(max_size));
-    cfg.create_pool(Some(Runtime::Tokio1), NoTls)
+    cfg.builder(NoTls)
+        .map_err(CreatePoolError::Config)?
+        .runtime(Runtime::Tokio1)
+        .post_create(deadpool_postgres::Hook::async_fn(|client, _| {
+            Box::pin(async move {
+                client
+                    .batch_execute(EXTENSION_SEARCH_PATH)
+                    .await
+                    .map_err(deadpool_postgres::HookError::Backend)
+            })
+        }))
+        .build()
+        .map_err(CreatePoolError::Build)
 }
+
+/// Run on every new connection: the schemas of the installed extensions not on its
+/// `search_path` go at its end. graphpg's statements call extensions' functions, operators and
+/// types unqualified (`word_similarity`, `<=>`, `::vector`, `ST_DWithin`), and installations
+/// often keep extensions in a schema of their own (Supabase: `extensions`). Appended, they
+/// shadow nothing; set once per connection, they cost requests nothing.
+const EXTENSION_SEARCH_PATH: &str = "
+    SELECT set_config('search_path', concat_ws(', ', nullif(current_setting('search_path'), ''), missing), false)
+    FROM (
+      SELECT string_agg(DISTINCT quote_ident(n.nspname), ', ') AS missing
+      FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+      WHERE n.nspname <> ALL (current_schemas(true))
+    ) m
+    WHERE missing IS NOT NULL";
 
 fn graphql_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();

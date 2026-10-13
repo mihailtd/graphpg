@@ -5,6 +5,8 @@ graphpg reads what a database's extensions add and serves it, without configurat
 - **Types**: `vector`, `geometry` / `geography`, `ltree`, `citext`, `hstore`, ranges.
 - **Indexes**: search fields from pgvector `hnsw` / `ivfflat`, trigram, full-text and BM25 indexes.
 
+Extensions can live in any schema. Many installations keep them in a schema of their own (Supabase: `extensions`), off the default `search_path`. graphpg appends the schemas of installed extensions to the `search_path` of each of its connections, once, when it opens the connection. Its statements can then use their functions, operators and types (`word_similarity`, `<=>`, `ST_DWithin`) without schema names, and the configured path keeps precedence.
+
 Beyond types and indexes, graphpg **integrates** with popular extensions: it infers what they mean for the APIs, but only when the schema **uses** them.
 
 ## Integrations
