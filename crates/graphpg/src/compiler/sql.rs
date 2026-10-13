@@ -528,6 +528,7 @@ impl SqlCompiler {
                 source,
                 id_cast,
                 cursor_columns,
+                hypertable,
             } => Self::compile_connection(
                 schema,
                 table,
@@ -545,6 +546,7 @@ impl SqlCompiler {
                 source.as_ref(),
                 id_cast.as_deref(),
                 cursor_columns,
+                hypertable.as_deref(),
                 plan,
                 params,
             ),
@@ -2916,6 +2918,7 @@ impl SqlCompiler {
         source: Option<&FunctionSource>,
         id_cast: Option<&str>,
         cursor_columns: &[(String, Option<String>)],
+        hypertable: Option<&str>,
         plan: &OperationPlan,
         params: &mut Vec<String>,
     ) -> String {
@@ -3185,7 +3188,14 @@ impl SqlCompiler {
                 continue;
             }
             let target = quote_qualified(schema, table);
-            let estimate = if unconditioned {
+            let estimate = if let Some(ts) = hypertable.filter(|_| unconditioned) {
+                // A hypertable's statistics are its chunks': TimescaleDB adds them up
+                format!(
+                    "{}.approximate_row_count({}::regclass)",
+                    quote_ident(ts),
+                    Self::sql_literal(&target)
+                )
+            } else if unconditioned {
                 // Table statistics (the leaf partitions' for a partitioned table), when analyzed
                 format!(
                     "coalesce((SELECT CASE WHEN count(*) > 0 AND bool_and(c.reltuples >= 0) THEN sum(c.reltuples)::int8 END \

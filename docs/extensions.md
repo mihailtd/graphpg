@@ -11,7 +11,7 @@ Beyond types and indexes, graphpg **integrates** with popular extensions: it inf
 
 | Integration | Extension | On when the exposed schemas have | What graphpg does |
 | :--- | :--- | :--- | :--- |
-| `timescaledb` | TimescaleDB | a hypertable | (#170) |
+| `timescaledb` | TimescaleDB | a hypertable | [Fast totals, hypertables and continuous aggregates described, advice](#timescaledb) |
 | `pg_jsonschema` | pg_jsonschema | a `CHECK (jsonb_matches_schema(...))` | (#171) |
 | `pgmq` | pgmq | a queue | (#172) |
 | `pgvectorscale` | pgvectorscale | a `diskann` index | (#173) |
@@ -39,6 +39,14 @@ extensions:
 ```
 
 Off, the integration does nothing, as if the extension were not installed. An unknown name is an error, listing the known ones.
+
+## TimescaleDB
+
+- **Fast totals.** A hypertable's rows live in its chunks, so its own statistics are empty. Estimated totals (`totalCount(estimate: true)`, REST `Prefer: count=planned` / `estimated`) fell back to an exact `count(*)` over every chunk; they now use TimescaleDB's `approximate_row_count()`. Exact totals stay exact.
+- **Described.** A hypertable's type says it is one, its time column and its chunk interval, and that filtering on the time column reads only the chunks a request needs. A continuous aggregate's type says whether it shows only what is materialized or adds recent rows when read.
+- **Advice.** A hypertable's unique indexes must include its time column, so many have no primary key, and then no single-row fields or stable cursors. `graphpg advise` says so and suggests the key to declare (`entities.<name>.primary_key: [device, time]`).
+
+Bucketing and gap filling need nothing TimescaleDB-specific: grouped aggregates already truncate or bin time (`date_trunc` / `date_bin`, which chunk exclusion and indexes serve as well as `time_bucket`) and fill gaps (`fillGaps`), on hypertables and plain tables alike.
 
 ## Testing against the real extensions
 

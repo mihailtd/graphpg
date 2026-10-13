@@ -1043,6 +1043,10 @@ pub enum Step {
         /// Empty in older plans, meaning the `id` column with `id_cast`.
         #[serde(default)]
         cursor_columns: Vec<(String, Option<String>)>,
+        /// A TimescaleDB hypertable: the schema of TimescaleDB's functions. Its unconditioned
+        /// row estimate is `approximate_row_count()` (its own statistics are its chunks').
+        #[serde(default)]
+        hypertable: Option<String>,
     },
 
     /// A search root field: the `limit` best matches of `search` among the rows passing
@@ -1176,6 +1180,7 @@ impl Step {
             source: None,
             id_cast: None,
             cursor_columns: Vec::new(),
+            hypertable: None,
         }
     }
 }

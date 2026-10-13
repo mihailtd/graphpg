@@ -113,6 +113,9 @@ pub struct ActiveIntegration {
     pub integration: Integration,
     /// The extension's version.
     pub version: String,
+    /// The schema the extension's objects are in.
+    #[serde(default)]
+    pub schema: String,
     /// What made it active: `3 hypertables`, `installed`.
     pub detail: String,
 }
