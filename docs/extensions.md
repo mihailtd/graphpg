@@ -17,7 +17,7 @@ Beyond types and indexes, graphpg **integrates** with popular extensions: it inf
 | `pgvectorscale` | pgvectorscale | a `diskann` index | [Semantic search on its indexes](#pgvectorscale-and-vectorchord) |
 | `vectorchord` | VectorChord | a `vchordrq` / `vchordg` index | [Semantic search on its indexes](#pgvectorscale-and-vectorchord) |
 | `pgroonga` | PGroonga | a `pgroonga` index | [Full-text search in any language](#pgroonga) |
-| `pg_stat_statements` | pg_stat_statements | (installed) | (#174) |
+| `pg_stat_statements` | pg_stat_statements | (installed) | [`graphpg advise --statements`](#pg_stat_statements-and-hypopg) |
 | `pg_duckdb` | pg_duckdb | (installed) | (#175) |
 
 An extension that is installed but unused changes nothing.
@@ -113,6 +113,29 @@ CREATE INDEX ON memos USING pgroonga ((ARRAY[title, body]));    -- several: fiel
 - **Small tables:** PGroonga scores only rows found through its index. On a table small enough for PostgreSQL to read without the index, every match scores 0: the matches are right, but unranked.
 
 The text columns need `pgroonga_text_full_text_search_ops_v2` (the default for `text`), `pgroonga_varchar_full_text_search_ops_v2` (for `varchar`, named in the index) or `pgroonga_text_array_full_text_search_ops_v2` (the default for `text[]`). Other PGroonga indexes (term search, regular expressions, `jsonb`) are not search fields.
+
+## pg_stat_statements and hypopg
+
+graphpg tags its statements with the GraphQL operation or REST route ([sqlcommenter](observability.md)), and [pg_stat_statements](https://www.postgresql.org/docs/current/pgstatstatements.html) keeps the tags, so its numbers say which operations cost the most:
+
+```
+$ graphpg advise --statements --top 10
+statements: graphpg's 2 most expensive operations by total time (pg_stat_statements, since 2026-10-13 07:19:37+00)
+  1. query EventsByStatus: 5 calls, 27.5 ms total, 5.51 ms mean, 1.0 rows per call
+     index: CREATE INDEX ON "app"."events" ("status"); estimated cost 5786 -> 1888 (hypopg)
+  2. GET /rest/events: 5 calls, 0.1 ms total, 0.01 ms mean, 1.0 rows per call
+```
+
+- **Operations**, the most expensive (total execution time) first: calls, total and mean time, rows, and how many statement shapes they ran (an operation's variables can change its SQL).
+- **Indexes they lack.** Each statement is planned with `EXPLAIN (GENERIC_PLAN)` (PostgreSQL 16+), which plans pg_stat_statements' normalized text without running it, in a read-only transaction. A sequential scan filtering (or sorting) on columns suggests an index on them.
+- **Checked with [hypopg](https://github.com/HypoPG/hypopg)**, when installed: each candidate is created as a hypothetical index (no disk, no lock, this session only), and suggested only if the statement's estimated cost drops by at least 10%; the best one, with the costs before and after. hypopg also tells when an index scan filtering many rows would be served better by another index. Without hypopg, suggestions come from sequential scans alone, and are unchecked.
+
+Notes:
+
+- pg_stat_statements must be in `shared_preload_libraries`, and created in the database (`CREATE EXTENSION pg_stat_statements`). The role graphpg connects as sees other roles' statements only with `pg_read_all_stats`.
+- pg_stat_statements identifies a statement by its normalized SQL, without comments, and keeps the text it first saw: two operations running the same SQL are counted together, under the first one's name.
+- Generic plans use average selectivities, not the values requests sent: a column whose values are very unevenly common can need an index the report does not suggest.
+- `extensions.integrations.pg_stat_statements: off` turns `--statements` off.
 
 ## Testing against the real extensions
 

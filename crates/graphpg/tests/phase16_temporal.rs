@@ -28,7 +28,7 @@ const FIXTURE_VERSION: &str = "temporal_fixture v1";
 const FIXTURE_SQL: &str = r#"
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE SCHEMA temporal_fixture;
-SET search_path = temporal_fixture, public;
+SET LOCAL search_path = temporal_fixture, public;
 
 -- Versions of an account over non-overlapping periods
 CREATE TABLE accounts (

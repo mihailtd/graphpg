@@ -24,7 +24,7 @@ const FIXTURE_VERSION: &str = "engine_fixture v3";
 
 const FIXTURE_SQL: &str = r#"
 CREATE SCHEMA engine_fixture;
-SET search_path = engine_fixture;
+SET LOCAL search_path = engine_fixture;
 
 CREATE TABLE authors (id int PRIMARY KEY, full_name text NOT NULL, born date, secret text);
 COMMENT ON TABLE authors IS 'People who write';

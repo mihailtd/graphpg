@@ -22,7 +22,7 @@ const FIXTURE_VERSION: &str = "types_fixture v1";
 const FIXTURE_SQL: &str = r#"
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE SCHEMA types_fixture;
-SET search_path = types_fixture, public;
+SET LOCAL search_path = types_fixture, public;
 
 -- A generated document column with a GIN index
 CREATE TABLE articles (

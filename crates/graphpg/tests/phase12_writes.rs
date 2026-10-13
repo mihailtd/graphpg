@@ -26,7 +26,7 @@ const FIXTURE_VERSION: &str = "write_fixture v3";
 
 const FIXTURE_SQL: &str = r#"
 CREATE SCHEMA write_fixture;
-SET search_path = write_fixture, public;
+SET LOCAL search_path = write_fixture, public;
 
 -- Serial primary key and a unique constraint
 CREATE TABLE teams (

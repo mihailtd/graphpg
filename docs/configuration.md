@@ -9,6 +9,7 @@ graphpg                              # serve in prod mode on :4000
 graphpg --mode dev                   # dev mode (watch DDL, auto-export, GraphiQL/Scalar on, OpenAPI document served)
 graphpg --config path/to/file.yaml   # explicit config file
 graphpg advise                       # print schema advice and exit
+graphpg advise --statements          # and the most expensive operations, with the indexes they lack
 graphpg schema export                # write GraphQL SDL + OpenAPI (+ subgraph) to the `export:` paths
 graphpg schema export --check        # CI: fail if the exported files are out of date
 graphpg export-graphql --out schema.graphql
@@ -411,3 +412,5 @@ At startup, and with `graphpg advise`, graphpg reports foreign keys no index lea
 - a role requests run as that has no user mapping for the foreign server.
 
 They are logged (warnings as warnings, the rest at debug level); nothing is changed.
+
+`graphpg advise --statements` also reports what requests actually cost, from [pg_stat_statements](extensions.md#pg_stat_statements-and-hypopg).

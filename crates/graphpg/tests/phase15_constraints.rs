@@ -26,7 +26,7 @@ const FIXTURE_VERSION: &str = "constraint_fixture v1";
 const FIXTURE_SQL: &str = r#"
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE SCHEMA constraint_fixture;
-SET search_path = constraint_fixture, public;
+SET LOCAL search_path = constraint_fixture, public;
 
 CREATE TABLE accounts (
     id serial PRIMARY KEY,

@@ -31,7 +31,7 @@ const FIXTURE_VERSION: &str = "ops_fixture v1";
 
 const FIXTURE_SQL: &str = r#"
 CREATE SCHEMA ops_fixture;
-SET search_path = ops_fixture, public;
+SET LOCAL search_path = ops_fixture, public;
 
 CREATE TABLE accounts (id serial PRIMARY KEY, owner text NOT NULL);
 -- No index on `account_id`: the advice reports it
