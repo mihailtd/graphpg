@@ -14,8 +14,8 @@ Beyond types and indexes, graphpg **integrates** with popular extensions: it inf
 | `timescaledb` | TimescaleDB | a hypertable | [Fast totals, hypertables and continuous aggregates described, advice](#timescaledb) |
 | `pg_jsonschema` | pg_jsonschema | a `CHECK (jsonb_matches_schema(...))` | [The JSON Schema types the column](#pg_jsonschema) |
 | `pgmq` | pgmq | a queue, named in `extensions.pgmq.queues` | [Queues as API](#pgmq) |
-| `pgvectorscale` | pgvectorscale | a `diskann` index | (#173) |
-| `vectorchord` | VectorChord | a `vchordrq` / `vchordg` index | (#173) |
+| `pgvectorscale` | pgvectorscale | a `diskann` index | [Semantic search on its indexes](#pgvectorscale-and-vectorchord) |
+| `vectorchord` | VectorChord | a `vchordrq` / `vchordg` index | [Semantic search on its indexes](#pgvectorscale-and-vectorchord) |
 | `pgroonga` | PGroonga | a `pgroonga` index | (#176) |
 | `pg_stat_statements` | pg_stat_statements | (installed) | (#174) |
 | `pg_duckdb` | pg_duckdb | (installed) | (#175) |
@@ -86,6 +86,17 @@ Each queue's operations become functions of their own, so GraphQL and REST serve
 | `jobsQueueMetrics` (a query) | `GET /rest/rpc/jobsQueueMetrics` | `metrics`: length and message ages |
 
 A message read and neither deleted nor archived within its visibility timeout is read again: process messages, then acknowledge them. A queue named in `queues` that does not exist stops the start.
+
+## pgvectorscale and VectorChord
+
+[pgvectorscale](https://github.com/timescale/pgvectorscale)'s `diskann` and [VectorChord](https://github.com/tensorchord/VectorChord)'s `vchordrq` / `vchordg` indexes serve pgvector's `vector` columns at scales where `hnsw` outgrows memory. A column with one of these indexes gets the same `<list>SemanticSearch` field and `POST /rest/<resource>/search/semantic` as with `hnsw`: the operator class (`vector_cosine_ops`, `vector_l2_ops`, `vector_ip_ops`) sets the distance it orders by and the score, and PostgreSQL's plan uses the index.
+
+```sql
+CREATE INDEX ON docs USING diskann (embedding vector_cosine_ops);
+CREATE INDEX ON docs USING vchordrq (embedding vector_l2_ops);
+```
+
+Their tuning settings (`diskann.query_search_list_size`, `vchordrq.probes`, ...) are PostgreSQL settings: set them on the role or the database (`ALTER ROLE ... SET`), and every request uses them.
 
 ## Testing against the real extensions
 

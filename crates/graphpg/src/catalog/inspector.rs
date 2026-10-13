@@ -1703,13 +1703,28 @@ impl<'a> CatalogInspector<'a> {
               AND (
                 (am.amname IN ('gin', 'gist') AND op.opcname IN ('gin_trgm_ops', 'gist_trgm_ops'))
                 OR (am.amname IN ('hnsw', 'ivfflat') AND op.opcname LIKE 'vector_%')
+                -- pgvectorscale (diskann) and VectorChord (vchordrq, vchordg), when their
+                -- integrations are on: the distance classes, read with pgvector's operators
+                OR (am.amname = ANY($2) AND op.opcname IN ('vector_l2_ops', 'vector_cosine_ops', 'vector_ip_ops'))
                 OR (am.amname = 'bm25')
                 OR (am.amname IN ('gin', 'gist') AND op.opcname IN ('tsvector_ops', 'gist_tsvector_ops'))
                 OR (am.amname IN ('gist', 'spgist') AND (op.opcname LIKE '%geometry_ops%' OR op.opcname LIKE '%geography_ops%'))
               )
             ORDER BY c.relname, i.relname;
         ";
-        for r in self.client.query(search_idx_query, &[&schemas_vec]).await? {
+        use super::integrations::Integration;
+        let mut vector_methods: Vec<&str> = Vec::new();
+        if catalog.integration(Integration::Pgvectorscale).is_some() {
+            vector_methods.push("diskann");
+        }
+        if catalog.integration(Integration::VectorChord).is_some() {
+            vector_methods.extend(["vchordrq", "vchordg"]);
+        }
+        for r in self
+            .client
+            .query(search_idx_query, &[&schemas_vec, &vector_methods])
+            .await?
+        {
             let table_name: String = r.get(0);
             let index_name: String = r.get(1);
             let column_name: String = r.get(2);
