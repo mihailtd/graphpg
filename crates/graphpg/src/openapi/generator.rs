@@ -2850,6 +2850,7 @@ mod tests {
     fn users_catalog() -> DatabaseCatalog {
         let mut catalog = DatabaseCatalog::default();
         catalog.tables.push(TableMetadata {
+            timescale: None,
             schema: "public".to_string(),
             name: "users".to_string(),
             kind: RelationKind::Table,
@@ -3009,6 +3010,7 @@ mod tests {
             domain: None,
         };
         let table = TableMetadata {
+            timescale: None,
             schema: "public".to_string(),
             name: "places".to_string(),
             kind: RelationKind::Table,

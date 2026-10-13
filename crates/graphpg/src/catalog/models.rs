@@ -850,8 +850,24 @@ fn balanced(s: &str) -> bool {
     depth == 0
 }
 
+/// What TimescaleDB makes of a relation (the `timescaledb` integration).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Timescale {
+    /// A hypertable: rows in chunks by `time_column`, each `chunk_interval` long.
+    Hypertable {
+        time_column: String,
+        chunk_interval: Option<String>,
+    },
+    /// A continuous aggregate: a view over a materialization kept by refresh policies; with
+    /// `materialized_only` it shows only what is materialized, else recent rows too.
+    ContinuousAggregate { materialized_only: bool },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableMetadata {
+    /// TimescaleDB's view of the relation, when the integration is on.
+    #[serde(default)]
+    pub timescale: Option<Timescale>,
     pub schema: String,
     pub name: String,
     #[serde(default)]
@@ -2727,6 +2743,31 @@ impl DatabaseCatalog {
             .collect();
         if !checks.is_empty() {
             parts.push(format!("Rows must satisfy {}.", checks.join(" and ")));
+        }
+        match &table.timescale {
+            Some(Timescale::Hypertable {
+                time_column,
+                chunk_interval,
+            }) => {
+                let field = table
+                    .get_column(time_column)
+                    .map_or(time_column.as_str(), |c| c.field_name.as_str());
+                let chunks = chunk_interval
+                    .as_deref()
+                    .map(|i| format!(", in chunks of {i}"))
+                    .unwrap_or_default();
+                parts.push(format!(
+                    "A TimescaleDB hypertable, partitioned by `{field}`{chunks}: filter on `{field}` to read only the chunks a request needs."
+                ));
+            }
+            Some(Timescale::ContinuousAggregate { materialized_only }) => {
+                parts.push(if *materialized_only {
+                    "A TimescaleDB continuous aggregate: what its refresh policy has materialized (rows newer than the last refresh are missing).".to_string()
+                } else {
+                    "A TimescaleDB continuous aggregate: materialized rows, and recent ones computed when read (real-time aggregation).".to_string()
+                });
+            }
+            None => {}
         }
         (!parts.is_empty()).then(|| parts.join("\n\n"))
     }

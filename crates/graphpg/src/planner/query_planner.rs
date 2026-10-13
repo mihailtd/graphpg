@@ -2844,6 +2844,16 @@ impl<'a> PlanningContext<'a> {
             }),
             sort,
             id_cast: column_cast(table_meta, "id"),
+            hypertable: matches!(
+                table_meta.timescale,
+                Some(crate::catalog::models::Timescale::Hypertable { .. })
+            )
+            .then(|| {
+                self.catalog()
+                    .integration(crate::catalog::integrations::Integration::TimescaleDb)
+                    .map(|i| i.schema.clone())
+            })
+            .flatten(),
             cursor_columns: key
                 .into_iter()
                 .map(|c| (c.clone(), column_cast(table_meta, c)))

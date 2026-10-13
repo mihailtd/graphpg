@@ -193,6 +193,7 @@ impl<'a> CatalogInspector<'a> {
         catalog.tables = self
             .inspect_relations(schema_names, extensions, catalog.server_version, config)
             .await?;
+        self.inspect_timescale(schema_names, catalog).await?;
         self.inspect_check_enums(schema_names, catalog).await?;
         self.inspect_functions(schema_names, extensions, catalog)
             .await?;
@@ -218,19 +219,20 @@ impl<'a> CatalogInspector<'a> {
         catalog: &mut DatabaseCatalog,
     ) -> Result<(), CatalogError> {
         use super::integrations::{ActiveIntegration, Integration};
-        let installed: HashMap<String, String> = self
+        let installed: HashMap<String, (String, String)> = self
             .client
             .query(
-                "SELECT extname::text, extversion::text FROM pg_extension",
+                "SELECT e.extname::text, e.extversion::text, n.nspname::text
+                 FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace",
                 &[],
             )
             .await?
             .iter()
-            .map(|r| (r.get(0), r.get(1)))
+            .map(|r| (r.get(0), (r.get(1), r.get(2))))
             .collect();
         catalog.integrations.clear();
         for integration in Integration::ALL {
-            let Some(version) = installed.get(integration.extension()) else {
+            let Some((version, ext_schema)) = installed.get(integration.extension()) else {
                 continue;
             };
             if !config.extensions.integration_on(integration) {
@@ -239,24 +241,11 @@ impl<'a> CatalogInspector<'a> {
             let detail = match integration.use_query() {
                 None => "installed".to_string(),
                 Some(sql) => {
-                    // A failing probe (an incompatible version, no privilege) is no use. Inside a
-                    // transaction (the pruning role's) a savepoint keeps it from aborting it
-                    let in_transaction = self
-                        .client
-                        .batch_execute("SAVEPOINT graphpg_probe")
-                        .await
-                        .is_ok();
-                    let probed = self.client.query_one(sql, &[&schema_names]).await;
-                    if in_transaction {
-                        let end = if probed.is_ok() {
-                            "RELEASE SAVEPOINT graphpg_probe"
-                        } else {
-                            "ROLLBACK TO SAVEPOINT graphpg_probe; RELEASE SAVEPOINT graphpg_probe"
-                        };
-                        self.client.batch_execute(end).await?;
-                    }
-                    let uses: i64 = match probed {
-                        Ok(row) => row.get(0),
+                    // A failing probe (an incompatible version, no privilege) is no use
+                    let probed = self.guarded_query(sql, schema_names).await?;
+                    let uses: i64 = match probed.as_ref().map(|rows| rows.first()) {
+                        Ok(Some(row)) => row.get(0),
+                        Ok(None) => 0,
                         Err(err) => {
                             tracing::warn!(integration = integration.name(), error = %err, "could not detect the extension's use; integration off");
                             0
@@ -272,8 +261,95 @@ impl<'a> CatalogInspector<'a> {
             catalog.integrations.push(ActiveIntegration {
                 integration,
                 version: version.clone(),
+                schema: ext_schema.clone(),
                 detail,
             });
+        }
+        Ok(())
+    }
+
+    /// Runs `sql` with the schemas as `$1`; an error is returned as a value, not raised. Inside
+    /// a transaction (the pruning role's) a savepoint keeps a failure from aborting it.
+    async fn guarded_query(
+        &self,
+        sql: &str,
+        schema_names: &[&str],
+    ) -> Result<Result<Vec<tokio_postgres::Row>, tokio_postgres::Error>, CatalogError> {
+        let in_transaction = self
+            .client
+            .batch_execute("SAVEPOINT graphpg_probe")
+            .await
+            .is_ok();
+        let result = self.client.query(sql, &[&schema_names]).await;
+        if in_transaction {
+            let end = if result.is_ok() {
+                "RELEASE SAVEPOINT graphpg_probe"
+            } else {
+                "ROLLBACK TO SAVEPOINT graphpg_probe; RELEASE SAVEPOINT graphpg_probe"
+            };
+            self.client.batch_execute(end).await?;
+        }
+        Ok(result)
+    }
+
+    /// TimescaleDB's hypertables (and their time dimension) and continuous aggregates, when
+    /// the integration is on.
+    async fn inspect_timescale(
+        &self,
+        schema_names: &[&str],
+        catalog: &mut DatabaseCatalog,
+    ) -> Result<(), CatalogError> {
+        use super::integrations::Integration;
+        use super::models::Timescale;
+        if catalog.integration(Integration::TimescaleDb).is_none() {
+            return Ok(());
+        }
+        let hypertables = self
+            .guarded_query(
+                "SELECT hypertable_schema::text, hypertable_name::text, column_name::text, time_interval::text
+                 FROM timescaledb_information.dimensions
+                 WHERE dimension_number = 1 AND hypertable_schema = ANY($1)",
+                schema_names,
+            )
+            .await?;
+        let aggregates = self
+            .guarded_query(
+                "SELECT view_schema::text, view_name::text, materialized_only
+                 FROM timescaledb_information.continuous_aggregates WHERE view_schema = ANY($1)",
+                schema_names,
+            )
+            .await?;
+        let (Ok(hypertables), Ok(aggregates)) = (hypertables, aggregates) else {
+            tracing::warn!("could not read TimescaleDB's catalog; its integration does nothing");
+            return Ok(());
+        };
+        let mut set = |schema: String, name: String, value: Timescale| {
+            if let Some(t) = catalog
+                .tables
+                .iter_mut()
+                .find(|t| t.schema == schema && t.name == name)
+            {
+                t.timescale = Some(value);
+            }
+        };
+        for row in hypertables {
+            set(
+                row.get(0),
+                row.get(1),
+                Timescale::Hypertable {
+                    time_column: row.get(2),
+                    chunk_interval: row.get(3),
+                },
+            );
+        }
+        for row in aggregates {
+            set(
+                row.get(0),
+                row.get(1),
+                Timescale::ContinuousAggregate {
+                    materialized_only: row.get(2),
+                },
+            );
         }
         Ok(())
     }
@@ -340,12 +416,20 @@ impl<'a> CatalogInspector<'a> {
                         | super::models::RelationKind::PartitionedTable
                 )
         }) {
-            advice.push(Advice {
-                level: AdviceLevel::Warning,
-                message: format!(
+            let message = match &t.timescale {
+                // A hypertable's unique indexes must include its time column: few have a key
+                Some(super::models::Timescale::Hypertable { time_column, .. }) => format!(
+                    "hypertable `{}` has no primary key: it has no single-row fields, updates or deletes, and its cursors are not stable. A hypertable's key must include `{time_column}`: declare one in graphpg.yaml (`entities.{}.primary_key: [<id or device>, {time_column}]`), backed by a unique index on those columns",
+                    t.name, t.name
+                ),
+                _ => format!(
                     "table `{}` has no primary key: it has no single-row fields, updates or deletes, and its cursors are not stable",
                     t.name
                 ),
+            };
+            advice.push(Advice {
+                level: AdviceLevel::Warning,
+                message,
             });
         }
         // Columns an index leads with, per table
@@ -650,6 +734,7 @@ impl<'a> CatalogInspector<'a> {
 
             by_oid.insert(oid, tables.len());
             tables.push(TableMetadata {
+                timescale: None,
                 schema: row.get(9),
                 name: row.get(1),
                 kind,
