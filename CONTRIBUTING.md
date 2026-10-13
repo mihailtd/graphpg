@@ -7,7 +7,7 @@ Issues and pull requests are welcome.
 You need a recent stable Rust toolchain (see `rust-toolchain.toml`) and PostgreSQL 18 with the extensions in `docker/init.sql` (pgvector among them). The simplest way:
 
 ```bash
-docker compose up -d        # PostgreSQL 18 + pgvector, database graphpg_test on localhost:5432
+docker compose up -d        # PostgreSQL 18 with the integrated extensions (docker/test-pg), database graphpg_test on localhost:5432
 cargo test --workspace
 ```
 

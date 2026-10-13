@@ -1,7 +1,9 @@
-# PostgreSQL 18 with pgvector, for development and the test suite.
+# PostgreSQL 18 with the extensions graphpg integrates with (docker/test-pg), for development and
+# the test suite: the image CI runs the tests against. `docker compose build` builds it locally.
 services:
   postgres:
-    image: pgvector/pgvector:pg18
+    image: ghcr.io/mihailtd/graphpg-test-pg:18
+    build: docker/test-pg
     ports:
       - "5432:5432"
     environment:
