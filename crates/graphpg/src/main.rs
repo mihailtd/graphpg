@@ -53,11 +53,23 @@ pub enum Commands {
     },
     /// Inspect schemas and print advice / optimization suggestions
     Advise,
+    /// Event triggers subcommands
+    Events {
+        #[command(subcommand)]
+        command: EventsCommands,
+    },
     /// Schema subcommands
     Schema {
         #[command(subcommand)]
         command: SchemaCommands,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EventsCommands {
+    /// Print the SQL that installs the event table, functions and triggers the configuration
+    /// needs (`events.install: manual`: apply it with your migrations)
+    Sql,
 }
 
 #[derive(Subcommand, Debug)]
@@ -337,6 +349,22 @@ async fn run(
             );
             return Ok(());
         }
+        Some(Commands::Events {
+            command: EventsCommands::Sql,
+        }) => {
+            let client = pool.get().await?;
+            let catalog = CatalogInspector::new(&client)
+                .inspect_schemas_with_config(&schemas, &config)
+                .await?;
+            match graphpg::events::install::install_sql(&config.events, &catalog, schemas[0]) {
+                Ok(sql) => println!("{sql}"),
+                Err(problems) => {
+                    eprintln!("{}", problems.join("\n"));
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
         Some(Commands::Advise) => {
             let client = pool.get().await?;
             let inspector = CatalogInspector::new(&client);
@@ -537,6 +565,65 @@ async fn run(
                 watched.refresh_replicas().await;
             }
         });
+    }
+
+    // Event triggers: install or check, then deliver and schedule
+    if config.events.active() {
+        use graphpg::config::models::EventInstall;
+        let catalog = state.current_catalog();
+        let (mut client, connection) =
+            tokio_postgres::connect(&secrets.database_url, tokio_postgres::NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        match config.events.install {
+            EventInstall::Auto => {
+                if let Err(err) = graphpg::events::install::install(
+                    &mut client,
+                    &config.events,
+                    &catalog,
+                    &config.database.schemas,
+                    &state.default_schema,
+                )
+                .await
+                {
+                    eprintln!("{err}");
+                    std::process::exit(1);
+                }
+                tracing::info!(
+                    triggers = config.events.triggers.len(),
+                    schedules = config.events.schedules.len(),
+                    "event triggers installed"
+                );
+            }
+            EventInstall::Manual => {
+                let missing = graphpg::events::install::check(
+                    &client,
+                    &config.events,
+                    &catalog,
+                    &state.default_schema,
+                )
+                .await
+                .unwrap_or_else(|e| vec![e]);
+                if !missing.is_empty() {
+                    let report = format!(
+                        "event triggers are not installed (events.install: manual); missing: {}. Apply `graphpg events sql` with your migrations.",
+                        missing.join(", ")
+                    );
+                    if mode == Mode::Prod {
+                        eprintln!("{report}");
+                        std::process::exit(1);
+                    }
+                    tracing::warn!("{report}");
+                }
+            }
+        }
+        graphpg::events::worker::start(
+            state.clone(),
+            config.events.clone(),
+            secrets.database_url.clone(),
+        );
+        graphpg::events::scheduler::start(state.clone(), config.events.clone());
     }
 
     if config.reload.enabled {

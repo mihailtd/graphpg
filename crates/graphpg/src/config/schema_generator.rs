@@ -264,6 +264,67 @@ impl ConfigSchemaGenerator {
                 "additionalProperties": false
             }),
         );
+        let duration = |d: &str| json!({ "type": "string", "description": format!("{d}, with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`") });
+        let webhook = |extra: Value| {
+            let mut props = json!({
+                "url": { "type": "string", "pattern": "^https?://", "description": "The endpoint the event is POSTed to as JSON" },
+                "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Headers added to every request (values may read ${NAME})" },
+                "secret": { "type": "string", "description": "Standard Webhooks signing secret: whsec_<base64>, or any text" },
+                "timeout": duration("How long a request may take (default 10s)"),
+                "retry": {
+                    "type": "object",
+                    "properties": {
+                        "max_attempts": { "type": ["integer", "string"], "minimum": 1, "description": "Deliveries attempted at most (default 10)" },
+                        "backoff": duration("Wait before the second attempt, doubled for each further one (default 10s)"),
+                        "max_backoff": duration("Longest wait between attempts (default 1h)")
+                    },
+                    "additionalProperties": false
+                }
+            });
+            if let (Some(p), Value::Object(e)) = (props.as_object_mut(), extra) {
+                p.extend(e);
+            }
+            json!({ "type": "object", "properties": props, "required": ["url"], "additionalProperties": false })
+        };
+        let mut trigger = webhook(json!({
+            "table": { "type": "string", "description": "The table, `table` or `schema.table`" },
+            "operations": { "type": "array", "items": { "enum": ["insert", "update", "delete"] }, "description": "The changes that raise an event (default: all)" },
+            "columns": { "type": "array", "items": { "type": "string" }, "description": "Updates raise an event only when one of these columns changes" }
+        }));
+        trigger["required"] = json!(["table", "url"]);
+        let schedule = webhook(json!({
+            "cron": { "type": "string", "description": "5-field cron in UTC (`0 3 * * *`), or @hourly, @daily, @weekly, @monthly. Without it, only events scheduled from SQL are sent" },
+            "payload": { "description": "The `payload` member of the event" },
+            "catch_up": { "enum": ["latest", "none"], "description": "Slots missed while no instance ran: the most recent one, or none (default latest)" }
+        }));
+        let name_key = "^[a-z_][a-z0-9_]{0,39}$";
+        settings.insert(
+            "events".to_string(),
+            json!({
+                "type": "object",
+                "description": "Event triggers: webhooks on row changes (captured in the change's transaction) and on schedules",
+                "properties": {
+                    "enabled": Self::switch_described("Capture and deliver events (default true; nothing happens without triggers or schedules)"),
+                    "schema": { "type": "string", "description": "The schema of graphpg's event table and functions (default graphpg_events)" },
+                    "install": { "enum": ["auto", "manual"], "description": "auto: install at startup; manual: only check (`graphpg events sql` prints the DDL)" },
+                    "triggers": { "type": "object", "propertyNames": { "pattern": name_key }, "additionalProperties": trigger },
+                    "schedules": { "type": "object", "propertyNames": { "pattern": name_key }, "additionalProperties": schedule },
+                    "delivery": {
+                        "type": "object",
+                        "properties": {
+                            "concurrency": { "type": ["integer", "string"], "minimum": 1, "description": "Requests in flight at once, per instance (default 4)" },
+                            "batch": { "type": ["integer", "string"], "minimum": 1, "description": "Events claimed at a time (default 50)" },
+                            "poll": duration("Longest wait for new events without a notification (default 5s)"),
+                            "lease": duration("How long a claimed event is held before another instance may deliver it (default 60s)"),
+                            "retention": duration("Delivered events are deleted after (default 7d)"),
+                            "dead_retention": duration("Dead events are deleted after (default 30d)")
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                "additionalProperties": false
+            }),
+        );
         settings.insert(
             "reload".to_string(),
             json!({

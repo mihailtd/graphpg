@@ -692,68 +692,172 @@ impl OpenApiGenerator {
             operations.sort();
             operations.dedup();
             for op in operations {
-                let (old, new, what) = match op {
-                    EventOperation::Insert => (
-                        json!({ "type": "null" }),
-                        schema_ref(name),
-                        "A row was inserted",
-                    ),
-                    EventOperation::Update => {
-                        (schema_ref(name), schema_ref(name), "A row was updated")
-                    }
-                    EventOperation::Delete => (
-                        schema_ref(name),
-                        json!({ "type": "null" }),
-                        "A row was deleted",
-                    ),
-                };
+                let component = Self::change_event_component(name, op, schemas);
                 let event = format!("{name}.{}", op.as_str());
-                let mut capitalized = op.as_str().to_string();
-                capitalized[..1].make_ascii_uppercase();
-                let component = format!("{name}{capitalized}Event");
-                schemas.insert(
-                    component.clone(),
-                    json!({
-                        "type": "object",
-                        "description": format!("{what} in `{name}`: the row as it was (`old`) and as it is (`new`)"),
-                        "properties": {
-                            "id": { "type": "string", "format": "uuid", "description": "Identifies the event, the same on every delivery attempt" },
-                            "createdAt": { "type": "string", "format": "date-time", "description": "When the change was committed" },
-                            "table": {
-                                "type": "object",
-                                "properties": { "schema": { "type": "string" }, "name": { "type": "string", "const": name } },
-                                "required": ["schema", "name"]
-                            },
-                            "op": { "type": "string", "const": op.as_str() },
-                            "old": old,
-                            "new": new
-                        },
-                        "required": ["id", "createdAt", "table", "op", "old", "new"]
-                    }),
-                );
+                let what = Self::change_event_what(op);
                 let description = match &events.description {
                     Some(text) => format!("{what} in `{name}`. {text}"),
                     None => format!("{what} in `{name}`."),
                 };
                 webhooks.insert(
                     event.clone(),
+                    Self::webhook_operation(
+                        &format!("{event} event"),
+                        &description,
+                        &format!("webhook_{name}_{}", op.as_str()),
+                        schema_ref(&component),
+                    ),
+                );
+            }
+        }
+        // Event triggers (`events.triggers`): what is really sent, one webhook per trigger
+        if config.events.enabled {
+            for (trigger, t) in &config.events.triggers {
+                let bare = t.table.rsplit('.').next().unwrap_or(&t.table);
+                let Some(table) = tables.iter().find(|tb| {
+                    tb.name == bare
+                        && (!t.table.contains('.')
+                            || t.table == format!("{}.{}", tb.schema, tb.name))
+                }) else {
+                    continue;
+                };
+                let mut operations: Vec<EventOperation> = t.operations.clone();
+                operations.sort();
+                operations.dedup();
+                let refs: Vec<Value> = operations
+                    .iter()
+                    .map(|op| schema_ref(&Self::change_event_component(&table.name, *op, schemas)))
+                    .collect();
+                let ops: Vec<&str> = operations.iter().map(|o| o.as_str()).collect();
+                let body = if refs.len() == 1 {
+                    refs[0].clone()
+                } else {
+                    json!({ "oneOf": refs, "discriminator": { "propertyName": "op" } })
+                };
+                webhooks.insert(
+                    trigger.clone(),
+                    Self::webhook_operation(
+                        &format!("{trigger} event trigger"),
+                        &format!(
+                            "Sent when `{}` rows change ({}), signed per Standard Webhooks (`webhook-id`, `webhook-timestamp`, `webhook-signature`). Delivered at least once: the event `id` is the same on every attempt.",
+                            table.name,
+                            ops.join(", ")
+                        ),
+                        &format!("event_{trigger}"),
+                        body,
+                    ),
+                );
+            }
+            if !config.events.schedules.is_empty() {
+                schemas.insert(
+                    "ScheduleEvent".to_string(),
                     json!({
-                        "post": {
-                            "summary": format!("{event} event"),
-                            "description": description,
-                            "operationId": format!("webhook_{name}_{}", op.as_str()),
-                            "requestBody": { "required": true, "content": {
-                                "application/json": { "schema": schema_ref(&component) }
-                            } },
-                            "responses": {
-                                "2XX": { "description": "The event was received: any 2xx acknowledges it" }
-                            }
-                        }
+                        "type": "object",
+                        "description": "An event of a schedule: a cron slot, or one scheduled from SQL",
+                        "properties": {
+                            "id": { "type": "string", "format": "uuid", "description": "Identifies the event, the same on every delivery attempt" },
+                            "createdAt": { "type": "string", "format": "date-time" },
+                            "schedule": { "type": "string", "description": "The schedule's name" },
+                            "scheduledFor": { "type": ["string", "null"], "format": "date-time", "description": "The cron slot; null for an event scheduled from SQL" },
+                            "payload": { "description": "The schedule's `payload`, or the one given to `schedule()`" }
+                        },
+                        "required": ["id", "createdAt", "schedule", "scheduledFor", "payload"]
                     }),
+                );
+            }
+            for (name, s) in &config.events.schedules {
+                let when = match &s.cron {
+                    Some(cron) => {
+                        format!("on the schedule `{cron}` (UTC), and when scheduled from SQL")
+                    }
+                    None => "when scheduled from SQL (`schedule()`)".to_string(),
+                };
+                webhooks.insert(
+                    name.clone(),
+                    Self::webhook_operation(
+                        &format!("{name} schedule"),
+                        &format!(
+                            "Sent {when}, signed per Standard Webhooks. Delivered at least once."
+                        ),
+                        &format!("schedule_{name}"),
+                        schema_ref("ScheduleEvent"),
+                    ),
                 );
             }
         }
         webhooks
+    }
+
+    fn change_event_what(op: crate::config::models::EventOperation) -> &'static str {
+        use crate::config::models::EventOperation;
+        match op {
+            EventOperation::Insert => "A row was inserted",
+            EventOperation::Update => "A row was updated",
+            EventOperation::Delete => "A row was deleted",
+        }
+    }
+
+    /// The payload component of a change of `table` (`<table><Op>Event`), added once.
+    fn change_event_component(
+        name: &str,
+        op: crate::config::models::EventOperation,
+        schemas: &mut serde_json::Map<String, Value>,
+    ) -> String {
+        use crate::config::models::EventOperation;
+        let mut capitalized = op.as_str().to_string();
+        capitalized[..1].make_ascii_uppercase();
+        let component = format!("{name}{capitalized}Event");
+        if schemas.contains_key(&component) {
+            return component;
+        }
+        let (old, new) = match op {
+            EventOperation::Insert => (json!({ "type": "null" }), schema_ref(name)),
+            EventOperation::Update => (schema_ref(name), schema_ref(name)),
+            EventOperation::Delete => (schema_ref(name), json!({ "type": "null" })),
+        };
+        let what = Self::change_event_what(op);
+        schemas.insert(
+            component.clone(),
+            json!({
+                "type": "object",
+                "description": format!("{what} in `{name}`: the row as it was (`old`) and as it is (`new`)"),
+                "properties": {
+                    "id": { "type": "string", "format": "uuid", "description": "Identifies the event, the same on every delivery attempt" },
+                    "createdAt": { "type": "string", "format": "date-time", "description": "When the change was committed" },
+                    "table": {
+                        "type": "object",
+                        "properties": { "schema": { "type": "string" }, "name": { "type": "string", "const": name } },
+                        "required": ["schema", "name"]
+                    },
+                    "op": { "type": "string", "const": op.as_str() },
+                    "old": old,
+                    "new": new
+                },
+                "required": ["id", "createdAt", "table", "op", "old", "new"]
+            }),
+        );
+        component
+    }
+
+    fn webhook_operation(
+        summary: &str,
+        description: &str,
+        operation_id: &str,
+        body: Value,
+    ) -> Value {
+        json!({
+            "post": {
+                "summary": summary,
+                "description": description,
+                "operationId": operation_id,
+                "requestBody": { "required": true, "content": {
+                    "application/json": { "schema": body }
+                } },
+                "responses": {
+                    "2XX": { "description": "The event was received: any 2xx acknowledges it" }
+                }
+            }
+        })
     }
 
     fn generate_table_paths(
@@ -2691,6 +2795,37 @@ mod tests {
     use super::*;
     use crate::catalog::models::{ColumnMetadata, RelationKind, TableMetadata};
     use crate::catalog::DatabaseCatalog;
+
+    #[test]
+    fn event_triggers_and_schedules_are_documented_as_webhooks() {
+        let catalog = users_catalog();
+        let config = Config::from_yaml(
+            "events:\n  triggers:\n    user_changed:\n      table: users\n      operations: [insert, update]\n      url: https://hooks.test/u\n  schedules:\n    nightly:\n      cron: '0 3 * * *'\n      url: https://hooks.test/n\n",
+        )
+        .unwrap();
+        let doc = OpenApiGenerator::generate(&catalog, &config);
+        let body = &doc["webhooks"]["user_changed"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"];
+        assert_eq!(
+            body["oneOf"],
+            json!([
+                { "$ref": "#/components/schemas/usersInsertEvent" },
+                { "$ref": "#/components/schemas/usersUpdateEvent" }
+            ])
+        );
+        assert!(doc["components"]["schemas"]["usersUpdateEvent"]["properties"]["old"].is_object());
+        assert_eq!(
+            doc["webhooks"]["nightly"]["post"]["requestBody"]["content"]["application/json"]
+                ["schema"]["$ref"],
+            "#/components/schemas/ScheduleEvent"
+        );
+        // Off, nothing is documented
+        let mut off = config.clone();
+        off.events.enabled = false;
+        assert!(OpenApiGenerator::generate(&catalog, &off)
+            .get("webhooks")
+            .is_none());
+    }
 
     #[test]
     fn rate_limits_are_documented_only_when_on() {

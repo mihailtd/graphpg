@@ -797,6 +797,30 @@ impl SqlCompiler {
         )
     }
 
+    /// The JSON of a row read from `table_alias` (see [`QueryPlanner::plan_row`]), and the
+    /// joins it needs after the `FROM` item.
+    ///
+    /// [`QueryPlanner::plan_row`]: crate::planner::QueryPlanner::plan_row
+    pub fn row_json(
+        table_alias: &str,
+        fields: &[SelectedField],
+        polymorphism: Option<&RowPolymorphism>,
+        plan: &OperationPlan,
+        params: &mut Vec<String>,
+    ) -> (String, String) {
+        let mut scope = JoinScope::default();
+        let obj = Self::row_object(
+            table_alias,
+            fields,
+            polymorphism,
+            "Empty",
+            &mut scope,
+            plan,
+            params,
+        );
+        (obj, scope.sql)
+    }
+
     /// Compiles a PgSelect step to `SELECT <json> AS data FROM ...`.
     ///
     /// Used both as a root-level scalar subquery (wrapped in parens) and as the body of a

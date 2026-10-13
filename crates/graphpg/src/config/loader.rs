@@ -222,6 +222,7 @@ impl Config {
             problems.extend(config.telemetry.problems());
             problems.extend(config.graphql.persisted_queries.problems());
             problems.extend(config.reload.problems());
+            problems.extend(config.events.problems());
             if !problems.is_empty() {
                 let problems = if m == mode {
                     problems

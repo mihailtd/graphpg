@@ -45,6 +45,7 @@ Metric names follow the [OpenTelemetry semantic conventions](https://opentelemet
 | `db_client_connection_pending_requests` | `db.client.connection.pending_requests` | gauge | `db_client_connection_pool_name` |
 | `graphpg_planning_duration_seconds` | `graphpg.planning.duration` | histogram | `graphpg_api` (`graphql`, `rest`): planning and compiling into SQL, on cache misses |
 | `graphpg_cache_requests_total` | `graphpg.cache.requests` | counter | `graphpg_cache_name` (`document`, `operation`), `graphpg_cache_result` (`hit`, `miss`) |
+| `graphpg_event_deliveries_total` | `graphpg.event.deliveries` | counter | `graphpg_event_trigger` (the trigger or schedule), `graphpg_event_outcome` (`delivered`, `retry`, `dead`, `unknown`); see [event triggers](events.md) |
 | `graphpg_build_info` | | gauge | `version` |
 | `process_start_time_seconds` | | gauge | |
 

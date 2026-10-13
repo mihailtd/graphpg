@@ -100,7 +100,7 @@ pub fn start_reload_listener(database_url: String, channel: String, state: Arc<S
         });
     }
 
-    tokio::spawn(listen(database_url, channel, tx));
+    tokio::spawn(listen(database_url, channel, "schema reload requests", tx));
 
     tokio::spawn(async move {
         while let Some(source) = rx.recv().await {
@@ -114,10 +114,12 @@ pub fn start_reload_listener(database_url: String, channel: String, state: Arc<S
     });
 }
 
-/// Keeps a connection listening on `channel`, reconnecting after failures.
-async fn listen(
+/// Keeps a connection listening on `channel`, reconnecting after failures, and sends
+/// `"NOTIFY"` on `tx` for each notification (also used by the event delivery worker).
+pub(crate) async fn listen(
     database_url: String,
     channel: String,
+    what: &'static str,
     tx: tokio::sync::mpsc::Sender<&'static str>,
 ) {
     let mut backoff = Duration::from_secs(1);
@@ -137,7 +139,7 @@ async fn listen(
                                 let _ = notified_tx.send(()).await;
                             }
                             Err(e) => {
-                                tracing::warn!(error = %e, "schema reload listener disconnected");
+                                tracing::warn!(error = %e, "the listener for {what} disconnected");
                                 break;
                             }
                             _ => {}
@@ -146,7 +148,7 @@ async fn listen(
                 });
                 match client.batch_execute(&format!("LISTEN {channel}")).await {
                     Ok(()) => {
-                        tracing::info!(%channel, "listening for schema reload requests (NOTIFY {channel})");
+                        tracing::info!(%channel, "listening for {what} (NOTIFY {channel})");
                         backoff = Duration::from_secs(1);
                         while notified.recv().await.is_some() {
                             if tx.send("NOTIFY").await.is_err() {
@@ -154,11 +156,11 @@ async fn listen(
                             }
                         }
                     }
-                    Err(e) => tracing::warn!(error = %e, "schema reload listener cannot LISTEN"),
+                    Err(e) => tracing::warn!(error = %e, "the listener for {what} cannot LISTEN"),
                 }
                 driver.abort();
             }
-            Err(e) => tracing::warn!(error = %e, "schema reload listener cannot connect"),
+            Err(e) => tracing::warn!(error = %e, "the listener for {what} cannot connect"),
         }
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);

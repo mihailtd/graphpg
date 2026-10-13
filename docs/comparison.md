@@ -43,7 +43,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Partial results (one root field failing alone) | Yes (root fields run apart only after a failure; `onError`) | Yes (per field) | No (one statement fails the request) |
 | Persisted queries and allow-lists | Yes (APQ, Apollo and Code Generator manifests, allow-list) | Yes (`@grafserv/persisted`) | Yes (allow-lists) |
 | Multi-database joins | Through PostgreSQL foreign data wrappers, in one statement ([guide](foreign-data.md)) | Yes, across sources | Yes |
-| Event triggers / webhooks | No | No (use a job queue) | Yes |
+| Event triggers / webhooks | Yes: captured in the change's transaction, Standard Webhooks signatures, retries and dead letter, cron schedules ([events](events.md)) | No (use a job queue) | Yes |
 | REST endpoints | Yes ([see below](#compared-with-postgrest)) | No | Yes (REST endpoints from saved queries) |
 | Admin console / schema editor | GraphiQL and Scalar only | Ruru IDE | Full web console |
 | Live schema reload on DDL changes | Yes (`--mode dev`) | Watch mode | Console and metadata API |
@@ -52,7 +52,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 ### When something else fits better
 
 - You need data from **APIs and services** (not databases) in a single query: Hasura or PostGraphile. Other databases and files reach graphpg through [foreign data wrappers](foreign-data.md).
-- You need **subscriptions**, **event triggers** or an **admin console**: Hasura.
+- You need **subscriptions** or an **admin console**: Hasura.
 - You want to **rewrite how the schema is generated** (naming, field shapes, custom plugins): PostGraphile.
 
 ## Compared with PostgREST

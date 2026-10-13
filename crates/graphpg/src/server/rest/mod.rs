@@ -530,7 +530,7 @@ fn column_field(
     }
 }
 
-fn column_fields(catalog: &DatabaseCatalog, table: &TableMetadata) -> Vec<RequestField> {
+pub(crate) fn column_fields(catalog: &DatabaseCatalog, table: &TableMetadata) -> Vec<RequestField> {
     table
         .visible_columns()
         .map(|c| column_field(catalog, table, c))
