@@ -51,6 +51,9 @@ struct JoinScope {
     sql: String,
     joined: HashSet<String>,
     laterals: HashMap<StepId, String>,
+    /// A placeholder for the parent rows' source (`(SELECT ...)`), filled in once it is
+    /// built: batched relations (`JoinCondition::batch`) select their parents' keys from it.
+    parent_rows: Option<String>,
 }
 
 impl JoinScope {
@@ -701,6 +704,99 @@ impl SqlCompiler {
         from
     }
 
+    /// The children of every parent at once (`JoinCondition::batch`): rows whose key is
+    /// `= ANY` the parents' keys (read from `parent_rows`, the parents' source), numbered per
+    /// parent and trimmed to the page, grouped by the key into `__k` and `data`. One query
+    /// for all parents, where a foreign data wrapper ships the key list to the remote side
+    /// (`postgres_fdw`: `WHERE fk = ANY ($1)`), instead of one per parent.
+    fn batched_body(
+        step: &Step,
+        parent_rows: &str,
+        plan: &OperationPlan,
+        params: &mut Vec<String>,
+    ) -> String {
+        let Step::PgSelect {
+            schema,
+            table,
+            table_alias,
+            fields,
+            where_conditions,
+            filter_expr,
+            join_condition: Some(join),
+            limit,
+            offset,
+            order_by,
+            polymorphism,
+            ..
+        } = step
+        else {
+            unreachable!("batched_body called on a step that is not a batched list");
+        };
+        let (child_column, parent_column) = &join.columns[0];
+        let key = col(table_alias, child_column);
+        let mut where_clauses = vec![format!(
+            "{key} = ANY (ARRAY(SELECT {} FROM {parent_rows} _p))",
+            col("_p", parent_column)
+        )];
+        for cond in where_conditions {
+            where_clauses.push(Self::where_clause(table_alias, cond, params));
+        }
+        if let Some(f) = filter_expr {
+            let f_sql = Self::compile_filter_expr(f, params);
+            if !f_sql.is_empty() {
+                where_clauses.push(f_sql);
+            }
+        }
+        let where_sql = Self::where_sql(&where_clauses);
+        let order_sql = order_by
+            .as_ref()
+            .map(|o| format!(" ORDER BY {o}"))
+            .unwrap_or_default();
+        // Per parent: the rows after `offset`, at most `limit` of them
+        let rn = format!("{table_alias}.\"__rn\"");
+        let mut page = Vec::new();
+        if let Some(o) = offset {
+            page.push(format!("{rn} > {}", Self::bind_count(params, *o)));
+        }
+        if let Some(l) = limit {
+            let upto = match offset {
+                Some(o) => format!(
+                    "{} + {}",
+                    Self::bind_count(params, *o),
+                    Self::bind_count(params, *l)
+                ),
+                None => Self::bind_count(params, *l),
+            };
+            page.push(format!("{rn} <= {upto}"));
+        }
+        let page_sql = Self::where_sql(&page);
+        let from = Self::from_item(schema, table, table_alias, None);
+        let inner = format!(
+            "SELECT * FROM (SELECT {table_alias}.*, row_number() OVER (PARTITION BY {key}{order_sql}) AS \"__rn\" FROM {from}{where_sql}) {table_alias}{page_sql}"
+        );
+
+        // Relations of these rows batch against them in turn
+        let token = format!("\u{1}rows:{table_alias}\u{1}");
+        let mut scope = JoinScope {
+            parent_rows: Some(token.clone()),
+            ..JoinScope::default()
+        };
+        let obj = Self::row_object(
+            table_alias,
+            fields,
+            polymorphism.as_ref(),
+            "Empty",
+            &mut scope,
+            plan,
+            params,
+        );
+        let laterals_sql = scope.sql.replace(&token, &format!("({inner})"));
+        format!(
+            "SELECT {key} AS \"__k\", {} AS data FROM ({inner}) {table_alias}{laterals_sql} GROUP BY {key}",
+            Self::json_array_agg(&obj, &format!(" ORDER BY {rn}"), "")
+        )
+    }
+
     /// Compiles a PgSelect step to `SELECT <json> AS data FROM ...`.
     ///
     /// Used both as a root-level scalar subquery (wrapped in parens) and as the body of a
@@ -748,7 +844,12 @@ impl SqlCompiler {
             }
         }
 
-        let mut scope = JoinScope::default();
+        // A list's rows are the parents of batched relations: their source fills the token
+        let token = format!("\u{1}rows:{table_alias}\u{1}");
+        let mut scope = JoinScope {
+            parent_rows: (!*is_single).then(|| token.clone()),
+            ..JoinScope::default()
+        };
         let obj = Self::row_object(
             table_alias,
             fields,
@@ -795,6 +896,7 @@ impl SqlCompiler {
             let inner = format!(
                 "SELECT {table_alias}.*{rn_col} FROM {from}{where_sql}{order_sql}{limit_sql}{offset_sql}"
             );
+            let laterals_sql = laterals_sql.replace(&token, &format!("({inner})"));
             format!(
                 "SELECT {} AS data FROM ({inner}) {table_alias}{laterals_sql}",
                 Self::json_array_agg(&obj, &agg_order, "")
@@ -1225,6 +1327,35 @@ impl SqlCompiler {
                     "CASE WHEN {} IS NULL THEN NULL ELSE {obj} END",
                     col(table_alias, &join.columns[0].0)
                 );
+            }
+        }
+        if let (
+            Step::PgSelect {
+                is_single: false,
+                join_condition: Some(join),
+                tree: None,
+                ..
+            },
+            Some(parent_rows),
+        ) = (step, scope.parent_rows.clone())
+        {
+            if join.batch && join.junction.is_none() && join.columns.len() == 1 {
+                let alias = match scope.laterals.get(&step_id) {
+                    Some(alias) => alias.clone(),
+                    None => {
+                        let alias = format!("_lat{}", scope.laterals.len());
+                        let body = Self::batched_body(step, &parent_rows, plan, params);
+                        let (_, parent_column) = &join.columns[0];
+                        // No outer reference under a root list: planned as a plain join
+                        scope.sql.push_str(&format!(
+                            " LEFT JOIN LATERAL ({body}) {alias} ON {alias}.\"__k\" = {}",
+                            col(&join.parent_alias, parent_column)
+                        ));
+                        scope.laterals.insert(step_id, alias.clone());
+                        alias
+                    }
+                };
+                return format!("coalesce({alias}.data, '[]'::json)");
             }
         }
         let alias = match scope.laterals.get(&step_id) {
