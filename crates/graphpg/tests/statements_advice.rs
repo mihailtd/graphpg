@@ -125,3 +125,65 @@ async fn slow_operations_first_with_the_index_they_lack() {
     let fast = &report.operations[position(by_id)];
     assert!(fast.suggestions.is_empty(), "{fast:#?}");
 }
+
+/// In dev mode the report is served at `/debug/statements`; prod has no such route.
+#[tokio::test]
+async fn dev_mode_serves_the_report() {
+    if !common::with_extensions(&["pg_stat_statements"]).await {
+        return;
+    }
+    let catalog_for = |mode| async move {
+        let config = Config::parse("", mode, &|_| None).unwrap();
+        let catalog = CatalogInspector::new(&client().await)
+            .inspect_schema_with_config("public", &config)
+            .await
+            .unwrap();
+        create_router(Arc::new(
+            ServerState::new(
+                create_pool(common::db_url(), 1).unwrap(),
+                SchemaBuilder::build(&catalog).unwrap(),
+                catalog,
+                "public".to_string(),
+                DebugOptions::default(),
+            )
+            .with_config(config)
+            .with_mode(mode),
+        ))
+    };
+    let get = |app: axum::Router| async move {
+        let res = app
+            .oneshot(
+                Request::get("/debug/statements?top=5")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = res.status();
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        (status, body)
+    };
+
+    let (status, body) = get(catalog_for(graphpg::config::Mode::Dev).await).await;
+    let report: Value = serde_json::from_slice(&body).unwrap();
+    if status == axum::http::StatusCode::SERVICE_UNAVAILABLE {
+        // pg_stat_statements created but not preloaded: the reason, not a failure
+        assert!(
+            report["error"]
+                .as_str()
+                .unwrap()
+                .contains("pg_stat_statements"),
+            "{report}"
+        );
+        return;
+    }
+    assert_eq!(status, axum::http::StatusCode::OK, "{report}");
+    assert!(
+        report["operations"].as_array().unwrap().len() <= 5,
+        "{report}"
+    );
+    assert!(report.get("hypopg").is_some(), "{report}");
+
+    let (status, _) = get(catalog_for(graphpg::config::Mode::Prod).await).await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+}

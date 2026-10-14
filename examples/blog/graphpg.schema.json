@@ -1,322 +1,76 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Engine configuration",
-  "description": "Changes to the generated GraphQL schema, keyed by database object name",
+  "title": "graphpg configuration",
+  "description": "One file for every environment: shared settings, then `dev:` and `prod:` blocks for what differs. Strings may read the environment: ${NAME} or ${NAME:-default} (quote them inside [] and {})",
   "type": "object",
   "properties": {
-    "version": {
-      "type": "string",
-      "enum": [
-        "1.0"
-      ],
-      "description": "Configuration format version"
+    "server": {
+      "$ref": "#/$defs/settings.server"
     },
-    "entities": {
-      "type": "object",
-      "description": "Tables, views, materialized views and foreign tables",
-      "properties": {
-        "authors": {
-          "$ref": "#/$defs/entity_authors"
-        },
-        "comments": {
-          "$ref": "#/$defs/entity_comments"
-        },
-        "post_tags": {
-          "$ref": "#/$defs/entity_post_tags"
-        },
-        "posts": {
-          "$ref": "#/$defs/entity_posts"
-        },
-        "tags": {
-          "$ref": "#/$defs/entity_tags"
-        }
-      },
-      "additionalProperties": false
-    },
-    "functions": {
-      "type": "object",
-      "description": "Table-valued and computed-column functions",
-      "properties": {
-        "popular_tags": {
-          "type": "object",
-          "description": "Function `popular_tags`",
-          "properties": {
-            "field_name": {
-              "type": "string",
-              "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
-              "description": "Root Query field name"
-            },
-            "description": {
-              "type": "string",
-              "description": "Field description"
-            },
-            "deprecated": {
-              "type": "string",
-              "description": "Deprecate the function's fields, with this reason"
-            },
-            "omit": {
-              "type": "boolean",
-              "description": "Remove the root field"
-            }
-          },
-          "additionalProperties": false
-        },
-        "posts_excerpt": {
-          "type": "object",
-          "description": "Computed column `posts_excerpt` of `posts`",
-          "properties": {
-            "field_name": {
-              "type": "string",
-              "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
-              "description": "Field name on the table's type"
-            },
-            "description": {
-              "type": "string",
-              "description": "Field description"
-            },
-            "omit": {
-              "type": "boolean",
-              "description": "Remove the field"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    "types": {
-      "type": "object",
-      "description": "Enum and composite types (CHECK-closed text columns as <table>.<column>)",
-      "properties": {
-        "post_status": {
-          "type": "object",
-          "description": "Enum type `post_status`",
-          "properties": {
-            "type_name": {
-              "type": "string",
-              "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
-              "description": "GraphQL enum type name"
-            },
-            "description": {
-              "type": "string"
-            },
-            "values": {
-              "type": "object",
-              "properties": {
-                "draft": {
-                  "type": "string",
-                  "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
-                  "description": "GraphQL value for `draft`"
-                },
-                "published": {
-                  "type": "string",
-                  "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
-                  "description": "GraphQL value for `published`"
-                },
-                "archived": {
-                  "type": "string",
-                  "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
-                  "description": "GraphQL value for `archived`"
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    "extensions": {
-      "type": "object",
-      "description": "Objects owned by extensions are hidden unless their extension is exposed",
-      "properties": {
-        "expose": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": [
-              "*",
-              "pg_trgm",
-              "plpgsql"
-            ]
-          },
-          "uniqueItems": true,
-          "description": "Extensions whose tables, views and functions are exposed (\"*\": all)"
-        }
-      },
-      "additionalProperties": false
-    },
-    "search": {
-      "type": "object",
-      "description": "Search root fields return the best matches, without pagination",
-      "properties": {
-        "default_limit": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Hits returned without `first` (default 10)"
-        },
-        "max_limit": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Largest accepted `first` (default 50)"
-        }
-      },
-      "additionalProperties": false
-    },
-    "schemas": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "uniqueItems": true,
-      "description": "Database schemas to inspect, the first being the default (DATABASE_SCHEMAS overrides; else DATABASE_SCHEMA, else app_public)"
-    },
-    "federation": {
-      "type": "object",
-      "description": "Apollo Federation subgraph mode",
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "version": {
-          "type": "string",
-          "description": "Federation spec version (default v2.3)"
-        }
-      },
-      "additionalProperties": false
-    },
-    "rbac": {
-      "type": "object",
-      "description": "Prune the GraphQL schema to what a PostgreSQL role may access",
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "role": {
-          "type": "string",
-          "description": "Role whose privileges are inspected (default: the connected user)"
-        }
-      },
-      "additionalProperties": false
+    "database": {
+      "$ref": "#/$defs/settings.database"
     },
     "auth": {
-      "type": "object",
-      "description": "Authentication with OAuth 2.0 access tokens (`Authorization: Bearer <token>`), whose claims set the PostgreSQL role and the settings Row-Level Security policies read. Off by default. Environment: AUTH_ENABLED, AUTH_ISSUER, AUTH_AUDIENCE, AUTH_JWKS_URI, AUTH_JWT_SECRET",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "description": "Whether requests are authenticated (AUTH_ENABLED)"
-        },
-        "issuer": {
-          "type": "string",
-          "format": "uri",
-          "description": "Authorization server issuer: tokens' `iss` must equal it; signing keys are discovered from its metadata (AUTH_ISSUER)"
-        },
-        "audience": {
-          "description": "This API's identifier(s): tokens' `aud` must contain one (AUTH_AUDIENCE)",
-          "oneOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "minItems": 1
-            }
-          ]
-        },
-        "jwks_uri": {
-          "type": "string",
-          "format": "uri",
-          "description": "JSON Web Key Set URL, when not discovered from the issuer (AUTH_JWKS_URI)"
-        },
-        "secret": {
-          "type": "string",
-          "description": "Shared secret for HMAC-signed tokens instead of a key set; `env:NAME` reads it from the environment; at least 32 bytes (AUTH_JWT_SECRET)"
-        },
-        "algorithms": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": [
-              "RS256",
-              "RS384",
-              "RS512",
-              "PS256",
-              "PS384",
-              "PS512",
-              "ES256",
-              "ES384",
-              "EdDSA",
-              "HS256",
-              "HS384",
-              "HS512"
-            ]
-          },
-          "uniqueItems": true,
-          "description": "Accepted signature algorithms (default: the asymmetric ones, or HS256 with `secret`)"
-        },
-        "token_type": {
-          "type": "string",
-          "description": "Required `typ` header, e.g. `at+jwt` (RFC 9068); unchecked when unset"
-        },
-        "leeway_seconds": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Clock skew tolerated for `exp` and `nbf` (default 30)"
-        },
-        "roles": {
-          "type": "object",
-          "description": "The PostgreSQL roles requests run as; tokens never choose one (their claims are data for RLS policies)",
-          "properties": {
-            "authenticated": {
-              "type": "string",
-              "description": "Role of requests with a valid token; unset, the engine's database user"
-            },
-            "anonymous": {
-              "type": "string",
-              "description": "Role of requests without a token; unset, they are rejected (401)"
-            }
-          },
-          "additionalProperties": false
-        },
-        "session_variables": {
-          "type": "object",
-          "description": "Settings a request's claims are written to",
-          "properties": {
-            "claims_setting": {
-              "allOf": [
-                {
-                  "type": "string",
-                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
-                }
-              ],
-              "description": "Setting holding every claim as JSON (default `request.jwt.claims`)"
-            },
-            "prefix": {
-              "type": "string",
-              "description": "Prefix of a setting per top-level claim (default `request.jwt.claim.`; empty: none)"
-            },
-            "mappings": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "string",
-                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
-              },
-              "description": "Claim (name or dot-separated path) -> setting name"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
+      "$ref": "#/$defs/settings.auth"
     },
-    "graphiql": {
-      "type": "boolean",
-      "description": "Serve the GraphiQL IDE at /graphiql, for development and pre-production (default false; GRAPHIQL overrides)"
+    "rbac": {
+      "$ref": "#/$defs/settings.rbac"
+    },
+    "debug": {
+      "$ref": "#/$defs/settings.debug"
+    },
+    "graphql": {
+      "$ref": "#/$defs/settings.graphql"
+    },
+    "openapi": {
+      "$ref": "#/$defs/settings.openapi"
+    },
+    "rest": {
+      "$ref": "#/$defs/settings.rest"
+    },
+    "watch": {
+      "$ref": "#/$defs/settings.watch"
+    },
+    "events": {
+      "$ref": "#/$defs/settings.events"
+    },
+    "reload": {
+      "$ref": "#/$defs/settings.reload"
+    },
+    "export": {
+      "$ref": "#/$defs/settings.export"
+    },
+    "entities": {
+      "$ref": "#/$defs/settings.entities"
+    },
+    "functions": {
+      "$ref": "#/$defs/settings.functions"
+    },
+    "types": {
+      "$ref": "#/$defs/settings.types"
+    },
+    "extensions": {
+      "$ref": "#/$defs/settings.extensions"
+    },
+    "limits": {
+      "$ref": "#/$defs/settings.limits"
+    },
+    "errors": {
+      "$ref": "#/$defs/settings.errors"
+    },
+    "telemetry": {
+      "$ref": "#/$defs/settings.telemetry"
+    },
+    "search": {
+      "$ref": "#/$defs/settings.search"
+    },
+    "dev": {
+      "$ref": "#/$defs/mode",
+      "description": "Settings that differ in dev mode (`--mode dev`), merged over the ones above"
+    },
+    "prod": {
+      "$ref": "#/$defs/mode",
+      "description": "Settings that differ in prod mode (the default), merged over the ones above"
     }
   },
   "additionalProperties": false,
@@ -494,6 +248,30 @@
                   "$ref": "#/$defs/column"
                 }
               ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "events": {
+          "type": "object",
+          "description": "Change events of the table (event triggers), described as OpenAPI webhooks",
+          "properties": {
+            "operations": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "insert",
+                  "update",
+                  "delete"
+                ]
+              },
+              "uniqueItems": true,
+              "description": "Row changes that raise an event (default: all)"
+            },
+            "description": {
+              "type": "string",
+              "description": "What the events of the table mean"
             }
           },
           "additionalProperties": false
@@ -701,6 +479,30 @@
           },
           "additionalProperties": false
         },
+        "events": {
+          "type": "object",
+          "description": "Change events of the table (event triggers), described as OpenAPI webhooks",
+          "properties": {
+            "operations": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "insert",
+                  "update",
+                  "delete"
+                ]
+              },
+              "uniqueItems": true,
+              "description": "Row changes that raise an event (default: all)"
+            },
+            "description": {
+              "type": "string",
+              "description": "What the events of the table mean"
+            }
+          },
+          "additionalProperties": false
+        },
         "foreign_keys": {
           "type": "object",
           "description": "Relation fields by constraint name; other names declare virtual foreign keys",
@@ -888,6 +690,30 @@
                   "$ref": "#/$defs/column"
                 }
               ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "events": {
+          "type": "object",
+          "description": "Change events of the table (event triggers), described as OpenAPI webhooks",
+          "properties": {
+            "operations": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "insert",
+                  "update",
+                  "delete"
+                ]
+              },
+              "uniqueItems": true,
+              "description": "Row changes that raise an event (default: all)"
+            },
+            "description": {
+              "type": "string",
+              "description": "What the events of the table mean"
             }
           },
           "additionalProperties": false
@@ -1140,6 +966,30 @@
           },
           "additionalProperties": false
         },
+        "events": {
+          "type": "object",
+          "description": "Change events of the table (event triggers), described as OpenAPI webhooks",
+          "properties": {
+            "operations": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "insert",
+                  "update",
+                  "delete"
+                ]
+              },
+              "uniqueItems": true,
+              "description": "Row changes that raise an event (default: all)"
+            },
+            "description": {
+              "type": "string",
+              "description": "What the events of the table mean"
+            }
+          },
+          "additionalProperties": false
+        },
         "foreign_keys": {
           "type": "object",
           "description": "Relation fields by constraint name; other names declare virtual foreign keys",
@@ -1326,6 +1176,30 @@
           },
           "additionalProperties": false
         },
+        "events": {
+          "type": "object",
+          "description": "Change events of the table (event triggers), described as OpenAPI webhooks",
+          "properties": {
+            "operations": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "insert",
+                  "update",
+                  "delete"
+                ]
+              },
+              "uniqueItems": true,
+              "description": "Row changes that raise an event (default: all)"
+            },
+            "description": {
+              "type": "string",
+              "description": "What the events of the table mean"
+            }
+          },
+          "additionalProperties": false
+        },
         "foreign_keys": {
           "type": "object",
           "description": "Relation fields by constraint name; other names declare virtual foreign keys",
@@ -1394,6 +1268,1239 @@
             ],
             "additionalProperties": false
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.server": {
+      "type": "object",
+      "description": "The HTTP listener",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Address to listen on (default 0.0.0.0)"
+        },
+        "port": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "description": "Port to listen on (default 4000)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.database": {
+      "type": "object",
+      "description": "The PostgreSQL connection, the schemas to expose and the read replicas",
+      "properties": {
+        "pool_size": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "description": "Connections in the pool (default 10)"
+        },
+        "schemas": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Database schemas to expose, the first being the default (default app_public)"
+        },
+        "sql_comments": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Append a sqlcommenter comment to every statement (default true)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.auth": {
+      "type": "object",
+      "description": "Authentication with OAuth 2.0 access tokens (`Authorization: Bearer <token>`), whose claims set the PostgreSQL role and the settings Row-Level Security policies read. Off by default",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Whether requests are authenticated (default false)"
+        },
+        "issuer": {
+          "type": "string",
+          "format": "uri",
+          "description": "Authorization server issuer: tokens' `iss` must equal it; signing keys are discovered from its metadata"
+        },
+        "audience": {
+          "description": "This API's identifier(s): tokens' `aud` must contain one",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "jwks_uri": {
+          "type": "string",
+          "format": "uri",
+          "description": "JSON Web Key Set URL, when not discovered from the issuer"
+        },
+        "algorithms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "RS256",
+              "RS384",
+              "RS512",
+              "PS256",
+              "PS384",
+              "PS512",
+              "ES256",
+              "ES384",
+              "EdDSA",
+              "HS256",
+              "HS384",
+              "HS512"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Accepted signature algorithms (default: the asymmetric ones, or HS256 with `secret`)"
+        },
+        "token_type": {
+          "type": "string",
+          "description": "Required `typ` header, e.g. `at+jwt` (RFC 9068); unchecked when unset"
+        },
+        "leeway_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Clock skew tolerated for `exp` and `nbf` (default 30)"
+        },
+        "roles": {
+          "type": "object",
+          "description": "The PostgreSQL roles requests run as; tokens never choose one (their claims are data for RLS policies)",
+          "properties": {
+            "authenticated": {
+              "type": "string",
+              "description": "Role of requests with a valid token; unset, the engine's database user"
+            },
+            "anonymous": {
+              "type": "string",
+              "description": "Role of requests without a token; unset, they are rejected (401)"
+            }
+          },
+          "additionalProperties": false
+        },
+        "session_variables": {
+          "type": "object",
+          "description": "Settings a request's claims are written to",
+          "properties": {
+            "claims_setting": {
+              "allOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+                }
+              ],
+              "description": "Setting holding every claim as JSON (default `request.jwt.claims`)"
+            },
+            "prefix": {
+              "type": "string",
+              "description": "Prefix of a setting per top-level claim (default `request.jwt.claim.`; empty: none)"
+            },
+            "mappings": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+              },
+              "description": "Claim (name or dot-separated path) -> setting name"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.rbac": {
+      "type": "object",
+      "description": "Prune the generated APIs to what a PostgreSQL role may access",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "string"
+          ]
+        },
+        "role": {
+          "type": "string",
+          "description": "Role whose privileges are inspected (default: the connected user)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.debug": {
+      "type": "object",
+      "description": "Diagnostics added to responses. Never enable them in production",
+      "properties": {
+        "sql": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Include the generated SQL in the response `extensions`"
+        },
+        "explain": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Include PostgreSQL's EXPLAIN (ANALYZE) output of every statement"
+        },
+        "statements": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve GET /debug/statements: the most expensive operations so far (pg_stat_statements), with the indexes they lack. On in dev mode; dev only"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.graphql": {
+      "type": "object",
+      "description": "The GraphQL API",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve the GraphQL API at /graphql (default true)"
+        },
+        "ui": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve the GraphiQL IDE at /graphiql (default: on in dev mode, off in prod)"
+        },
+        "federation": {
+          "type": "object",
+          "description": "Apollo Federation subgraph mode",
+          "properties": {
+            "enabled": {
+              "type": [
+                "boolean",
+                "string"
+              ]
+            },
+            "version": {
+              "type": "string",
+              "description": "Federation spec version (default v2.3)"
+            }
+          },
+          "additionalProperties": false
+        },
+        "persisted_queries": {
+          "type": "object",
+          "description": "Operations sent by hash (`extensions.persistedQuery.sha256Hash`) or manifest id (`documentId`), and the allow-list",
+          "properties": {
+            "enabled": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "Accept persisted queries; off, a request naming one gets PERSISTED_QUERY_NOT_SUPPORTED (default false)"
+            },
+            "automatic": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "Automatic persisted queries: a hash sent with its text registers it in memory (default true; ignored with allow_list)"
+            },
+            "manifest": {
+              "type": "string",
+              "description": "JSON file of known operations: an Apollo persisted query manifest or a map of ids to texts"
+            },
+            "allow_list": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "Run only the manifest's operations (default false)"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.openapi": {
+      "type": "object",
+      "description": "The REST API and its OpenAPI description",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve the REST API at /rest (default true)"
+        },
+        "ui": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve the Scalar API reference at /scalar (default: on in dev mode, off in prod)"
+        },
+        "spec": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve the OpenAPI 3.1 document at `path` (default: on in dev mode, off in prod)"
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to serve the OpenAPI document at (default: /openapi.json)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.rest": {
+      "type": "object",
+      "description": "Alias for openapi: the REST API and its OpenAPI description",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve the REST API at /rest (default true)"
+        },
+        "ui": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve the Scalar API reference at /scalar (default: on in dev mode, off in prod)"
+        },
+        "spec": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve the OpenAPI 3.1 document at `path` (default: on in dev mode, off in prod)"
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to serve the OpenAPI document at (default: /openapi.json)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.watch": {
+      "type": "object",
+      "description": "Schema watching on DDL changes and auto-export",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Re-introspect on DDL changes (default: on in dev mode, off in prod)"
+        },
+        "export": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "On each schema change, write the export files (default true)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.events": {
+      "type": "object",
+      "description": "Event triggers: webhooks on row changes (captured in the change's transaction) and on schedules",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Capture and deliver events (default true; nothing happens without triggers or schedules)"
+        },
+        "schema": {
+          "type": "string",
+          "description": "The schema of graphpg's event table and functions (default graphpg_events)"
+        },
+        "install": {
+          "enum": [
+            "auto",
+            "manual"
+          ],
+          "description": "auto: install at startup; manual: only check (`graphpg events sql` prints the DDL)"
+        },
+        "triggers": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z_][a-z0-9_]{0,39}$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "pattern": "^https?://",
+                "description": "The endpoint the event is POSTed to as JSON"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Headers added to every request (values may read ${NAME})"
+              },
+              "secret": {
+                "type": "string",
+                "description": "Standard Webhooks signing secret: whsec_<base64>, or any text"
+              },
+              "timeout": {
+                "type": "string",
+                "description": "How long a request may take (default 10s), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+              },
+              "retry": {
+                "type": "object",
+                "properties": {
+                  "max_attempts": {
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "minimum": 1,
+                    "description": "Deliveries attempted at most (default 10)"
+                  },
+                  "backoff": {
+                    "type": "string",
+                    "description": "Wait before the second attempt, doubled for each further one (default 10s), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+                  },
+                  "max_backoff": {
+                    "type": "string",
+                    "description": "Longest wait between attempts (default 1h), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "table": {
+                "type": "string",
+                "description": "The table, `table` or `schema.table`"
+              },
+              "operations": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "insert",
+                    "update",
+                    "delete"
+                  ]
+                },
+                "description": "The changes that raise an event (default: all)"
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Updates raise an event only when one of these columns changes"
+              }
+            },
+            "required": [
+              "table",
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "schedules": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z_][a-z0-9_]{0,39}$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "pattern": "^https?://",
+                "description": "The endpoint the event is POSTed to as JSON"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Headers added to every request (values may read ${NAME})"
+              },
+              "secret": {
+                "type": "string",
+                "description": "Standard Webhooks signing secret: whsec_<base64>, or any text"
+              },
+              "timeout": {
+                "type": "string",
+                "description": "How long a request may take (default 10s), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+              },
+              "retry": {
+                "type": "object",
+                "properties": {
+                  "max_attempts": {
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "minimum": 1,
+                    "description": "Deliveries attempted at most (default 10)"
+                  },
+                  "backoff": {
+                    "type": "string",
+                    "description": "Wait before the second attempt, doubled for each further one (default 10s), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+                  },
+                  "max_backoff": {
+                    "type": "string",
+                    "description": "Longest wait between attempts (default 1h), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "cron": {
+                "type": "string",
+                "description": "5-field cron in UTC (`0 3 * * *`), or @hourly, @daily, @weekly, @monthly. Without it, only events scheduled from SQL are sent"
+              },
+              "payload": {
+                "description": "The `payload` member of the event"
+              },
+              "catch_up": {
+                "enum": [
+                  "latest",
+                  "none"
+                ],
+                "description": "Slots missed while no instance ran: the most recent one, or none (default latest)"
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "delivery": {
+          "type": "object",
+          "properties": {
+            "concurrency": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "minimum": 1,
+              "description": "Requests in flight at once, per instance (default 4)"
+            },
+            "batch": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "minimum": 1,
+              "description": "Events claimed at a time (default 50)"
+            },
+            "poll": {
+              "type": "string",
+              "description": "Longest wait for new events without a notification (default 5s), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+            },
+            "lease": {
+              "type": "string",
+              "description": "How long a claimed event is held before another instance may deliver it (default 60s), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+            },
+            "retention": {
+              "type": "string",
+              "description": "Delivered events are deleted after (default 7d), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+            },
+            "dead_retention": {
+              "type": "string",
+              "description": "Dead events are deleted after (default 30d), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.reload": {
+      "type": "object",
+      "description": "Schema reload without a restart, in any mode: on NOTIFY <channel> and SIGHUP. The configuration is the one the server started with",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Listen for reload requests (default true)"
+        },
+        "channel": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]{0,62}$",
+          "description": "The NOTIFY channel (default graphpg_reload)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.export": {
+      "type": "object",
+      "description": "Export paths for schema and configuration files",
+      "properties": {
+        "graphql": {
+          "type": "string",
+          "description": "Path to export GraphQL SDL schema (default schema.graphql)"
+        },
+        "subgraph": {
+          "type": "string",
+          "description": "Path to export Apollo Federation Subgraph SDL (default subgraph.graphql)"
+        },
+        "config_schema": {
+          "type": "string",
+          "description": "Path to export YAML config JSON schema (default graphpg.schema.json)"
+        },
+        "openapi": {
+          "type": "string",
+          "description": "Path to export the OpenAPI 3.1 document (default openapi.json; YAML for .yaml / .yml)"
+        },
+        "pin": {
+          "type": [
+            "string",
+            "boolean"
+          ],
+          "enum": [
+            "fail",
+            "warn",
+            "off",
+            true,
+            false
+          ],
+          "description": "At startup, compare the exported schema files with the schema the database generates now: `fail` (default in prod mode) refuses to start on drift, `warn` (default in dev mode) logs it, `off` does not check. Files that do not exist pin nothing."
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.entities": {
+      "type": "object",
+      "description": "Tables, views, materialized views and foreign tables, shared by every API",
+      "properties": {
+        "authors": {
+          "$ref": "#/$defs/entity_authors"
+        },
+        "comments": {
+          "$ref": "#/$defs/entity_comments"
+        },
+        "post_tags": {
+          "$ref": "#/$defs/entity_post_tags"
+        },
+        "posts": {
+          "$ref": "#/$defs/entity_posts"
+        },
+        "tags": {
+          "$ref": "#/$defs/entity_tags"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.functions": {
+      "type": "object",
+      "description": "Table-valued and computed-column functions",
+      "properties": {
+        "popular_tags": {
+          "type": "object",
+          "description": "Function `popular_tags`",
+          "properties": {
+            "field_name": {
+              "type": "string",
+              "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+              "description": "Root Query field name"
+            },
+            "description": {
+              "type": "string",
+              "description": "Field description"
+            },
+            "deprecated": {
+              "type": "string",
+              "description": "Deprecate the function's fields, with this reason"
+            },
+            "omit": {
+              "type": "boolean",
+              "description": "Remove the root field"
+            }
+          },
+          "additionalProperties": false
+        },
+        "posts_excerpt": {
+          "type": "object",
+          "description": "Computed column `posts_excerpt` of `posts`",
+          "properties": {
+            "field_name": {
+              "type": "string",
+              "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+              "description": "Field name on the table's type"
+            },
+            "description": {
+              "type": "string",
+              "description": "Field description"
+            },
+            "omit": {
+              "type": "boolean",
+              "description": "Remove the field"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.types": {
+      "type": "object",
+      "description": "Enum and composite types (CHECK-closed text columns as <table>.<column>)",
+      "properties": {
+        "post_status": {
+          "type": "object",
+          "description": "Enum type `post_status`",
+          "properties": {
+            "type_name": {
+              "type": "string",
+              "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+              "description": "GraphQL enum type name"
+            },
+            "description": {
+              "type": "string"
+            },
+            "values": {
+              "type": "object",
+              "properties": {
+                "draft": {
+                  "type": "string",
+                  "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                  "description": "GraphQL value for `draft`"
+                },
+                "published": {
+                  "type": "string",
+                  "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                  "description": "GraphQL value for `published`"
+                },
+                "archived": {
+                  "type": "string",
+                  "pattern": "^[_A-Za-z][_0-9A-Za-z]*$",
+                  "description": "GraphQL value for `archived`"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.extensions": {
+      "type": "object",
+      "description": "Objects owned by extensions are hidden unless their extension is exposed",
+      "properties": {
+        "expose": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "*",
+              "pg_trgm",
+              "plpgsql"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Extensions whose tables, views and functions are exposed (\"*\": all)"
+        },
+        "integrations": {
+          "type": "object",
+          "description": "What graphpg infers from the extensions the schema uses (docs/extensions.md): auto (default) or off, by integration",
+          "properties": {
+            "timescaledb": {
+              "enum": [
+                "auto",
+                "off"
+              ]
+            },
+            "pg_jsonschema": {
+              "enum": [
+                "auto",
+                "off"
+              ]
+            },
+            "pgmq": {
+              "enum": [
+                "auto",
+                "off"
+              ]
+            },
+            "pgvectorscale": {
+              "enum": [
+                "auto",
+                "off"
+              ]
+            },
+            "vectorchord": {
+              "enum": [
+                "auto",
+                "off"
+              ]
+            },
+            "pgroonga": {
+              "enum": [
+                "auto",
+                "off"
+              ]
+            },
+            "pg_stat_statements": {
+              "enum": [
+                "auto",
+                "off"
+              ]
+            },
+            "pg_duckdb": {
+              "enum": [
+                "auto",
+                "off"
+              ]
+            },
+            "postgres_fdw": {
+              "enum": [
+                "auto",
+                "off"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.limits": {
+      "type": "object",
+      "description": "Safety limits shared by the GraphQL and REST APIs, enforced on the plan",
+      "properties": {
+        "page_size": {
+          "type": "object",
+          "description": "Rows per page: `first` / `last`",
+          "properties": {
+            "default": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "minimum": 1,
+              "description": "Rows of a connection asked for neither `first` nor `last` (default 100)"
+            },
+            "max": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "minimum": 1,
+              "description": "Largest `first` / `last`, and the most rows of a list that has no page size (default 1000). A number, or `off` for no limit."
+            }
+          },
+          "additionalProperties": false
+        },
+        "depth": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "Deepest nesting of rows (default 10). A number, or `off` for no limit."
+        },
+        "cost": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "Largest estimated cost: the rows an operation reads (default 10000000). A number, or `off` for no limit."
+        },
+        "bulk_rows": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "Most rows one write inserts or an update or delete by filter affects, nested writes included (default 1000). A number, or `off` for no limit."
+        },
+        "require_filter": {
+          "type": "boolean",
+          "description": "GraphQL `update<Types>(where:)` and `delete<Types>(where:)` with no condition (every row) need `unfiltered: true`; REST always asks for it (default false)"
+        },
+        "groups": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "Most groups an aggregate request may return (default 10000). A number, or `off` for no limit."
+        },
+        "request_body_bytes": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "Largest request body in bytes (default 1048576). A number, or `off` for no limit."
+        },
+        "count_threshold": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "`Prefer: count=estimated` counts exactly up to this many estimated rows, and uses the planner estimate above (default 10000). A number, or `off` for no limit."
+        },
+        "statement_timeout": {
+          "type": "string",
+          "description": "`statement_timeout` of every connection, with a unit: `500ms`, `30s`, `2m`, `1h`; `off` for none (default 30s)"
+        },
+        "rate_limit": {
+          "type": "object",
+          "description": "Requests per client and minute over GraphQL and REST, per instance (off by default)",
+          "properties": {
+            "enabled": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "Limit request rates (default false)"
+            },
+            "anonymous": {
+              "type": "object",
+              "description": "Requests without a valid access token, by IP address (default 60 a minute)",
+              "properties": {
+                "requests_per_minute": {
+                  "type": [
+                    "integer",
+                    "string"
+                  ],
+                  "minimum": 1,
+                  "description": "Requests per minute. A number, or `off` for no limit."
+                },
+                "burst": {
+                  "type": [
+                    "integer",
+                    "string"
+                  ],
+                  "minimum": 1,
+                  "description": "Requests allowed at once (default: requests_per_minute)"
+                }
+              },
+              "required": [
+                "requests_per_minute"
+              ],
+              "additionalProperties": false
+            },
+            "authenticated": {
+              "type": "object",
+              "description": "Requests with a valid access token, by `key_claim` (default 600 a minute)",
+              "properties": {
+                "requests_per_minute": {
+                  "type": [
+                    "integer",
+                    "string"
+                  ],
+                  "minimum": 1,
+                  "description": "Requests per minute. A number, or `off` for no limit."
+                },
+                "burst": {
+                  "type": [
+                    "integer",
+                    "string"
+                  ],
+                  "minimum": 1,
+                  "description": "Requests allowed at once (default: requests_per_minute)"
+                }
+              },
+              "required": [
+                "requests_per_minute"
+              ],
+              "additionalProperties": false
+            },
+            "key_claim": {
+              "type": "string",
+              "description": "The claim naming a client (default sub)"
+            },
+            "trusted_proxies": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Addresses or CIDR ranges of proxies whose X-Forwarded-For names the client"
+            },
+            "max_clients": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "minimum": 1,
+              "description": "Clients tracked at most per instance (default 100000)"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.errors": {
+      "type": "object",
+      "description": "How database errors reach clients, over GraphQL and REST",
+      "properties": {
+        "detail": {
+          "enum": [
+            "masked",
+            "full"
+          ],
+          "description": "`masked` (default in prod) hides the database's message; `full` (default in dev) shows it"
+        },
+        "map": {
+          "type": "object",
+          "description": "SQLSTATE codes or constraint names -> the problem they become. A constraint name wins over a SQLSTATE. In prod a mapped error shows only its title",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 599,
+                "description": "HTTP status of the REST problem (default 400)"
+              },
+              "title": {
+                "type": "string",
+                "description": "Problem title (default: the status's reason phrase)"
+              },
+              "code": {
+                "type": "string",
+                "description": "Machine-readable code, `errors[].extensions.code` in GraphQL (default: the SQLSTATE)"
+              },
+              "type": {
+                "type": "string",
+                "description": "RFC 9457 problem type URI (default `about:blank`)"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.telemetry": {
+      "type": "object",
+      "description": "Logs, Prometheus metrics, traces and OpenTelemetry (OTLP) export, for Prometheus, an OpenTelemetry collector or the Grafana LGTM stack. Read at startup",
+      "properties": {
+        "service_name": {
+          "type": "string",
+          "description": "service.name of exported telemetry (default: OTEL_SERVICE_NAME, else graphpg)"
+        },
+        "logs": {
+          "type": "object",
+          "description": "Log lines on standard output",
+          "properties": {
+            "level": {
+              "type": "string",
+              "description": "Lowest level logged (`error`, `warn`, `info`, `debug`, `trace`) or a filter like `info,graphpg=debug`; RUST_LOG wins when set (default info)"
+            },
+            "format": {
+              "enum": [
+                "text",
+                "json"
+              ],
+              "description": "`text` (default) or `json`: one object per line, with the request's trace id"
+            }
+          },
+          "additionalProperties": false
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Prometheus metrics endpoint (text exposition format)",
+          "properties": {
+            "enabled": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "Serve metrics (default: on in dev mode, off in prod)"
+            },
+            "path": {
+              "type": "string",
+              "description": "Path of the endpoint (default /metrics)"
+            },
+            "listen": {
+              "type": "string",
+              "description": "Serve the endpoint on a listener of its own, like `0.0.0.0:9464`, instead of the API's port"
+            }
+          },
+          "additionalProperties": false
+        },
+        "traces": {
+          "type": "object",
+          "description": "One span per request, with planning, compilation and execution inside it",
+          "properties": {
+            "sample_ratio": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Share of new traces recorded (default 1); a request with a W3C traceparent follows the caller's decision"
+            }
+          },
+          "additionalProperties": false
+        },
+        "otlp": {
+          "type": "object",
+          "description": "Push traces, metrics and logs over OTLP/HTTP (protobuf)",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "description": "Base URL, like http://localhost:4318: signals go to /v1/traces, /v1/metrics and /v1/logs (default: OTEL_EXPORTER_OTLP_ENDPOINT, else no export)"
+            },
+            "headers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Headers of every export request, like Authorization (use ${NAME} for credentials)"
+            },
+            "traces": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "Export traces (default true)"
+            },
+            "metrics": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "Export metrics (default true)"
+            },
+            "logs": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "Export logs (default true)"
+            },
+            "interval": {
+              "type": "string",
+              "description": "How often metrics are pushed, with a unit: `10s`, `1m` (default 60s)"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings.search": {
+      "type": "object",
+      "description": "Search root fields return the best matches, without pagination",
+      "properties": {
+        "default_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hits returned without `first` (default 10)"
+        },
+        "max_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Largest accepted `first` (default 50)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mode": {
+      "type": "object",
+      "properties": {
+        "server": {
+          "$ref": "#/$defs/settings.server"
+        },
+        "database": {
+          "$ref": "#/$defs/settings.database"
+        },
+        "auth": {
+          "$ref": "#/$defs/settings.auth"
+        },
+        "rbac": {
+          "$ref": "#/$defs/settings.rbac"
+        },
+        "debug": {
+          "$ref": "#/$defs/settings.debug"
+        },
+        "graphql": {
+          "$ref": "#/$defs/settings.graphql"
+        },
+        "openapi": {
+          "$ref": "#/$defs/settings.openapi"
+        },
+        "rest": {
+          "$ref": "#/$defs/settings.rest"
+        },
+        "watch": {
+          "$ref": "#/$defs/settings.watch"
+        },
+        "events": {
+          "$ref": "#/$defs/settings.events"
+        },
+        "reload": {
+          "$ref": "#/$defs/settings.reload"
+        },
+        "export": {
+          "$ref": "#/$defs/settings.export"
+        },
+        "entities": {
+          "$ref": "#/$defs/settings.entities"
+        },
+        "functions": {
+          "$ref": "#/$defs/settings.functions"
+        },
+        "types": {
+          "$ref": "#/$defs/settings.types"
+        },
+        "extensions": {
+          "$ref": "#/$defs/settings.extensions"
+        },
+        "limits": {
+          "$ref": "#/$defs/settings.limits"
+        },
+        "errors": {
+          "$ref": "#/$defs/settings.errors"
+        },
+        "telemetry": {
+          "$ref": "#/$defs/settings.telemetry"
+        },
+        "search": {
+          "$ref": "#/$defs/settings.search"
         }
       },
       "additionalProperties": false

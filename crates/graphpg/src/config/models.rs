@@ -759,6 +759,11 @@ pub struct DebugConfig {
     /// Include PostgreSQL's `EXPLAIN (ANALYZE)` output of every statement.
     #[serde(default, deserialize_with = "switch")]
     pub explain: bool,
+    /// Serve `GET /debug/statements`: the most expensive operations so far, from
+    /// `pg_stat_statements`, with the indexes their plans lack (`graphpg advise --statements`).
+    /// On in `dev` mode.
+    #[serde(default, deserialize_with = "switch")]
+    pub statements: bool,
 }
 
 /// The GraphQL API.

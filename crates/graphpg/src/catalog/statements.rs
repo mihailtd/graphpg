@@ -17,7 +17,8 @@ const MIN_SCAN_COST: f64 = 1000.0;
 const MIN_GAIN: f64 = 0.1;
 
 /// graphpg's statements, the most expensive (total time) first.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StatementsReport {
     /// When `pg_stat_statements` was last reset: the numbers are since then.
     pub since: Option<String>,
@@ -27,7 +28,8 @@ pub struct StatementsReport {
 }
 
 /// The statements of one operation (a GraphQL operation, a REST route), summed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OperationStats {
     /// `query GetUsers`, `mutation CreateUser`, `GET /rest/users`.
     pub operation: String,
@@ -50,7 +52,8 @@ impl OperationStats {
 }
 
 /// An index a statement's plan lacks: a sequential scan filtering (or sorting) on its columns.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexSuggestion {
     /// `CREATE INDEX ON "app"."orders" ("status")`.
     pub sql: String,

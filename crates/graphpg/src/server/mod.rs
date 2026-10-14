@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod bulk;
 pub mod cache;
+pub mod debug;
 pub mod http;
 pub mod incremental;
 pub mod partial;

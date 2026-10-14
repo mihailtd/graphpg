@@ -181,7 +181,8 @@ impl ConfigSchemaGenerator {
                 "description": "Diagnostics added to responses. Never enable them in production",
                 "properties": {
                     "sql": Self::switch_described("Include the generated SQL in the response `extensions`"),
-                    "explain": Self::switch_described("Include PostgreSQL's EXPLAIN (ANALYZE) output of every statement")
+                    "explain": Self::switch_described("Include PostgreSQL's EXPLAIN (ANALYZE) output of every statement"),
+                    "statements": Self::switch_described("Serve GET /debug/statements: the most expensive operations so far (pg_stat_statements), with the indexes they lack. On in dev mode; dev only")
                 },
                 "additionalProperties": false
             }),
