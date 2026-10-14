@@ -13,7 +13,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Runtime | Rust, single binary | Node.js library and CLI | Haskell (v2); Rust (v3) |
 | Data sources | One PostgreSQL database, and what it reaches through foreign data wrappers (other databases, files) | PostgreSQL, plus other sources through plugins | Many databases and remote schemas |
 | Schema comes from | Database catalogs; optional YAML for API-level changes | Database catalogs; smart comments and plugins | Tracked tables and relationships in metadata |
-| Extension model | Configuration only | Plugin and inflection system | Metadata, actions, remote schemas |
+| Extension model | Configuration only; behavior in SQL, event triggers and federation ([why](extending.md)) | Plugin and inflection system | Metadata, actions, remote schemas |
 
 ### Features
 
