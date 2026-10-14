@@ -2051,12 +2051,6 @@
                 "off"
               ]
             },
-            "pgmq": {
-              "enum": [
-                "auto",
-                "off"
-              ]
-            },
             "pgvectorscale": {
               "enum": [
                 "auto",
@@ -2076,12 +2070,6 @@
               ]
             },
             "pg_stat_statements": {
-              "enum": [
-                "auto",
-                "off"
-              ]
-            },
-            "pg_duckdb": {
               "enum": [
                 "auto",
                 "off"

@@ -10,7 +10,6 @@ use tokio_postgres::NoTls;
 const EXTENSIONS: &[&str] = &[
     "timescaledb",
     "pg_jsonschema",
-    "pgmq",
     "vector",
     "vectorscale",
     "vchord",
@@ -43,8 +42,7 @@ async fn fixture(db: &tokio_postgres::Client) {
              settings jsonb CHECK (jsonb_matches_schema('{\"type\": \"object\"}', settings)));
          CREATE INDEX ON ext_used.docs USING diskann (embedding vector_cosine_ops);
          CREATE INDEX ON ext_used.docs USING vchordrq (embedding vector_l2_ops);
-         CREATE INDEX ON ext_used.docs USING pgroonga (body);
-         SELECT pgmq.create('ext_test_jobs') WHERE NOT EXISTS (SELECT 1 FROM pgmq.list_queues() WHERE queue_name = 'ext_test_jobs');",
+         CREATE INDEX ON ext_used.docs USING pgroonga (body);",
     )
     .await
     .unwrap();
@@ -81,12 +79,8 @@ async fn integrations_follow_use_and_can_be_switched_off() {
     assert!(has(Integration::Pgvectorscale, "1 index"), "{used:?}");
     assert!(has(Integration::VectorChord, "1 index"), "{used:?}");
     assert!(has(Integration::PgRoonga, "1 index"), "{used:?}");
-    assert!(
-        used.iter().any(|(i, _)| *i == Integration::Pgmq),
-        "{used:?}"
-    );
 
-    // Installed but not used by this schema: off (pgmq queues are database-wide)
+    // Installed but not used by this schema: off
     let unused = active("ext_unused", "{}").await.unwrap();
     for i in [
         Integration::TimescaleDb,

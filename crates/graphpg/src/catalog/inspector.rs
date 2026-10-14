@@ -197,7 +197,6 @@ impl<'a> CatalogInspector<'a> {
         self.inspect_check_enums(schema_names, catalog).await?;
         self.inspect_functions(schema_names, extensions, catalog)
             .await?;
-        self.inspect_pgmq(config, catalog).await?;
         self.inspect_value_types(catalog).await?;
 
         // Keys and relations the database cannot declare (views), and function mounts, feed
@@ -1245,151 +1244,6 @@ impl<'a> CatalogInspector<'a> {
              AND has_function_privilege(p.oid, 'EXECUTE') AND {}",
             not_extension_owned("pg_proc", "p.oid")
         );
-        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
-            [&schemas_vec, &extensions.all, &extensions.names];
-        let functions = self.read_functions(&filter, &params, catalog).await?;
-        catalog.functions.extend(functions);
-        Ok(())
-    }
-
-    /// pgmq queues as API (`extensions.pgmq.queues`): for each queue, pgmq's operations as
-    /// functions of their own, the queue's name fixed (`sendJobsMessage(message, headers,
-    /// delay)` calls `pgmq.send('jobs', ...)`), so both APIs serve them as they serve any
-    /// function, with GRANTs, limits and errors.
-    async fn inspect_pgmq(
-        &self,
-        config: &Config,
-        catalog: &mut DatabaseCatalog,
-    ) -> Result<(), CatalogError> {
-        use super::integrations::Integration;
-        let queues = &config.extensions.pgmq.queues;
-        if queues.is_empty() {
-            return Ok(());
-        }
-        let Some(active) = catalog.integration(Integration::Pgmq) else {
-            return Err(CatalogError::Config(vec![
-                "extensions.pgmq.queues: the pgmq extension is not installed, or its integration is off".to_string(),
-            ]));
-        };
-        let ext_schema = active.schema.clone();
-        let existing: Vec<String> = self
-            .client
-            .query(
-                &format!(
-                    "SELECT queue_name::text FROM {}.list_queues() ORDER BY 1",
-                    quote_ident(&ext_schema)
-                ),
-                &[],
-            )
-            .await?
-            .iter()
-            .map(|r| r.get(0))
-            .collect();
-        let wanted: Vec<String> = if queues.iter().any(|q| q == "*") {
-            existing.clone()
-        } else {
-            let unknown: Vec<String> = queues
-                .iter()
-                .filter(|q| !existing.contains(q))
-                .map(|q| {
-                    format!(
-                        "extensions.pgmq.queues: no queue `{q}` (pgmq.create('{q}') creates it)"
-                    )
-                })
-                .collect();
-            if !unknown.is_empty() {
-                return Err(CatalogError::Config(unknown));
-            }
-            queues.clone()
-        };
-        // One overload of each operation: positional, cast arguments pick the others when
-        // trailing optional ones are left out (`send(q, msg)`, `send(q, msg, headers)`, ...)
-        const OPERATIONS: [(&str, &str); 8] = [
-            (
-                "send",
-                "queue_name text, msg jsonb, headers jsonb, delay integer",
-            ),
-            (
-                "send_batch",
-                "queue_name text, msgs jsonb[], headers jsonb[], delay integer",
-            ),
-            (
-                "read",
-                "queue_name text, vt integer, qty integer, conditional jsonb",
-            ),
-            ("pop", "queue_name text, qty integer"),
-            ("delete", "queue_name text, msg_ids bigint[]"),
-            ("archive", "queue_name text, msg_ids bigint[]"),
-            ("set_vt", "queue_name text, msg_ids bigint[], vt integer"),
-            ("metrics", "queue_name text"),
-        ];
-        let signatures: Vec<String> = OPERATIONS
-            .iter()
-            .map(|(name, args)| format!("{name}({args})"))
-            .collect();
-        let schemas = vec![ext_schema.clone()];
-        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
-            [&schemas, &true, &signatures];
-        let pgmq = self
-            .read_functions(
-                "n.nspname = ANY($1) AND p.prokind = 'f' AND $2::bool
-                 AND p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' = ANY($3)
-                 AND has_function_privilege(p.oid, 'EXECUTE')",
-                &params,
-                catalog,
-            )
-            .await?;
-        for queue in &wanted {
-            let q = super::models::to_pascal_case(queue);
-            for f in &pgmq {
-                let (field, description, optional): (String, String, &[&str]) = match f.name.as_str() {
-                    "send" => (format!("send{q}Message"), format!("Sends a message to the `{queue}` queue (pgmq), visible after `delay` seconds; returns its id."), &["headers", "delay"]),
-                    "send_batch" => (format!("send{q}Messages"), format!("Sends messages to the `{queue}` queue (pgmq) at once; returns their ids."), &["headers", "delay"]),
-                    "read" => (format!("read{q}Messages"), format!("Reads up to `count` messages of the `{queue}` queue (pgmq), hiding them from other readers for `visibilityTimeout` seconds: delete or archive them before then, or they are read again."), &["conditional"]),
-                    "pop" => (format!("pop{q}Messages"), format!("Reads and deletes up to `count` messages of the `{queue}` queue (pgmq) at once: a message lost by the reader is lost."), &["count"]),
-                    "delete" => (format!("delete{q}Messages"), format!("Deletes messages of the `{queue}` queue (pgmq), acknowledging them; returns the ids deleted."), &[]),
-                    "archive" => (format!("archive{q}Messages"), format!("Moves messages of the `{queue}` queue (pgmq) to its archive, acknowledging them; returns the ids archived."), &[]),
-                    "set_vt" => (format!("set{q}MessagesVisibility"), format!("Hides messages of the `{queue}` queue (pgmq) for `visibilityTimeout` more seconds."), &[]),
-                    "metrics" => (format!("{}QueueMetrics", super::models::to_camel_case(queue)), format!("The length and message ages of the `{queue}` queue (pgmq)."), &[]),
-                    _ => continue,
-                };
-                let mut derived = f.clone();
-                if derived.arguments.is_empty() {
-                    continue;
-                }
-                let queue_arg = derived.arguments.remove(0);
-                derived.fixed_arguments = vec![(queue_arg, serde_json::json!(queue))];
-                for arg in &mut derived.arguments {
-                    arg.name = match arg.name.as_str() {
-                        "msg" => "message",
-                        "msgs" => "messages",
-                        "msg_ids" => "message_ids",
-                        "vt" => "visibility_timeout",
-                        "qty" => "count",
-                        other => other,
-                    }
-                    .to_string();
-                    arg.has_default |= optional.contains(&arg.name.as_str());
-                }
-                // Metrics only read
-                derived.volatile = f.name != "metrics";
-                derived.field_name = field;
-                derived.description = Some(description);
-                catalog.functions.push(derived);
-            }
-        }
-        Ok(())
-    }
-
-    /// The functions `filter` selects (a condition on `pg_proc p` and `pg_namespace n`, its
-    /// parameters `params`), read as [`inspect_functions`](Self::inspect_functions) reads them.
-    async fn read_functions(
-        &self,
-        filter: &str,
-        params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
-        catalog: &DatabaseCatalog,
-    ) -> Result<Vec<super::models::FunctionMetadata>, CatalogError> {
-        let mut functions = Vec::new();
         let fn_query = format!(
             "SELECT p.oid, p.proname::text, p.pronargs, p.pronargdefaults, p.proretset, p.provolatile::text,
                     t.typtype::text, t.typname::text, {TYPE_COLUMNS},
@@ -1421,13 +1275,15 @@ impl<'a> CatalogInspector<'a> {
              WHERE {filter}
              ORDER BY p.oid, a.ord"
         );
+        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
+            [&schemas_vec, &extensions.all, &extensions.names];
         let mut args_by_fn: HashMap<u32, Vec<tokio_postgres::Row>> = HashMap::new();
-        for row in self.client.query(&arg_query, params).await? {
+        for row in self.client.query(&arg_query, &params).await? {
             args_by_fn.entry(row.get(0)).or_default().push(row);
         }
 
         let mut seen = std::collections::HashSet::new();
-        for r in self.client.query(&fn_query, params).await? {
+        for r in self.client.query(&fn_query, &params).await? {
             let oid: u32 = r.get(0);
             let func_name: String = r.get(1);
             let fn_schema: String = r.get(19);
@@ -1571,10 +1427,9 @@ impl<'a> CatalogInspector<'a> {
                 None => String::new(),
             };
 
-            functions.push(super::models::FunctionMetadata {
+            catalog.functions.push(super::models::FunctionMetadata {
                 schema: fn_schema,
                 name: func_name,
-                fixed_arguments: Vec::new(),
                 arguments: in_args,
                 return_columns: ret_cols,
                 returns,
@@ -1592,7 +1447,7 @@ impl<'a> CatalogInspector<'a> {
                 deprecation: None,
             });
         }
-        Ok(functions)
+        Ok(())
     }
 
     /// Exclusive arcs: a `CHECK (num_nonnulls(a_id, b_id, ...) = 1)` over single-column

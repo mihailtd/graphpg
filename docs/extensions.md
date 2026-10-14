@@ -15,12 +15,10 @@ Beyond types and indexes, graphpg **integrates** with popular extensions: it inf
 | :--- | :--- | :--- | :--- |
 | `timescaledb` | TimescaleDB | a hypertable | [Fast totals, hypertables and continuous aggregates described, advice](#timescaledb) |
 | `pg_jsonschema` | pg_jsonschema | a `CHECK (jsonb_matches_schema(...))` | [The JSON Schema types the column](#pg_jsonschema) |
-| `pgmq` | pgmq | a queue, named in `extensions.pgmq.queues` | [Queues as API](#pgmq) |
 | `pgvectorscale` | pgvectorscale | a `diskann` index | [Semantic search on its indexes](#pgvectorscale-and-vectorchord) |
 | `vectorchord` | VectorChord | a `vchordrq` / `vchordg` index | [Semantic search on its indexes](#pgvectorscale-and-vectorchord) |
 | `pgroonga` | PGroonga | a `pgroonga` index | [Full-text search in any language](#pgroonga) |
 | `pg_stat_statements` | pg_stat_statements | (installed) | [`graphpg advise --statements`](#pg_stat_statements-and-hypopg) |
-| `pg_duckdb` | pg_duckdb | (installed) | (#175) |
 | `postgres_fdw` | postgres_fdw | a foreign table on a `postgres_fdw` server | [Keys imported from the remote catalog](foreign-data.md#keys-and-relations) |
 
 An extension that is installed but unused changes nothing.
@@ -65,30 +63,35 @@ settings jsonb NOT NULL CHECK (jsonb_matches_schema('{"type": "object", "require
 
 The constraint must be the call alone, on that column, with the schema as a literal. A check combining it with other conditions is documented, but does not type the column.
 
-## pgmq
+## Message queues (pgmq)
 
-[pgmq](https://github.com/pgmq/pgmq) is a message queue inside PostgreSQL. Name the queues to serve; sending and reading are writes, so none are served by default:
+[pgmq](https://github.com/pgmq/pgmq) is a message queue inside PostgreSQL. graphpg does not serve queues directly. Sending to a queue from the API would skip your rules: who may enqueue what, the validation of the message, and recording the job with the data it is about. Workers belong on the backend, where they use pgmq over a database connection.
 
-```yaml
-extensions:
-  pgmq:
-    queues: [jobs]          # or ["*"] for every queue
+Wrap the queue in a function of your own instead. graphpg serves it like any function, as a GraphQL mutation and `POST /rest/rpc/<name>`, with your validation and grants. The job and its message are written in the same transaction, so a rolled-back request enqueues nothing:
+
+```sql
+CREATE TABLE app.exports (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    format text NOT NULL CHECK (format IN ('csv', 'json')),
+    status text NOT NULL DEFAULT 'queued',      -- the worker updates it: progress for the UI
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE FUNCTION app.request_export(requested_format text) RETURNS app.exports
+LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    job app.exports;
+BEGIN
+    INSERT INTO app.exports (format) VALUES (requested_format) RETURNING * INTO job;
+    PERFORM pgmq.send('exports', jsonb_build_object('export_id', job.id));
+    RETURN job;
+END $$;
 ```
 
-Each queue's operations become functions of their own, so GraphQL and REST serve them like any function: GRANTs decide who may call them (with `rbac.enabled`, the API shows only what the role may do), and limits, errors and authentication apply. For the queue `jobs`:
+The API gets `requestExport(requestedFormat: String!): Export` (REST: `POST /rest/rpc/request_export`), which returns the job. A worker reads with `pgmq.read('exports', 30, 10)`, does the work, updates `app.exports.status`, and acknowledges with `pgmq.delete` or `pgmq.archive`. The UI reads the job's progress from `exports` through graphpg like any table.
 
-| GraphQL | REST | pgmq |
-| :--- | :--- | :--- |
-| `sendJobsMessage(message: JSON!, headers: JSON, delay: Int): [BigInt!]!` | `POST /rest/rpc/sendJobsMessage` | `send`: the id; visible after `delay` seconds |
-| `sendJobsMessages(messages: [JSON!]!, headers: [JSON!], delay: Int)` | `POST /rest/rpc/sendJobsMessages` | `send_batch` |
-| `readJobsMessages(visibilityTimeout: Int!, count: Int!, conditional: JSON)` | `POST /rest/rpc/readJobsMessages` | `read`: hides the messages for `visibilityTimeout` seconds |
-| `popJobsMessages(count: Int)` | `POST /rest/rpc/popJobsMessages` | `pop`: reads and deletes at once |
-| `deleteJobsMessages(messageIds: [BigInt!]!)` | `POST /rest/rpc/deleteJobsMessages` | `delete`: acknowledges |
-| `archiveJobsMessages(messageIds: [BigInt!]!)` | `POST /rest/rpc/archiveJobsMessages` | `archive`: acknowledges, keeping a copy |
-| `setJobsMessagesVisibility(messageIds: [BigInt!]!, visibilityTimeout: Int!)` | `POST /rest/rpc/setJobsMessagesVisibility` | `set_vt`: more time to process |
-| `jobsQueueMetrics` (a query) | `GET /rest/rpc/jobsQueueMetrics` | `metrics`: length and message ages |
-
-A message read and neither deleted nor archived within its visibility timeout is read again: process messages, then acknowledge them. A queue named in `queues` that does not exist stops the start.
+- The roles requests run as need `EXECUTE` on the function, and the function needs `USAGE` on the `pgmq` schema and access to its functions. Alternatively, make the function `SECURITY DEFINER` with a fixed `search_path`.
+- Push delivery, where PostgreSQL calls your endpoint when rows change or on a schedule, needs no extension: see [event triggers](events.md).
 
 ## pgvectorscale and VectorChord
 
