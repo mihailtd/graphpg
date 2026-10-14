@@ -1,0 +1,2 @@
+- **Renamed types are warned about**: when a table, composite type, enum or domain cannot take the type name derived from it (it is one of graphpg's own, or another schema's table has it), startup and `graphpg advise` say which name graphpg chose and the `type_name` setting that chooses another. A `type_name` naming one of graphpg's own types is refused.
+- **Exploratory load tests (k6)** in `benchmarks/explore`: `crawl.js`, `fuzz.js`, `writes.js` and `soak.js` generate their requests from any server's schema by introspection, and fail on any request the engine failed on.

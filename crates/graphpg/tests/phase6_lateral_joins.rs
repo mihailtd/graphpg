@@ -396,3 +396,57 @@ async fn test_same_foreign_key_is_joined_once() {
         })
     );
 }
+
+/// A row with many relations: the first ones are lateral joins, the rest scalar subqueries.
+/// As lateral joins only, PostgreSQL's planner searched the join orders of all of them (a FHIR
+/// `Patient` with its 95 to-many relations took 970 MB and 170 ms to plan); the results are
+/// the same either way.
+#[tokio::test]
+async fn test_many_relations_of_a_row_stay_cheap_to_plan() {
+    let (client, schema, catalog) = setup_test().await;
+    let fields: Vec<String> = (0..12)
+        .map(|i| format!("m{i}: messagesConnection(first: 2, orderBy: [ID_ASC]) {{ totalCount nodes {{ body }} }}"))
+        .collect();
+    let query = format!("query {{ forums {{ name {} }} }}", fields.join(" "));
+    let plan = plan_query(&schema, &catalog, &query);
+    let compiled = SqlCompiler::compile(&plan);
+    assert_eq!(
+        compiled.sql.matches("LEFT JOIN LATERAL").count(),
+        8,
+        "{}",
+        compiled.sql
+    );
+    let result = ExecutionEngine::execute(&client, &plan)
+        .await
+        .expect("query runs");
+    let forums = result["data"]["forums"].as_array().expect("forums");
+    assert!(!forums.is_empty());
+    for forum in forums {
+        // Every alias, lateral or subquery, reads the same rows
+        for i in 1..12 {
+            assert_eq!(forum[format!("m{i}")], forum["m0"], "{forum}");
+        }
+    }
+    assert!(forums
+        .iter()
+        .any(|f| f["m0"]["totalCount"].as_i64() > Some(0)));
+
+    // What PostgreSQL needs to plan it stays small
+    let params: Vec<&(dyn ToSql + Sync)> = compiled
+        .params
+        .iter()
+        .map(|p| p as &(dyn ToSql + Sync))
+        .collect();
+    let explain = client
+        .query_one(
+            &format!("EXPLAIN (MEMORY, FORMAT JSON) {}", compiled.sql),
+            &params,
+        )
+        .await
+        .expect("explain");
+    let plan: serde_json::Value = explain.get(0);
+    let planning_kb = plan[0]["Planning"]["Memory Used"]
+        .as_f64()
+        .expect("planning memory");
+    assert!(planning_kb < 50_000.0, "planning took {planning_kb} kB");
+}

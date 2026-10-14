@@ -14,6 +14,10 @@ Values, page sizes (`first`, `last`), `offset` and search limits are bound as pa
 
 After five executions of a statement, PostgreSQL may switch to a *generic plan*, which doesn't know the parameter values. It keeps planning per execution when the generic plan is estimated to cost more. That is usually the case for ordered, limited queries, because a generic plan must assume a much larger `LIMIT`. To force one behaviour, set `plan_cache_mode` (`auto`, `force_custom_plan` or `force_generic_plan`) for the database or graphpg's role.
 
+**Memory.** Each cached statement holds its plan in the connection's PostgreSQL backend: `database.statement_cache` (512 per connection by default; `0` for none) bounds them. A few hundred distinct operations, a typical application, fit. With very many distinct operations on a wide schema (a crawl of every field of 177 FHIR tables: 150,000 statements), the backends of a 20-connection pool held about 3.8 GB at 512, 2.7 GB at 64: lower it there, or lower `pool_size`. Each backend also caches the catalog of the tables it touched, around 100 MB per backend on that schema, whatever the cache size.
+
+**Many relations in one row.** Relations of a row are `LEFT JOIN LATERAL`s up to eight (PostgreSQL's `join_collapse_limit`), scalar subqueries past that: as joins, PostgreSQL's planner searched their join orders, and a row of a hundred relations took gigabytes and hundreds of milliseconds to plan. Both forms read a relation through its foreign key's index, once per parent row.
+
 ### Connections and pagination
 
 | To get | Do this at the database level |

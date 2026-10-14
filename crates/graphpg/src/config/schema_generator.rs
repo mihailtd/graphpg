@@ -650,6 +650,7 @@ impl ConfigSchemaGenerator {
             "description": "The PostgreSQL connection, the schemas to expose and the read replicas",
             "properties": {
                 "pool_size": { "type": ["integer", "string"], "description": "Connections in the pool (default 10)" },
+                "statement_cache": { "type": ["integer", "string"], "minimum": 0, "description": "Prepared statements each connection caches, 0 for none (default 512). Each holds its plan in the connection's PostgreSQL backend: lower it when very many distinct operations run on a wide schema" },
                 "schemas": {
                     "type": "array",
                     "items": { "type": "string" },

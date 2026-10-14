@@ -291,6 +291,20 @@ async fn tables_named_like_graphpgs_own_types_take_their_schemas_name() {
     );
     assert!(sdl.contains("type LiveTestPageInfo implements Node"));
     assert!(sdl.contains("\ntype Subscription {"), "the root type");
+    // Reported at startup: the name it would have had, the one it got, and how to choose one
+    let renamed = &state.current_catalog().renamed_types;
+    let subscription = renamed
+        .iter()
+        .find(|r| r.wanted == "Subscription")
+        .expect("reported");
+    assert_eq!(subscription.given, "LiveTestSubscription");
+    assert_eq!(
+        subscription.message(),
+        "the GraphQL type of table `live_test.subscriptions` would be `Subscription`, but `Subscription` is one of graphpg's own types: graphpg named it `LiveTestSubscription`. Choose its name in graphpg.yaml: `entities: { subscriptions: { type_name: <Name> } }`"
+    );
+    assert!(renamed
+        .iter()
+        .any(|r| r.wanted == "PageInfo" && r.given == "LiveTestPageInfo"));
     // Its fields keep their names, in Query and in Subscription
     let mut events = sse(
         &app,
@@ -840,4 +854,46 @@ async fn graphql_transport_ws_takes_apollo_routers_connection_params() {
         !owners.is_empty() && owners.iter().all(|o| *o == "alice"),
         "{owners:?}"
     );
+}
+
+#[tokio::test]
+async fn a_type_name_chosen_in_the_config_cannot_be_one_of_graphpgs_own() {
+    ensure_fixture().await;
+    let mut config = Config {
+        database: graphpg::config::DatabaseConfig {
+            schemas: vec!["live_test".to_string()],
+            ..Default::default()
+        },
+        ..Config::default()
+    };
+    config.entities.insert(
+        "subscriptions".to_string(),
+        serde_json::from_value(json!({ "type_name": "Subscription" })).unwrap(),
+    );
+    let c = client().await;
+    let err = CatalogInspector::new(&c)
+        .inspect_schema_with_config("live_test", &config)
+        .await
+        .expect_err("refused")
+        .to_string();
+    assert!(
+        err.contains(
+            "entities.subscriptions.type_name: `Subscription` is one of graphpg's own types"
+        ),
+        "{err}"
+    );
+    // A name of one's own: no rename, nothing reported
+    config.entities.insert(
+        "subscriptions".to_string(),
+        serde_json::from_value(json!({ "type_name": "Topic" })).unwrap(),
+    );
+    let catalog = CatalogInspector::new(&c)
+        .inspect_schema_with_config("live_test", &config)
+        .await
+        .unwrap();
+    assert!(!catalog
+        .renamed_types
+        .iter()
+        .any(|r| r.wanted == "Subscription"));
+    assert!(SchemaBuilder::generate_sdl(&catalog).contains("type Topic implements Node"));
 }

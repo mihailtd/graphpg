@@ -16,6 +16,10 @@ pub fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
+/// Relations of one row joined as `LEFT JOIN LATERAL` at most: the rest are scalar subqueries
+/// (PostgreSQL's own `join_collapse_limit`, past which its join search is what costs).
+const MAX_LATERALS: usize = 8;
+
 /// Quoted schema-qualified name: `"schema"."name"`.
 pub fn quote_qualified(schema: &str, name: &str) -> String {
     format!("{}.{}", quote_ident(schema), quote_ident(name))
@@ -1366,18 +1370,23 @@ impl SqlCompiler {
                 return format!("coalesce({alias}.data, '[]'::json)");
             }
         }
-        let alias = match scope.laterals.get(&step_id) {
-            Some(alias) => alias.clone(),
-            None => {
-                let alias = format!("_lat{}", scope.laterals.len());
-                let body = Self::compile_lateral_body(step, plan, params);
-                scope
-                    .sql
-                    .push_str(&format!(" LEFT JOIN LATERAL ({body}) {alias} ON true"));
-                scope.laterals.insert(step_id, alias.clone());
-                alias
-            }
-        };
+        if let Some(alias) = scope.laterals.get(&step_id) {
+            return format!("{alias}.data");
+        }
+        // Past MAX_LATERALS, a relation is a scalar subquery: the same loop per parent row
+        // through the relation's index, and NULL without a row, but outside the parent's join
+        // search. Lateral joins only, a row with many relations (a FHIR `Patient` has 95
+        // to-many ones) made PostgreSQL's planner search their join orders: 970 MB and 170 ms
+        // to plan 95. Below it, laterals execute a little faster (10% on typical queries).
+        if scope.laterals.len() >= MAX_LATERALS {
+            return format!("({})", Self::compile_lateral_body(step, plan, params));
+        }
+        let alias = format!("_lat{}", scope.laterals.len());
+        let body = Self::compile_lateral_body(step, plan, params);
+        scope
+            .sql
+            .push_str(&format!(" LEFT JOIN LATERAL ({body}) {alias} ON true"));
+        scope.laterals.insert(step_id, alias.clone());
         format!("{alias}.data")
     }
 

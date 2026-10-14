@@ -715,6 +715,11 @@ pub struct DatabaseConfig {
     /// Connections in the pool.
     #[serde(deserialize_with = "lenient", default = "default_pool_size")]
     pub pool_size: usize,
+    /// Prepared statements each connection caches (0: none). A cached statement skips
+    /// PostgreSQL's planning when an operation runs again, and holds its plan in the
+    /// connection's backend meanwhile.
+    #[serde(deserialize_with = "lenient", default = "default_statement_cache")]
+    pub statement_cache: usize,
     /// Schemas to expose, the first being the default schema (`app_public` when empty).
     #[serde(default)]
     pub schemas: Vec<String>,
@@ -726,6 +731,9 @@ pub struct DatabaseConfig {
 fn default_pool_size() -> usize {
     10
 }
+fn default_statement_cache() -> usize {
+    crate::execution::engine::MAX_CACHED_STATEMENTS
+}
 fn default_true() -> bool {
     true
 }
@@ -734,6 +742,7 @@ impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
             pool_size: default_pool_size(),
+            statement_cache: default_statement_cache(),
             schemas: Vec::new(),
             sql_comments: true,
         }
