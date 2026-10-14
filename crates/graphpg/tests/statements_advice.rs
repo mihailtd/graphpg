@@ -121,6 +121,20 @@ async fn slow_operations_first_with_the_index_they_lack() {
     let with_index = suggestion.cost_with_index.unwrap();
     assert!(with_index < suggestion.cost / 2.0, "{suggestion:?}");
 
+    // The dev-mode watcher's check: operations at or over a mean time
+    let slow = graphpg::catalog::statements::slow_operations(&db, &catalog, 0.0)
+        .await
+        .unwrap();
+    assert!(
+        slow.iter()
+            .any(|(o, _, calls)| o == &format!("query {by_status}") && *calls == 5),
+        "{slow:?}"
+    );
+    let none = graphpg::catalog::statements::slow_operations(&db, &catalog, 1e9)
+        .await
+        .unwrap();
+    assert!(none.is_empty(), "{none:?}");
+
     // The lookup by key uses the primary key: nothing to suggest
     let fast = &report.operations[position(by_id)];
     assert!(fast.suggestions.is_empty(), "{fast:#?}");

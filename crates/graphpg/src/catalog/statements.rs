@@ -83,20 +83,7 @@ pub async fn top_statements(
         .integration(Integration::PgStatStatements)
         .ok_or(StatementsError::NotInstalled)?;
     let ext = quote_ident(&pgss.schema);
-    let rows = client
-        .query(
-            &format!(
-                "SELECT query, calls, total_exec_time, rows FROM {ext}.pg_stat_statements
-                 WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
-                   AND query LIKE '%application=''graphpg''%'
-                   -- not the plans of earlier runs of this report
-                   AND query !~* '^\\s*EXPLAIN'
-                 ORDER BY total_exec_time DESC"
-            ),
-            &[],
-        )
-        .await
-        .map_err(StatementsError::Unreadable)?;
+    let mut operations = grouped_operations(client, &ext).await?;
     let since: Option<String> = client
         .query_opt(
             &format!("SELECT stats_reset::text FROM {ext}.pg_stat_statements_info"),
@@ -106,39 +93,6 @@ pub async fn top_statements(
         .ok()
         .flatten()
         .and_then(|r| r.get(0));
-
-    // Summed by operation, the statements of each kept (heaviest first)
-    let mut order: Vec<String> = Vec::new();
-    let mut by_operation: HashMap<String, (OperationStats, Vec<String>)> = HashMap::new();
-    for row in rows {
-        let query: String = row.get(0);
-        let Some(operation) = operation_label(&query) else {
-            continue;
-        };
-        let entry = by_operation.entry(operation.clone()).or_insert_with(|| {
-            order.push(operation.clone());
-            (
-                OperationStats {
-                    operation,
-                    calls: 0,
-                    total_ms: 0.0,
-                    rows: 0,
-                    statements: 0,
-                    suggestions: Vec::new(),
-                },
-                Vec::new(),
-            )
-        });
-        entry.0.calls += row.get::<_, i64>(1);
-        entry.0.total_ms += row.get::<_, f64>(2);
-        entry.0.rows += row.get::<_, i64>(3);
-        entry.0.statements += 1;
-        entry.1.push(query);
-    }
-    let mut operations: Vec<(OperationStats, Vec<String>)> = order
-        .into_iter()
-        .filter_map(|o| by_operation.remove(&o))
-        .collect();
     operations.sort_by(|a, b| b.0.total_ms.total_cmp(&a.0.total_ms));
     operations.truncate(top);
 
@@ -167,6 +121,79 @@ pub async fn top_statements(
         report.operations.push(stats);
     }
     Ok(report)
+}
+
+/// graphpg's statements in `pg_stat_statements` (schema `ext`, quoted), summed by operation,
+/// each with the text of its statements.
+async fn grouped_operations(
+    client: &Client,
+    ext: &str,
+) -> Result<Vec<(OperationStats, Vec<String>)>, StatementsError> {
+    let rows = client
+        .query(
+            &format!(
+                "SELECT query, calls, total_exec_time, rows FROM {ext}.pg_stat_statements
+                 WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+                   AND query LIKE '%application=''graphpg''%'
+                   -- not the plans of earlier runs of this report
+                   AND query !~* '^\\s*EXPLAIN'
+                 ORDER BY total_exec_time DESC"
+            ),
+            &[],
+        )
+        .await
+        .map_err(StatementsError::Unreadable)?;
+    // Summed by operation, the statements of each kept (heaviest first)
+    let mut order: Vec<String> = Vec::new();
+    let mut by_operation: HashMap<String, (OperationStats, Vec<String>)> = HashMap::new();
+    for row in rows {
+        let query: String = row.get(0);
+        let Some(operation) = operation_label(&query) else {
+            continue;
+        };
+        let entry = by_operation.entry(operation.clone()).or_insert_with(|| {
+            order.push(operation.clone());
+            (
+                OperationStats {
+                    operation,
+                    calls: 0,
+                    total_ms: 0.0,
+                    rows: 0,
+                    statements: 0,
+                    suggestions: Vec::new(),
+                },
+                Vec::new(),
+            )
+        });
+        entry.0.calls += row.get::<_, i64>(1);
+        entry.0.total_ms += row.get::<_, f64>(2);
+        entry.0.rows += row.get::<_, i64>(3);
+        entry.0.statements += 1;
+        entry.1.push(query);
+    }
+    let operations: Vec<(OperationStats, Vec<String>)> = order
+        .into_iter()
+        .filter_map(|o| by_operation.remove(&o))
+        .collect();
+    Ok(operations)
+}
+
+/// The operations whose mean execution time is at least `threshold_ms`: `(operation, mean ms,
+/// calls)`. Reads `pg_stat_statements` only (no plans), so it is cheap to run often.
+pub async fn slow_operations(
+    client: &Client,
+    catalog: &DatabaseCatalog,
+    threshold_ms: f64,
+) -> Result<Vec<(String, f64, i64)>, StatementsError> {
+    let pgss = catalog
+        .integration(Integration::PgStatStatements)
+        .ok_or(StatementsError::NotInstalled)?;
+    let operations = grouped_operations(client, &quote_ident(&pgss.schema)).await?;
+    Ok(operations
+        .into_iter()
+        .map(|(o, _)| (o.operation.clone(), o.mean_ms(), o.calls))
+        .filter(|(_, mean, _)| *mean >= threshold_ms)
+        .collect())
 }
 
 /// The operation a statement's sqlcommenter tags name: `query GetUsers`, `GET /rest/users`.

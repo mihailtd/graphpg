@@ -178,7 +178,7 @@ dev:                            # settings that differ in dev mode
   debug:
     sql: true                   # dev-only: generated SQL in response extensions (GraphQL), X-Debug-SQL header (REST)
     explain: true               # dev-only: EXPLAIN ANALYZE in response extensions (GraphQL), X-Debug-Explain header (REST)
-    statements: true            # dev-only, on in dev: GET /debug/statements, the most expensive operations and the indexes they lack
+    statements: true            # dev-only, on in dev: GET /debug/statements, the most expensive operations and the indexes they lack; a warning when an operation gets slow
 prod: {}                        # ... and in prod mode
 ```
 
