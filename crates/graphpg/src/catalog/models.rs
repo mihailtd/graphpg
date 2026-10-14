@@ -1140,9 +1140,20 @@ impl TableMetadata {
         !self.primary_key.is_empty() || self.lookup_keys().next().is_some()
     }
 
-    /// Plural of the type name: `Forums`, `Categories`, `Addresses`.
+    /// Plural of the type name: `Forums`, `Categories`, `Addresses`. A type that is its own
+    /// plural (`Evidence`, `Series`) takes its table's name when that differs (`evidences`), else
+    /// `List` (`SeriesList`), so names of many rows never equal those of one.
     pub fn plural_type_name(&self) -> String {
-        pluralize(&self.type_name)
+        let plural = pluralize(&self.type_name);
+        if plural != self.type_name {
+            return plural;
+        }
+        let table = to_pascal_case(&self.name);
+        if table != self.type_name {
+            table
+        } else {
+            format!("{}List", self.type_name)
+        }
     }
 }
 
@@ -1168,24 +1179,10 @@ pub fn conflict_key_value(key: &UniqueKey, columns: &[&ColumnMetadata]) -> Strin
         .join("_AND_")
 }
 
-/// English plural of a PascalCase name (of its last word).
+/// English plural of a PascalCase name (of its head noun): `Categories`, `People`,
+/// `EpisodesOfCare`.
 pub fn pluralize(name: &str) -> String {
-    let lower = name.to_ascii_lowercase();
-    let consonant_y = lower.ends_with('y')
-        && !lower.ends_with("ay")
-        && !lower.ends_with("ey")
-        && !lower.ends_with("oy")
-        && !lower.ends_with("uy");
-    if consonant_y {
-        format!("{}ies", &name[..name.len() - 1])
-    } else if ["s", "x", "z", "ch", "sh"]
-        .iter()
-        .any(|s| lower.ends_with(s))
-    {
-        format!("{name}es")
-    } else {
-        format!("{name}s")
-    }
+    super::inflect::plural(name)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -4187,19 +4184,10 @@ pub fn connection_field_names(table_name: &str) -> (String, String) {
     )
 }
 
+/// Type name of a table, its singular: `order_items` -> `OrderItem`, `people` -> `Person`,
+/// `episodes_of_care` -> `EpisodeOfCare`.
 pub fn table_to_type_name(table_name: &str) -> String {
-    let singular = if let Some(stem) = table_name.strip_suffix("ies") {
-        format!("{stem}y")
-    } else if let Some(stem) = table_name
-        .strip_suffix('s')
-        .filter(|_| !table_name.ends_with("ss"))
-    {
-        stem.to_string()
-    } else {
-        table_name.to_string()
-    };
-
-    to_pascal_case(&singular)
+    to_pascal_case(&super::inflect::singular(table_name))
 }
 
 /// Singular snake_case name of a table: `care_plans` -> `care_plan`, `users` -> `user`.

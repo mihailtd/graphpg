@@ -504,7 +504,7 @@ async fn test_cti_shared_primary_key_fixture() {
             "databaseId": 1,
             "type": "TOPIC",
             "title": "PostGraphile version 5",
-            "author": { "__typename": "People" }
+            "author": { "__typename": "Person" }
         })
     );
 }

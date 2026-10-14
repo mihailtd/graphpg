@@ -124,10 +124,10 @@ async fn related_rows_appear_once_however_many_junction_rows_link_them() {
     // The other way round
     let data = graphql(
         &app,
-        "{ peopleById(id: 1) { teamsViaMembershipsConnection { totalCount nodes { databaseId } } } }",
+        "{ person(id: 1) { teamsViaMembershipsConnection { totalCount nodes { databaseId } } } }",
     )
     .await;
-    let teams = &data["peopleById"]["teamsViaMembershipsConnection"];
+    let teams = &data["person"]["teamsViaMembershipsConnection"];
     assert_eq!(teams["totalCount"], 1);
     assert_eq!(ids(&teams["nodes"]), vec![1]);
 }
