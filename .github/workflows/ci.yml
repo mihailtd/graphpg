@@ -260,6 +260,9 @@ jobs:
         run: psql postgres://postgres:postgres@localhost:5432/blog -v ON_ERROR_STOP=1 -f examples/blog/schema.sql
       - name: Run the container
         run: |
+          # Self-hosted runners keep their Docker state between jobs: a container of an earlier
+          # run would hold the name
+          docker rm -f graphpg >/dev/null 2>&1 || true
           docker run -d --name graphpg --network host \
             -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/blog \
             -v "$PWD/examples/blog/graphpg.yaml:/app/graphpg.yaml:ro" graphpg:ci
@@ -271,4 +274,6 @@ jobs:
           test -n "$script"
           curl -sf -H 'Accept-Encoding: gzip' -o /dev/null -w '%{size_download} bytes of %{content_type}\n' "localhost:4000$script"
           docker stop --time 5 graphpg
-          test "$(docker inspect graphpg --format '{{.State.ExitCode}}')" = "0"
+          status=$(docker inspect graphpg --format '{{.State.ExitCode}}')
+          docker rm graphpg >/dev/null
+          test "$status" = "0"
