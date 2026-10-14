@@ -164,6 +164,11 @@ pub enum SchemaCommands {
     },
 }
 
+/// In dev mode, how often the statements are checked for slow operations, and how slow (mean
+/// execution time) an operation is to be reported.
+const SLOW_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+const SLOW_OPERATION_MS: f64 = 100.0;
+
 /// Formats the single startup log summary line.
 pub fn startup_log_summary(mode: Mode, config: &Config) -> String {
     let on_off = |b: bool| if b { "on" } else { "off" };
@@ -649,6 +654,37 @@ async fn run(
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                 watched.refresh_replicas().await;
+            }
+        });
+    }
+
+    // Dev mode: warn once per operation that gets slow (the report has the details)
+    if statements_report {
+        let watched = state.clone();
+        tokio::spawn(async move {
+            let mut warned: std::collections::HashSet<String> = std::collections::HashSet::new();
+            loop {
+                tokio::time::sleep(SLOW_CHECK_EVERY).await;
+                let Ok(client) = watched.pool.get().await else {
+                    continue;
+                };
+                let catalog = watched.current_catalog();
+                let slow = graphpg::catalog::statements::slow_operations(
+                    &client,
+                    &catalog,
+                    SLOW_OPERATION_MS,
+                )
+                .await;
+                for (operation, mean_ms, calls) in slow.unwrap_or_default() {
+                    if warned.insert(operation.clone()) {
+                        tracing::warn!(
+                            operation = %operation,
+                            mean_ms = format!("{mean_ms:.1}"),
+                            calls,
+                            "slow operation: see /debug/statements for the index it lacks"
+                        );
+                    }
+                }
             }
         });
     }

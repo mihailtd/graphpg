@@ -132,7 +132,8 @@ statements: graphpg's 2 most expensive operations by total time (pg_stat_stateme
 
 **While developing**, the same report is a page away. In dev mode, graphpg serves it as JSON at `GET /debug/statements` (`?top=20` by default). The startup log links it when pg_stat_statements is installed. Click through your app, then refresh it to see what your requests cost and which index would help. It is a development tool:
 
-- `dev.debug.statements` turns it on, and it is on by default in dev mode.
+- Every 30 seconds, graphpg checks pg_stat_statements. The first time an operation averages 100 ms or more, it logs a warning naming the operation, with its mean time and calls, and points to the report. Each operation is reported once per run.
+- `dev.debug.statements` turns both on, and it is on by default in dev mode.
 - Set anywhere but the `dev:` block, the config is rejected.
 - Production never serves it. Run `graphpg advise --statements` there on demand.
 
