@@ -2056,7 +2056,9 @@ impl OpenApiGenerator {
         let input_of = |inputs: &super::input_types::InputTypes<'_>, action, by_key: bool| {
             fields
                 .iter()
-                .find(|m| m.action == action && (!by_key || m.unique_key.is_empty()))
+                .find(|m| {
+                    m.action == action && !m.by_node_id && (!by_key || m.unique_key.is_empty())
+                })
                 .and_then(|m| inputs.argument_type(&m.name, "input"))
         };
         let create = input_of(inputs, crate::catalog::MutationAction::Create, false);

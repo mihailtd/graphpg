@@ -1316,27 +1316,45 @@ impl<'a> PlanningContext<'a> {
                 })
                 .collect()
         };
-        // The row addressed by a unique key (one argument per column), or by the primary key:
-        // `id` for a single-column key (a Relay ID or raw value), else one argument per column
-        let key = || -> RowTarget {
+        // The row addressed by its global ID (`nodeId`), by a unique key or by the primary key
+        // (one argument per column)
+        let key = || -> Result<RowTarget, PlannerError> {
             let condition = |col: &ColumnMetadata, value: serde_json::Value| WhereCondition {
                 column: col.name.clone(),
                 operator: "=".to_string(),
                 value: input_value(self.catalog(), col, value),
                 pg_cast: col.pg_type.sql_cast(),
             };
-            let conditions = if mutation.unique_key.is_empty() {
+            let conditions = if mutation.by_node_id {
+                let node_id = arg("nodeId");
+                let decoded = node_id
+                    .as_ref()
+                    .and_then(|v| v.as_str())
+                    .and_then(SchemaBuilder::decode_global_id);
+                let (pk, (type_name, raw)) = table_meta
+                    .key_columns()
+                    .filter(|key| key.len() == 1)
+                    .map(|key| key[0])
+                    .zip(decoded)
+                    .ok_or_else(|| {
+                        PlannerError::InvalidInput(format!(
+                            "{field_name}: `nodeId` is not a global ID"
+                        ))
+                    })?;
+                if type_name != table_meta.type_name {
+                    return Err(PlannerError::InvalidInput(format!(
+                        "{field_name}: `nodeId` is the ID of a `{type_name}`, not of a `{}`",
+                        table_meta.type_name
+                    )));
+                }
+                vec![condition(pk, serde_json::Value::String(raw))]
+            } else if mutation.unique_key.is_empty() {
                 table_meta
                     .primary_key
                     .iter()
                     .filter_map(|pk| {
                         let col = table_meta.get_column(pk)?;
-                        let value = if table_meta.implements_node() {
-                            arg("id")
-                        } else {
-                            arg(&col.field_name)
-                        }?;
-                        Some(condition(col, value))
+                        Some(condition(col, arg(&col.field_name)?))
                     })
                     .collect()
             } else {
@@ -1349,7 +1367,7 @@ impl<'a> PlanningContext<'a> {
                     })
                     .collect()
             };
-            RowTarget::Key(conditions)
+            Ok(RowTarget::Key(conditions))
         };
         let filter = |alias_counter: &mut usize| -> Result<RowTarget, PlannerError> {
             let value = arg("where").unwrap_or_default();
@@ -1471,7 +1489,7 @@ impl<'a> PlanningContext<'a> {
                             table_meta.type_name
                         )));
                     }
-                    let RowTarget::Key(key) = key() else {
+                    let RowTarget::Key(key) = key()? else {
                         unreachable!("single-row updates address a key")
                     };
                     let mut nodes = Vec::new();
@@ -1491,7 +1509,7 @@ impl<'a> PlanningContext<'a> {
                     }
                 } else {
                     MutationKind::Update {
-                        target: key(),
+                        target: key()?,
                         column_values: column_values(Some(input), "input"),
                     }
                 }
@@ -1520,7 +1538,7 @@ impl<'a> PlanningContext<'a> {
                     column_values,
                 }
             }
-            MutationAction::Delete => MutationKind::Delete { target: key() },
+            MutationAction::Delete => MutationKind::Delete { target: key()? },
             MutationAction::DeleteMany => MutationKind::Delete {
                 target: filter(alias_counter)?,
             },
@@ -1532,7 +1550,7 @@ impl<'a> PlanningContext<'a> {
                 MutationAction::Update | MutationAction::Delete,
                 Some(serde_json::Value::String(expected)),
             ) if table_meta.has_row_version() => {
-                let RowTarget::Key(key) = key() else {
+                let RowTarget::Key(key) = key()? else {
                     unreachable!("single-row writes address a key")
                 };
                 Some(VersionGuard {

@@ -341,7 +341,8 @@ export function writePlan(schema) {
       create: m.name,
       inputType: named(input.type).name,
       row: rowField.name,
-      update: byName.get(`update${base}`),
+      // Updated by global ID where there is one (`updateXByNodeId`), deleted by key
+      update: byName.get(`update${base}ByNodeId`) || byName.get(`update${base}`),
       delete: byName.get(`delete${base}`),
     });
   }
@@ -358,7 +359,11 @@ export function writeRound(schema, plan, keys, tags) {
   );
   const row = created.body.data && created.body.data[plan.create] && created.body.data[plan.create][plan.row];
   if (!row) return;
-  const keyArg = (m) => m.args.find((a) => a.name !== "input" && a.name !== "expectedVersion");
+  // The row's one key argument (`id`, `nodeId`); keys of several columns are not addressed
+  const keyArg = (m) => {
+    const keys = m.args.filter((a) => a.name !== "input" && a.name !== "expectedVersion");
+    return keys.length === 1 ? keys[0] : undefined;
+  };
   if (plan.update) {
     const inputArg = plan.update.args.find((a) => a.name === "input");
     const id = keyArg(plan.update);
@@ -368,8 +373,8 @@ export function writeRound(schema, plan, keys, tags) {
     );
     if (id && field) {
       gql(
-        `update${plan.base}`,
-        `mutation($id: ${named(id.type).name}!, $i: ${named(inputArg.type).name}!) { update${plan.base}(${id.name}: $id, input: $i) { __typename } }`,
+        plan.update.name,
+        `mutation($id: ${named(id.type).name}!, $i: ${named(inputArg.type).name}!) { ${plan.update.name}(${id.name}: $id, input: $i) { __typename } }`,
         { id: named(id.type).name === "ID" ? row.id : row.databaseId, i: { [field.name]: scalarValue(named(field.type).name) } },
         tags,
       );

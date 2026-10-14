@@ -200,3 +200,55 @@ async fn test_query_node_invalid_id_returns_null_safely() {
         "Invalid node id should return null safely without error"
     );
 }
+
+/// Updates and deletes take the row's key, typed as `forum(id:)` takes it; their `ByNodeId`
+/// variants take its global ID, refused when it is another type's.
+#[tokio::test]
+async fn test_mutations_by_key_and_by_node_id() {
+    let (client, schema, catalog) = setup_test().await;
+    let planner = QueryPlanner::new(&catalog, "app_public");
+    let plan = |query: &str| {
+        let doc = apollo_compiler::ExecutableDocument::parse_and_validate(
+            &schema,
+            query,
+            "mutation.graphql",
+        )
+        .map_err(|e| e.to_string())?;
+        planner.plan(&doc).map_err(|e| e.to_string())
+    };
+    let forum = "f1700000-0000-0000-0000-000000000f17";
+
+    let by_key = plan(&format!(
+        r#"mutation {{ updateForum(id: "{forum}", input: {{ name: "Postgres" }}) {{ forum {{ databaseId name }} }} }}"#
+    ))
+    .expect("by key");
+    let result = ExecutionEngine::execute(&client, &by_key).await.unwrap();
+    assert_eq!(result["data"]["updateForum"]["forum"]["databaseId"], forum);
+
+    let node_id = SchemaBuilder::encode_global_id("Forum", forum);
+    let by_node_id = plan(&format!(
+        r#"mutation {{ updateForumByNodeId(nodeId: "{node_id}", input: {{ name: "Postgres" }}) {{ forum {{ id name }} }} }}"#
+    ))
+    .expect("by node ID");
+    let result = ExecutionEngine::execute(&client, &by_node_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        result["data"]["updateForumByNodeId"]["forum"],
+        json!({ "id": node_id, "name": "Postgres" })
+    );
+
+    // A user's ID addresses no forum
+    let user_id = SchemaBuilder::encode_global_id("User", forum);
+    let err = plan(&format!(
+        r#"mutation {{ deleteForumByNodeId(nodeId: "{user_id}") {{ forum {{ id }} }} }}"#
+    ))
+    .unwrap_err();
+    assert!(
+        err.contains("the ID of a `User`, not of a `Forum`"),
+        "{err}"
+    );
+    let err =
+        plan(r#"mutation { deleteForumByNodeId(nodeId: "nope") { forum { id } } }"#).unwrap_err();
+    assert!(err.contains("not a global ID"), "{err}");
+}

@@ -1802,6 +1802,8 @@ pub struct MutationField {
     /// Columns of the unique key addressing the row of an update or delete by unique key
     /// (`updateUserByEmail`); empty for the primary key.
     pub unique_key: Vec<String>,
+    /// The row is addressed by its Relay global ID (`updateUserByNodeId(nodeId:)`).
+    pub by_node_id: bool,
 }
 
 /// A field of a table's GraphQL object type and what backs it. Computed once per catalog and
@@ -2307,8 +2309,8 @@ impl DatabaseCatalog {
         out
     }
 
-    /// Root mutation fields of `table`, in schema order: per verb the single-row field, its
-    /// by-unique-key variants, then the many-rows field.
+    /// Root mutation fields of `table`, in schema order: per verb the single-row field (by
+    /// primary key), its by-node-ID and by-unique-key variants, then the many-rows field.
     pub fn table_mutation_fields(&self, table: &TableMetadata) -> Vec<MutationField> {
         let ops = table.operations;
         let writable = table.writable_columns().next().is_some();
@@ -2316,48 +2318,54 @@ impl DatabaseCatalog {
         let lookups: Vec<Vec<&ColumnMetadata>> =
             table.lookup_keys().map(|(_, cols)| cols).collect();
         let mut out = Vec::new();
-        let mut push = |action: MutationAction, key: &[&ColumnMetadata]| {
+        let node = table.implements_node();
+        let mut push = |action: MutationAction, key: &[&ColumnMetadata], by_node_id: bool| {
+            let suffix = match (by_node_id, key.is_empty()) {
+                (true, _) => "ByNodeId".to_string(),
+                (false, true) => String::new(),
+                (false, false) => unique_key_suffix(key),
+            };
             out.push(MutationField {
-                name: action.field_name(
-                    table,
-                    &if key.is_empty() {
-                        String::new()
-                    } else {
-                        unique_key_suffix(key)
-                    },
-                ),
+                name: action.field_name(table, &suffix),
                 table: table.name.clone(),
                 action,
                 unique_key: key.iter().map(|c| c.name.clone()).collect(),
+                by_node_id,
             });
         };
         if ops.create {
-            push(MutationAction::Create, &[]);
+            push(MutationAction::Create, &[], false);
         }
         if ops.create_many && writable {
-            push(MutationAction::CreateMany, &[]);
+            push(MutationAction::CreateMany, &[], false);
         }
         if ops.update && writable {
             if has_pk {
-                push(MutationAction::Update, &[]);
+                push(MutationAction::Update, &[], false);
+                if node {
+                    push(MutationAction::Update, &[], true);
+                }
             }
             for key in &lookups {
-                push(MutationAction::Update, key);
+                push(MutationAction::Update, key, false);
             }
         }
         if ops.update_many && writable {
-            push(MutationAction::UpdateMany, &[]);
+            push(MutationAction::UpdateMany, &[], false);
         }
         if ops.delete {
             if has_pk {
-                push(MutationAction::Delete, &[]);
+                push(MutationAction::Delete, &[], false);
+                if node {
+                    push(MutationAction::Delete, &[], true);
+                }
             }
             for key in &lookups {
-                push(MutationAction::Delete, key);
+                push(MutationAction::Delete, key, false);
             }
         }
         if ops.delete_many {
-            push(MutationAction::DeleteMany, &[]);
+            push(MutationAction::DeleteMany, &[], false);
         }
         out
     }

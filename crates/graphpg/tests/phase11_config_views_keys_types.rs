@@ -345,7 +345,7 @@ async fn test_config_renames_types_fields_and_root_fields() {
         mutation.contains("  createWriter(input: CreateWriterInput!, onConflict: WriterOnConflict): CreateWriterPayload!"),
         "{mutation}"
     );
-    assert!(mutation.contains("  updateWriter(id: ID!, input: UpdateWriterInput!, \"\"\"Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).\"\"\" expectedVersion: String): UpdateWriterPayload!"), "{mutation}");
+    assert!(mutation.contains("  updateWriter(id: Int!, input: UpdateWriterInput!, \"\"\"Write only if the row's `rowVersion` is still this one (else `STALE_VERSION`).\"\"\" expectedVersion: String): UpdateWriterPayload!"), "{mutation}");
     assert!(!mutation.contains("deleteWriter"), "{mutation}");
     assert!(!env
         .type_sdl("input", "CreateWriterInput")
@@ -560,7 +560,7 @@ async fn test_composite_foreign_and_primary_keys() {
         .run_rolled_back(
             r#"mutation {
                 u: updateEdition(bookId: "1", editionNo: 2, input: { label: "2nd" }) { edition { label } }
-                d: deleteReview(id: "2") { review { databaseId } }
+                d: deleteReview(id: 2) { review { databaseId } }
                 x: deleteEdition(bookId: "1", editionNo: 2) { edition { label } }
             }"#,
         )

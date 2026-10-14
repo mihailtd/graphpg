@@ -153,7 +153,7 @@ type Query { node(id: ID!): Node }
   ```graphql
   query ($id: ID!) { node(id: $id) { __typename id ... on Customer { name } ... on Order { total } } }
   ```
-- **Both identifier forms are accepted** everywhere an ID goes in: `customer(id:)`, `updateCustomer(id:)`, `createOrder(input: { customerId: ... })` take either a global ID or the raw key.
+- **Rows are addressed by their key, typed as the column:** `customer(id: UUID!)`, `updateCustomer(id: UUID!, ...)`, `deleteCustomer(id: UUID!)` (one argument per column of a composite key). Updates and deletes by global ID are `updateCustomerByNodeId(nodeId: ID!, ...)` and `deleteCustomerByNodeId(nodeId: ID!)`; a global ID of another type is refused. Key arguments and key inputs (`createOrder(input: { customerId: ... })`) also take a global ID in place of the raw key.
 - A malformed ID, malformed key or missing row gives `{ "node": null }`, never a database error. PostgreSQL's `encode(..., 'base64')` wraps lines every 76 characters; the engine strips the newlines, so IDs are always single-line.
 
 ## Relational expressiveness

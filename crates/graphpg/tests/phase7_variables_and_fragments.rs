@@ -244,6 +244,7 @@ async fn test_mutation_lifecycle_with_variables() {
             createForum(input: $input) {
                 forum {
                     id
+                    databaseId
                     name
                 }
             }
@@ -265,15 +266,16 @@ async fn test_mutation_lifecycle_with_variables() {
         .as_str()
         .expect("created id")
         .to_string();
+    let database_id = json["data"]["createForum"]["forum"]["databaseId"].clone();
     assert_eq!(
         json["data"]["createForum"]["forum"]["name"],
         "GraphQL Variables Test"
     );
 
-    // 2. Update with $id and $input variables
+    // 2. Update by global ID, with $id and $input variables
     let update_query = "
         mutation Update($id: ID!, $input: UpdateForumInput!) {
-            updateForum(id: $id, input: $input) {
+            updateForumByNodeId(nodeId: $id, input: $input) {
                 forum {
                     id
                     name
@@ -294,13 +296,13 @@ async fn test_mutation_lifecycle_with_variables() {
     .await;
     assert_eq!(status, StatusCode::OK, "{json}");
     assert_eq!(
-        json["data"]["updateForum"]["forum"]["name"],
+        json["data"]["updateForumByNodeId"]["forum"]["name"],
         "Updated Variables Forum"
     );
 
-    // 3. Delete with $id variable
+    // 3. Delete by primary key, with an $id variable
     let delete_query = "
-        mutation Delete($id: ID!) {
+        mutation Delete($id: UUID!) {
             deleteForum(id: $id) {
                 forum {
                     id
@@ -312,7 +314,7 @@ async fn test_mutation_lifecycle_with_variables() {
         &app,
         serde_json::json!({
             "query": delete_query,
-            "variables": { "id": created_id }
+            "variables": { "id": database_id }
         }),
     )
     .await;
