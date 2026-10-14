@@ -187,15 +187,17 @@ async fn reload_and_regenerate(
 
     // 1. Re-read the config and re-inspect the catalog
     let config = load_config(options)?;
-    if config.database.schemas.first() != Some(&state.default_schema) {
+    // `app_public` when none are configured
+    let resolved = config.database.resolved_schemas();
+    if resolved.first() != Some(&state.default_schema) {
         tracing::warn!(
             default_schema = %state.default_schema,
-            schemas = %config.database.schemas.join(","),
+            schemas = %resolved.join(","),
             "the config's first schema changed: the default schema changes on restart"
         );
     }
     let inspector = CatalogInspector::new(&client);
-    let schemas: Vec<&str> = config.database.schemas.iter().map(String::as_str).collect();
+    let schemas: Vec<&str> = resolved.iter().map(String::as_str).collect();
     let (base, config_json) = match inspector.inspect_base(&schemas, &config).await {
         Ok(base) => {
             let json = ConfigSchemaGenerator::generate(&base);

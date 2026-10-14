@@ -164,3 +164,30 @@ fn channel_names_are_checked() {
         .to_string();
     assert!(err.contains("reload.channel"), "{err}");
 }
+
+/// No `database.schemas`: a reload reads the default schema (`app_public`), as startup does,
+/// not none at all.
+#[tokio::test]
+async fn reload_without_configured_schemas_reads_the_default_one() {
+    common::ensure_forum_fixture().await;
+    let client = connect().await;
+    let config = Config::from_yaml("export:\n  pin: off\n").unwrap();
+    assert!(config.database.schemas.is_empty());
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema_with_config("app_public", &config)
+        .await
+        .unwrap();
+    let state = Arc::new(
+        ServerState::new(
+            create_pool(common::db_url(), 2).unwrap(),
+            SchemaBuilder::build(&catalog).unwrap(),
+            catalog,
+            "app_public".to_string(),
+            DebugOptions::default(),
+        )
+        .with_config(config),
+    );
+    reload_schema(&state).await.unwrap();
+    let catalog = state.current_catalog();
+    assert!(catalog.find_table("app_public", "forums").is_some());
+}

@@ -47,7 +47,7 @@ impl Mode {
     fn defaults(self) -> &'static str {
         match self {
             Mode::Dev => {
-                "server:\n  cors:\n    origins: ['*']\nheaders:\n  preset: relaxed\nerrors:\n  detail: full\ngraphql:\n  ui: true\n  introspection: true\n  sdl: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\ntelemetry:\n  metrics:\n    enabled: true\n"
+                "server:\n  cors:\n    origins: ['*']\nheaders:\n  preset: relaxed\nerrors:\n  detail: full\ndebug:\n  statements: true\ngraphql:\n  ui: true\n  introspection: true\n  sdl: true\nopenapi:\n  ui: true\n  spec: true\nwatch:\n  enabled: true\nexport:\n  pin: warn\ntelemetry:\n  metrics:\n    enabled: true\n"
             }
             Mode::Prod => "{}",
         }
@@ -214,6 +214,11 @@ impl Config {
                 if config.debug.explain {
                     return Err(ConfigError::one(
                         "debug.explain is only allowed in the dev: block",
+                    ));
+                }
+                if config.debug.statements {
+                    return Err(ConfigError::one(
+                        "debug.statements is only allowed in the dev: block",
                     ));
                 }
             }
@@ -772,6 +777,21 @@ prod:
         assert!(dev.debug.sql && dev.debug.explain);
         let prod = parse("dev: { debug: { sql: true, explain: true } }", Mode::Prod).unwrap();
         assert!(!prod.debug.sql && !prod.debug.explain);
+
+        // The statements report: on in dev, off in prod, and only settable in dev:
+        assert!(parse("", Mode::Dev).unwrap().debug.statements);
+        assert!(!parse("", Mode::Prod).unwrap().debug.statements);
+        assert!(
+            !parse("dev: { debug: { statements: false } }", Mode::Dev)
+                .unwrap()
+                .debug
+                .statements
+        );
+        let err = parse("prod: { debug: { statements: true } }", Mode::Prod).unwrap_err();
+        assert_eq!(
+            err.problems[0],
+            "debug.statements is only allowed in the dev: block"
+        );
     }
 
     #[test]

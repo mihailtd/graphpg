@@ -240,6 +240,18 @@ pub fn health_routes() -> Router<Arc<ServerState>> {
         .route("/ready", get(ready_handler))
 }
 
+/// Mounts the development endpoints `dev.debug` turns on: `/debug/statements`. The loader
+/// rejects them outside the `dev:` block, so production never serves them.
+pub fn debug_routes(state: &ServerState) -> Router<Arc<ServerState>> {
+    let mut router = Router::new();
+    let on = state.mode == crate::config::Mode::Dev
+        && state.config.as_ref().is_some_and(|c| c.debug.statements);
+    if on {
+        router = router.route("/debug/statements", get(super::debug::statements_handler));
+    }
+    router
+}
+
 /// Mounts the Prometheus endpoint at `telemetry.metrics.path`, unless it is off or has a
 /// listener of its own (`telemetry.metrics.listen`).
 pub fn metrics_routes(state: &ServerState) -> Router<Arc<ServerState>> {
@@ -449,6 +461,7 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
     router = router.merge(health_routes());
     router = router.merge(ui_routes(&state));
     router = router.merge(metrics_routes(&state));
+    router = router.merge(debug_routes(&state));
 
     let config = state.config.as_ref().cloned().unwrap_or_default();
     let is_dev = state.mode == crate::config::Mode::Dev;

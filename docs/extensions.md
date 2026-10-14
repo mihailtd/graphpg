@@ -129,6 +129,13 @@ statements: graphpg's 2 most expensive operations by total time (pg_stat_stateme
   2. GET /rest/events: 5 calls, 0.1 ms total, 0.01 ms mean, 1.0 rows per call
 ```
 
+
+**While developing**, the same report is a page away. In dev mode, graphpg serves it as JSON at `GET /debug/statements` (`?top=20` by default). The startup log links it when pg_stat_statements is installed. Click through your app, then refresh it to see what your requests cost and which index would help. It is a development tool:
+
+- `dev.debug.statements` turns it on, and it is on by default in dev mode.
+- Set anywhere but the `dev:` block, the config is rejected.
+- Production never serves it. Run `graphpg advise --statements` there on demand.
+
 - **Operations**, the most expensive (total execution time) first: calls, total and mean time, rows, and how many statement shapes they ran (an operation's variables can change its SQL).
 - **Indexes they lack.** Each statement is planned with `EXPLAIN (GENERIC_PLAN)` (PostgreSQL 16+), which plans pg_stat_statements' normalized text without running it, in a read-only transaction. A sequential scan filtering (or sorting) on columns suggests an index on them.
 - **Checked with [hypopg](https://github.com/HypoPG/hypopg)**, when installed: each candidate is created as a hypothetical index (no disk, no lock, this session only), and suggested only if the statement's estimated cost drops by at least 10%; the best one, with the costs before and after. hypopg also tells when an index scan filtering many rows would be served better by another index. Without hypopg, suggestions come from sequential scans alone, and are unchecked.

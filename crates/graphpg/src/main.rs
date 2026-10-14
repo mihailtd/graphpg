@@ -283,7 +283,9 @@ async fn run(
         config.database.pool_size,
         statement_timeout,
     )?;
-    let schemas: Vec<&str> = config.database.schemas.iter().map(String::as_str).collect();
+    // `app_public` when none are configured
+    let resolved_schemas = config.database.resolved_schemas();
+    let schemas: Vec<&str> = resolved_schemas.iter().map(String::as_str).collect();
     let default_schema = schemas[0].to_string();
 
     // Check CLI subcommands
@@ -483,7 +485,7 @@ async fn run(
         }
     }
     tracing::info!(
-        schemas = %config.database.schemas.join(","),
+        schemas = %schemas.join(","),
         tables = catalog.tables.len(),
         pool_size = config.database.pool_size,
         "introspected database"
@@ -496,6 +498,12 @@ async fn run(
             active.detail
         );
     }
+    // Dev mode: where the most expensive operations so far are reported
+    let statements_report = mode == Mode::Dev
+        && config.debug.statements
+        && catalog
+            .integration(graphpg::catalog::integrations::Integration::PgStatStatements)
+            .is_some();
 
     // Pinned schemas: what the database generates now against the exported files
     {
@@ -660,7 +668,7 @@ async fn run(
                     &mut client,
                     &config.events,
                     &catalog,
-                    &config.database.schemas,
+                    &config.database.resolved_schemas(),
                     &state.default_schema,
                 )
                 .await
@@ -745,6 +753,12 @@ async fn run(
     }
     if !config.graphql.enabled && !config.openapi.enabled {
         tracing::info!("graphpg listening on http://{}", addr);
+    }
+    if statements_report {
+        tracing::info!(
+            "the most expensive operations, with the indexes they lack: http://{}/debug/statements",
+            addr
+        );
     }
     if config.graphql.ui {
         tracing::info!(

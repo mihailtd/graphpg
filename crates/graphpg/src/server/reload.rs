@@ -43,7 +43,8 @@ pub async fn reload_schema(state: &ServerState) -> Result<(), ReloadError> {
     let err = |e: &dyn std::fmt::Display| ReloadError(e.to_string());
     let config = state.config.clone().unwrap_or_default();
     let client = state.pool.get().await.map_err(|e| err(&e))?;
-    let schemas: Vec<&str> = config.database.schemas.iter().map(String::as_str).collect();
+    let resolved = config.database.resolved_schemas();
+    let schemas: Vec<&str> = resolved.iter().map(String::as_str).collect();
     let base = CatalogInspector::new(&client)
         .inspect_base(&schemas, &config)
         .await
