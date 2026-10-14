@@ -53,6 +53,11 @@ const APPLY_SQL: &str = "SELECT count(set_config(s.name, s.value, true)) FROM un
 pub struct AuthSessionContext {
     /// `(setting, value)` pairs, `role` (when configured) first.
     pub settings: Vec<(String, String)>,
+    /// When the token expires (its `exp`, seconds since the Unix epoch): what is open on it,
+    /// a subscription, ends then. `None` without a token.
+    pub expires_at: Option<u64>,
+    /// The token's `sub`, the client counted by per-client limits.
+    pub subject: Option<String>,
 }
 
 impl AuthSessionContext {
@@ -216,6 +221,7 @@ impl Authenticator {
             return match &self.config.roles.anonymous {
                 Some(role) => Ok(AuthSessionContext {
                     settings: vec![("role".to_string(), role.clone())],
+                    ..Default::default()
                 }),
                 None => Err(AuthError::Missing),
             };
@@ -310,7 +316,14 @@ impl Authenticator {
                 settings.push((setting.clone(), setting_value(value)));
             }
         }
-        AuthSessionContext { settings }
+        AuthSessionContext {
+            settings,
+            expires_at: claims.get("exp").and_then(Value::as_u64),
+            subject: claims
+                .get("sub")
+                .filter(|v| !v.is_null())
+                .map(setting_value),
+        }
     }
 }
 

@@ -344,6 +344,9 @@ pub struct ServerState {
     pub rate_limiter: Option<Arc<super::RateLimiter>>,
     /// Persisted queries and the allow-list (`graphql.persisted_queries`); `None` when off.
     pub persisted: Option<Arc<super::PersistedQueries>>,
+    /// Live queries (`subscriptions.enabled`); `None` when off. Its re-runs start with
+    /// [`Hub::start`](super::subscriptions::Hub::start).
+    pub subscriptions: Option<Arc<super::subscriptions::Hub>>,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -398,6 +401,7 @@ impl ServerState {
             errors: crate::config::models::ErrorsConfig::default(),
             rate_limiter: None,
             persisted: None,
+            subscriptions: None,
         }
     }
 
@@ -601,6 +605,10 @@ impl ServerState {
         self.rate_limiter = super::RateLimiter::new(&config.limits.rate_limit);
         self.limits = config.limits.clone();
         self.errors = config.errors.clone();
+        self.subscriptions = config
+            .subscriptions
+            .enabled
+            .then(|| super::subscriptions::Hub::new(config.subscriptions.clone()));
         let cat = self.current_catalog();
         let doc = OpenApiGenerator::generate_with_schema(
             &cat,
@@ -656,6 +664,9 @@ impl ServerState {
         // schema will not be reused
         self.pool.manager().statement_caches.clear();
         self.cache.clear();
+        if let Some(hub) = &self.subscriptions {
+            hub.schema_changed();
+        }
     }
 }
 
@@ -979,9 +990,97 @@ struct OperationMetric {
 pub(crate) async fn graphql_handler(
     State(state): State<Arc<ServerState>>,
     request_headers: HeaderMap,
+    extensions: axum::http::Extensions,
     Json(req): Json<GraphQLRequest>,
 ) -> Response {
-    answer_graphql(state, request_headers, req, false).await
+    let peer = peer_of(&extensions);
+    let sse = super::subscriptions::transport::wants_only_sse(&request_headers);
+    let response = answer_graphql(state, request_headers, req, false, peer).await;
+    if sse {
+        super::subscriptions::transport::json_as_sse(response).await
+    } else {
+        response
+    }
+}
+
+/// The address of the connection a request came on, when the server records it.
+fn peer_of(extensions: &axum::http::Extensions) -> Option<std::net::IpAddr> {
+    extensions
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0.ip())
+}
+
+/// `GET /graphql` with subscriptions on: a WebSocket upgrade (`graphql-transport-ws`), or a
+/// query in the URL as without them.
+pub(crate) async fn graphql_get_or_upgrade(
+    State(state): State<Arc<ServerState>>,
+    request: axum::extract::Request,
+) -> Response {
+    use axum::extract::FromRequestParts;
+    let (mut parts, _body) = request.into_parts();
+    let peer = peer_of(&parts.extensions);
+    let upgrade = parts
+        .headers
+        .get(header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+    if let (true, Some(hub)) = (upgrade, state.subscriptions.clone()) {
+        return match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &state)
+            .await
+        {
+            Ok(ws) => {
+                super::subscriptions::transport::websocket(state, hub, ws, parts.headers, peer)
+            }
+            Err(rejection) => rejection.into_response(),
+        };
+    }
+    let params = match axum::extract::Query::<GraphQLGetParams>::try_from_uri(&parts.uri) {
+        Ok(axum::extract::Query(params)) => params,
+        Err(rejection) => return rejection.into_response(),
+    };
+    let sse = super::subscriptions::transport::wants_only_sse(&parts.headers);
+    let response = match params.into_request() {
+        Ok(req) => answer_graphql(state, parts.headers, req, true, peer).await,
+        Err(message) => error_response(StatusCode::BAD_REQUEST, message, None),
+    };
+    if sse {
+        super::subscriptions::transport::json_as_sse(response).await
+    } else {
+        response
+    }
+}
+
+/// Answers `req` with an authenticated context (a WebSocket connection's): the response's
+/// status and its JSON.
+pub(crate) async fn execute_json(
+    state: Arc<ServerState>,
+    auth_ctx: Option<super::AuthSessionContext>,
+    req: GraphQLRequest,
+    peer: Option<std::net::IpAddr>,
+) -> (StatusCode, serde_json::Value) {
+    let mut metric = OperationMetric {
+        kind: "",
+        name: String::new(),
+    };
+    let response = run_authenticated(
+        state,
+        HeaderMap::new(),
+        req,
+        false,
+        &mut metric,
+        auth_ctx,
+        peer,
+    )
+    .await;
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_else(|| {
+            serde_json::json!({ "errors": [{ "message": "the response is not JSON (@defer and @stream need HTTP)" }] })
+        });
+    (status, body)
 }
 
 /// `GET /graphql`: queries only (a mutation is `405`), so they can be cached by URL, which
@@ -989,11 +1088,19 @@ pub(crate) async fn graphql_handler(
 pub(crate) async fn graphql_get_handler(
     State(state): State<Arc<ServerState>>,
     request_headers: HeaderMap,
+    extensions: axum::http::Extensions,
     axum::extract::Query(params): axum::extract::Query<GraphQLGetParams>,
 ) -> Response {
-    match params.into_request() {
-        Ok(req) => answer_graphql(state, request_headers, req, true).await,
+    let peer = peer_of(&extensions);
+    let sse = super::subscriptions::transport::wants_only_sse(&request_headers);
+    let response = match params.into_request() {
+        Ok(req) => answer_graphql(state, request_headers, req, true, peer).await,
         Err(message) => error_response(StatusCode::BAD_REQUEST, message, None),
+    };
+    if sse {
+        super::subscriptions::transport::json_as_sse(response).await
+    } else {
+        response
     }
 }
 
@@ -1002,13 +1109,14 @@ async fn answer_graphql(
     request_headers: HeaderMap,
     req: GraphQLRequest,
     get: bool,
+    peer: Option<std::net::IpAddr>,
 ) -> Response {
     let start = std::time::Instant::now();
     let mut metric = OperationMetric {
         kind: "",
         name: String::new(),
     };
-    let response = run_graphql(state, request_headers, req, get, &mut metric).await;
+    let response = run_graphql(state, request_headers, req, get, &mut metric, peer).await;
     let error = match response.extensions().get::<ErrorCode>() {
         Some(code) => Some(code.0.clone()),
         None => (!response.status().is_success()).then(|| response.status().as_u16().to_string()),
@@ -1028,12 +1136,25 @@ async fn run_graphql(
     req: GraphQLRequest,
     get: bool,
     metric: &mut OperationMetric,
+    peer: Option<std::net::IpAddr>,
 ) -> Response {
     // Authenticate before anything else is looked at
     let auth_ctx = match state.authenticate(&request_headers).await {
         Ok(ctx) => ctx,
         Err(err) => return err.into_response(),
     };
+    run_authenticated(state, request_headers, req, get, metric, auth_ctx, peer).await
+}
+
+async fn run_authenticated(
+    state: Arc<ServerState>,
+    request_headers: HeaderMap,
+    req: GraphQLRequest,
+    get: bool,
+    metric: &mut OperationMetric,
+    auth_ctx: Option<super::AuthSessionContext>,
+    peer: Option<std::net::IpAddr>,
+) -> Response {
     // The text of the operation: sent, or persisted and named by hash or id
     let query = match super::persisted::resolve(
         state.persisted.as_deref(),
@@ -1104,7 +1225,12 @@ async fn run_graphql(
     };
     metric.name = operation_label.clone();
 
-    if get && operation.operation_type != apollo_compiler::ast::OperationType::Query {
+    let is_subscription =
+        operation.operation_type == apollo_compiler::ast::OperationType::Subscription;
+    let stream_format = super::subscriptions::transport::stream_format(&request_headers);
+    let sse_get = is_subscription
+        && stream_format == Some(super::subscriptions::transport::StreamFormat::Sse);
+    if get && operation.operation_type != apollo_compiler::ast::OperationType::Query && !sse_get {
         let mut response = error_response(
             StatusCode::METHOD_NOT_ALLOWED,
             format!("a {} cannot be sent with GET: use POST", metric.kind),
@@ -1126,6 +1252,56 @@ async fn run_graphql(
             }],
             None,
         );
+    }
+
+    // Live queries: a stream of results, as long as the client keeps it open
+    if is_subscription {
+        let Some(hub) = state.subscriptions.clone() else {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "subscriptions are off (`subscriptions.enabled`)".to_string(),
+                None,
+            );
+        };
+        let Some(format) = stream_format else {
+            let mut response = error_response(
+                StatusCode::NOT_ACCEPTABLE,
+                "a subscription is a stream: send it with `Accept: text/event-stream` (GraphQL over SSE) or `multipart/mixed;subscriptionSpec=\"1.0\"`, or over a WebSocket (graphql-transport-ws)".to_string(),
+                None,
+            );
+            response
+                .extensions_mut()
+                .insert(ErrorCode("NOT_ACCEPTABLE".to_string()));
+            return response;
+        };
+        let compiled = match super::subscriptions::compile(
+            &state,
+            &query,
+            &doc,
+            operation,
+            req.operation_name.as_deref(),
+            req.variables.as_ref(),
+        ) {
+            Ok(compiled) => compiled,
+            Err(rejection) => {
+                let status = if rejection.status == StatusCode::OK {
+                    StatusCode::BAD_REQUEST
+                } else {
+                    rejection.status
+                };
+                return errors_response(status, rejection.errors, None);
+            }
+        };
+        let client = super::subscriptions::client_key(auth_ctx.as_ref(), peer);
+        return super::subscriptions::transport::http_stream(
+            state.clone(),
+            hub,
+            compiled,
+            auth_ctx,
+            client,
+            format,
+        )
+        .await;
     }
 
     // Incremental Delivery (@defer and @stream) over HTTP multipart streaming

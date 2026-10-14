@@ -146,6 +146,7 @@ limits:                         # shared by GraphQL and REST, enforced on the pl
     max_clients: 100000
 
 events: { ... }                 # webhooks on row changes and schedules (see events.md)
+subscriptions: { enabled: false }   # live queries: subscriptions re-run every interval (see subscriptions.md)
 
 auth: { ... }                   # OAuth 2.0 bearer tokens (see authentication.md)
 rbac: { enabled: false }        # prune the APIs to what a role may access

@@ -2,6 +2,7 @@ import "./style.css";
 import { explorerPlugin } from "@graphiql/plugin-explorer";
 import { createGraphiQLFetcher } from "@graphiql/toolkit";
 import { GraphiQL, HISTORY_PLUGIN } from "graphiql";
+import { parse } from "graphql";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
@@ -51,7 +52,85 @@ async function debugFetch(url, init) {
   return response;
 }
 
-const fetcher = createGraphiQLFetcher({ url: "/graphql", fetch: debugFetch });
+const httpFetcher = createGraphiQLFetcher({ url: "/graphql", fetch: debugFetch });
+
+// --- Subscriptions (live queries) over GraphQL over SSE --------------------------------
+// With `subscriptions.enabled`, a subscription's results arrive as SSE `next` events until
+// GraphiQL stops it (then the request is cancelled and the server ends the subscription).
+function isSubscription({ query, operationName }) {
+  try {
+    const operations = parse(query).definitions.filter((d) => d.kind === "OperationDefinition");
+    const operation = operationName ? operations.find((d) => d.name?.value === operationName) : operations[0];
+    return operation?.operation === "subscription";
+  } catch {
+    return false;
+  }
+}
+
+// GraphiQL stops a subscription with `return()`, which an async generator only sees at its
+// next `yield`: an unchanged result yields nothing, so the request is aborted instead.
+function sseSubscription(params) {
+  const controller = new AbortController();
+  const events = sseEvents(params, controller.signal);
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    next: () => events.next(),
+    return: () => {
+      controller.abort();
+      return Promise.resolve({ done: true, value: undefined });
+    },
+  };
+}
+
+async function* sseEvents(params, signal) {
+  let response;
+  try {
+    response = await fetch("/graphql", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify(params),
+      signal,
+    });
+  } catch (error) {
+    if (signal.aborted) return;
+    throw error;
+  }
+  if (!response.headers.get("content-type")?.startsWith("text/event-stream")) {
+    yield await response.json();
+    return;
+  }
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += value;
+      let end = buffer.indexOf("\n\n");
+      while (end >= 0) {
+        const block = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        let event = "";
+        let data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event: ")) event = line.slice(7);
+          else if (line.startsWith("data: ")) data += line.slice(6);
+        }
+        if (event === "next") yield JSON.parse(data);
+        if (event === "complete") return;
+        end = buffer.indexOf("\n\n");
+      }
+    }
+  } catch (error) {
+    if (!signal.aborted) throw error;
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
+const fetcher = (params, options) => (isSubscription(params) ? sseSubscription(params) : httpFetcher(params, options));
 
 // --- SQL plugin ------------------------------------------------------------------
 function CopyButton({ text }) {

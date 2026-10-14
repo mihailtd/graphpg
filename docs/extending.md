@@ -22,6 +22,7 @@ graphpg stays a generic engine: what it serves comes from the database. Behavior
 | A custom query or mutation | A SQL function: `STABLE` ones are queries, `VOLATILE` ones mutations, also served at `/rest/rpc/<name>` | [Functions](schema-mapping.md#functions) |
 | Validation and business rules | Constraints, triggers and RLS policies; their violations become typed error codes | [Errors](graphql-api.md#errors), [Authentication](authentication.md) |
 | Side effects: emails, payments, calls to other services | Event triggers: signed webhooks on row changes, captured in the change's transaction, and on schedules | [Event triggers](events.md) |
+| Data that updates on screens as it changes | Subscriptions: any query field, its result sent again when it changes, under the same policies | [Subscriptions](subscriptions.md) |
 | Background jobs | A function of your own that records the job and enqueues it, for example with pgmq, in one transaction | [Message queues](extensions.md#message-queues-pgmq) |
 | Data from another database or from files | Foreign data wrappers, joined to your tables in the same statement | [Other databases and files](foreign-data.md) |
 | Renaming, hiding, describing | `graphpg.yaml` | [Configuration](configuration.md) |
@@ -32,4 +33,3 @@ The last row is how other engines' "actions" and "remote schemas" are done here.
 ## Not planned
 
 - **Custom resolvers and plugins** ([#30](https://github.com/mihailtd/graphpg/issues/30)), for the reasons above.
-- **Subscriptions and live queries** ([#25](https://github.com/mihailtd/graphpg/issues/25)) are deferred: doing them generically, without opinions about transport, invalidation and scale, is not solved yet.

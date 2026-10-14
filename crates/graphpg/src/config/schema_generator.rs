@@ -327,6 +327,25 @@ impl ConfigSchemaGenerator {
             }),
         );
         settings.insert(
+            "subscriptions".to_string(),
+            json!({
+                "type": "object",
+                "description": "Live queries: a Subscription type with the Query type's root fields, whose result is sent again when it changes (re-run every interval, batched)",
+                "properties": {
+                    "enabled": Self::switch_described("Serve subscriptions (default false)"),
+                    "interval": duration("How often subscriptions' queries run again (default 1s, at least 50ms)"),
+                    "source": { "enum": ["replica", "primary"], "description": "Where they run: a read replica when there is one, or the primary (default replica)" },
+                    "max_per_instance": { "type": ["integer", "string"], "minimum": 1, "description": "Subscriptions open at once on an instance (default 10000)" },
+                    "max_per_subject": { "type": ["integer", "string"], "minimum": 1, "description": "Subscriptions open at once per client (token `sub`, or address), per instance (default 100)" },
+                    "batch": { "type": ["integer", "string"], "minimum": 1, "description": "Subscriptions run in one statement at most (default 100)" },
+                    "concurrency": { "type": ["integer", "string"], "minimum": 1, "description": "Connections a round of re-runs uses at once (default 4)" },
+                    "keep_alive": duration("Keep-alive messages on idle streams (default 15s)"),
+                    "init_timeout": duration("How long a WebSocket client has to send connection_init (default 10s)")
+                },
+                "additionalProperties": false
+            }),
+        );
+        settings.insert(
             "reload".to_string(),
             json!({
                 "type": "object",

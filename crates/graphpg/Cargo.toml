@@ -19,7 +19,7 @@ uuid = { version = "1.16", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.23"
 regex = "1"
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.7", features = ["cors"] }
 dotenvy = "0.15"
 serde_yaml = "0.9"
@@ -52,6 +52,8 @@ otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", 
 insta = { version = "1.48", features = ["json", "yaml"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# WebSocket clients of the subscription tests (the version axum's `ws` uses)
+tokio-tungstenite = "0.29"
 
 [[bin]]
 name = "graphpg"

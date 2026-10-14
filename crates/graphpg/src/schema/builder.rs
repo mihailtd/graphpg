@@ -1895,10 +1895,20 @@ impl SchemaBuilder {
         }
         // Relay Node interface entry point
         sdl.push_str("  node(id: ID!): Node\n");
-        for qf in query_fields {
+        for qf in &query_fields {
             sdl.push_str(&format!("{}\n", qf));
         }
         sdl.push_str("}\n\n");
+
+        // Live queries: the Query type's fields, each result sent again when it changes
+        if catalog.subscriptions_enabled {
+            sdl.push_str("\"\"\"Live queries: the result of a `Query` field, sent again whenever it changes.\"\"\"\ntype Subscription {\n");
+            sdl.push_str("  node(id: ID!): Node\n");
+            for qf in &query_fields {
+                sdl.push_str(&format!("{}\n", qf));
+            }
+            sdl.push_str("}\n\n");
+        }
 
         // Generate Mutation root type
         if !mutation_fields.is_empty() {

@@ -228,6 +228,7 @@ impl Config {
             problems.extend(config.graphql.persisted_queries.problems());
             problems.extend(config.reload.problems());
             problems.extend(config.events.problems());
+            problems.extend(config.subscriptions.problems());
             problems.extend(config.extensions.problems());
             if !problems.is_empty() {
                 let problems = if m == mode {
@@ -983,5 +984,67 @@ graphql: { ui: 'true' }
             .unwrap_err()
             .to_string();
         assert!(err.contains("dev: limits.depth"), "{err}");
+    }
+
+    #[test]
+    fn subscriptions_are_off_by_default_and_configured_per_mode() {
+        let cfg = parse("", Mode::Prod).unwrap();
+        assert!(!cfg.subscriptions.enabled);
+        assert_eq!(
+            cfg.subscriptions.interval.0,
+            std::time::Duration::from_secs(1)
+        );
+
+        let yaml = "subscriptions:\n  enabled: true\n  interval: 500ms\n  source: primary\n  max_per_subject: '20'\nprod:\n  subscriptions:\n    interval: 2s\n";
+        let dev = parse(yaml, Mode::Dev).unwrap();
+        assert!(dev.subscriptions.enabled);
+        assert_eq!(
+            dev.subscriptions.interval.0,
+            std::time::Duration::from_millis(500)
+        );
+        assert_eq!(
+            dev.subscriptions.source,
+            crate::config::models::SubscriptionSource::Primary
+        );
+        assert_eq!(dev.subscriptions.max_per_subject, 20);
+        let prod = parse(yaml, Mode::Prod).unwrap();
+        assert_eq!(
+            prod.subscriptions.interval.0,
+            std::time::Duration::from_secs(2)
+        );
+
+        let on = Config::parse(
+            "subscriptions: { enabled: '${LIVE}' }",
+            Mode::Prod,
+            &env_of(&[("LIVE", "true")]),
+        )
+        .unwrap();
+        assert!(on.subscriptions.enabled);
+    }
+
+    #[test]
+    fn subscription_settings_are_checked() {
+        let err = parse(
+            "subscriptions: { interval: 10ms, batch: 0, max_per_instance: 0 }",
+            Mode::Prod,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("subscriptions.interval: must be at least 50ms"),
+            "{err}"
+        );
+        assert!(
+            err.contains("subscriptions.batch: must be at least 1"),
+            "{err}"
+        );
+        assert!(
+            err.contains("subscriptions.max_per_instance: must be at least 1"),
+            "{err}"
+        );
+        let err = parse("subscriptions: { live: true }", Mode::Prod)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown field `live`"), "{err}");
     }
 }

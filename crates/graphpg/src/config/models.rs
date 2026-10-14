@@ -76,6 +76,9 @@ pub struct Config {
     /// Event triggers: webhooks on row changes and on schedules.
     #[serde(default)]
     pub events: EventTriggersConfig,
+    /// Live queries: GraphQL subscriptions whose result is sent again when it changes.
+    #[serde(default)]
+    pub subscriptions: SubscriptionsConfig,
 }
 
 /// A number given as text, which is what `${NAME}` produces: `port: '${PORT}'`.
@@ -2239,4 +2242,123 @@ functions:
         assert_eq!(parsed.replica_urls, vec!["postgres://r1", "postgres://r2"]);
         assert_eq!(parsed.auth_jwt_secret.as_deref(), Some("jwtsecret"));
     }
+}
+
+/// Live queries (see `docs/subscriptions.md`): a `Subscription` type with the `Query` type's
+/// root fields, whose result is sent again whenever it changes. Every `interval`, each
+/// instance runs its subscriptions' queries again, batched, and sends the results that
+/// changed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SubscriptionsConfig {
+    /// Serve subscriptions at all (off by default: the schema has no `Subscription` type).
+    #[serde(default, deserialize_with = "switch")]
+    pub enabled: bool,
+    /// How often subscriptions' queries are run again.
+    #[serde(default = "default_subscription_interval")]
+    pub interval: Timeout,
+    /// Where they run: `replica` (one of `database.replicas` when there are any, else the
+    /// primary) or `primary`.
+    #[serde(default)]
+    pub source: SubscriptionSource,
+    /// Subscriptions open at once on an instance; more are refused.
+    #[serde(default = "default_max_subscriptions", deserialize_with = "lenient")]
+    pub max_per_instance: usize,
+    /// Subscriptions open at once per client (the token's `sub`, or the address without a
+    /// token), per instance; more are refused.
+    #[serde(default = "default_max_per_subject", deserialize_with = "lenient")]
+    pub max_per_subject: usize,
+    /// Subscriptions run in one statement at most (those of one operation, run with the
+    /// same claims).
+    #[serde(default = "default_subscription_batch", deserialize_with = "lenient")]
+    pub batch: usize,
+    /// Connections a round of re-runs uses at once.
+    #[serde(
+        default = "default_subscription_concurrency",
+        deserialize_with = "lenient"
+    )]
+    pub concurrency: usize,
+    /// Keep-alive messages on idle streams (WebSocket pings, SSE comments, empty multipart
+    /// parts), so proxies keep them open.
+    #[serde(default = "default_keep_alive")]
+    pub keep_alive: Timeout,
+    /// How long a WebSocket client has to send `connection_init`.
+    #[serde(default = "default_init_timeout")]
+    pub init_timeout: Timeout,
+}
+
+fn default_subscription_interval() -> Timeout {
+    Timeout(std::time::Duration::from_secs(1))
+}
+fn default_max_subscriptions() -> usize {
+    10_000
+}
+fn default_max_per_subject() -> usize {
+    100
+}
+fn default_subscription_batch() -> usize {
+    100
+}
+fn default_subscription_concurrency() -> usize {
+    4
+}
+fn default_keep_alive() -> Timeout {
+    Timeout(std::time::Duration::from_secs(15))
+}
+fn default_init_timeout() -> Timeout {
+    Timeout(std::time::Duration::from_secs(10))
+}
+
+impl Default for SubscriptionsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval: default_subscription_interval(),
+            source: SubscriptionSource::default(),
+            max_per_instance: default_max_subscriptions(),
+            max_per_subject: default_max_per_subject(),
+            batch: default_subscription_batch(),
+            concurrency: default_subscription_concurrency(),
+            keep_alive: default_keep_alive(),
+            init_timeout: default_init_timeout(),
+        }
+    }
+}
+
+impl SubscriptionsConfig {
+    /// Problems with the values, all reported together.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.interval.0 < std::time::Duration::from_millis(50) {
+            problems.push("subscriptions.interval: must be at least 50ms".to_string());
+        }
+        for (name, value) in [
+            ("max_per_instance", self.max_per_instance),
+            ("max_per_subject", self.max_per_subject),
+            ("batch", self.batch),
+            ("concurrency", self.concurrency),
+        ] {
+            if value == 0 {
+                problems.push(format!("subscriptions.{name}: must be at least 1"));
+            }
+        }
+        if self.keep_alive.0 < std::time::Duration::from_secs(1) {
+            problems.push("subscriptions.keep_alive: must be at least 1s".to_string());
+        }
+        if self.init_timeout.0.is_zero() {
+            problems.push("subscriptions.init_timeout: must be more than 0".to_string());
+        }
+        problems
+    }
+}
+
+/// Where subscriptions' queries run.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SubscriptionSource {
+    /// A read replica when there is one (`database.replicas`), else the primary.
+    #[default]
+    Replica,
+    /// Always the primary.
+    Primary,
 }

@@ -63,6 +63,7 @@ curl -X POST localhost:4000/rest/authors -H 'content-type: application/json' \
 - **Safety limits for both APIs**: page size, query depth, estimated cost, bulk size, request size and `statement_timeout`, enforced on the plan before any SQL runs; production errors never carry PostgreSQL's own messages ([limits](docs/configuration.md#safety-limits)). Optional [rate limits](docs/configuration.md#rate-limits) per client, and [persisted queries](docs/graphql-api.md#persisted-queries) with an allow-list of operations for production.
 - **Pinned schemas**: `graphpg schema export` writes the GraphQL SDL and the OpenAPI document; `--check` fails CI when they are out of date, and production refuses to start on drift.
 - **Event triggers**: signed webhooks on row changes, captured in the change's own transaction, and on cron schedules; at-least-once delivery shared by every instance, with retries and a dead letter ([events](docs/events.md)).
+- **Subscriptions (live queries)**, opt-in: any query field as a `subscription`, its result sent again when it changes, under Row-Level Security; over WebSocket (`graphql-transport-ws`), SSE and multipart HTTP; batched re-runs on read replicas, nothing installed in the database ([subscriptions](docs/subscriptions.md)).
 - **Apollo Federation v2** subgraph mode, `@defer` / `@stream`, streaming NDJSON/CSV export and `COPY` import, read replicas, OpenTelemetry spans.
 
 Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) renames and hides things and declares keys for views; it is not required.
@@ -80,6 +81,7 @@ Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) 
 | [Performance](docs/performance.md) | Indexes and settings, replicas |
 | [Observability](docs/observability.md) | Prometheus metrics, OpenTelemetry traces, metrics and logs (OTLP), JSON logs; Grafana LGTM |
 | [Event triggers](docs/events.md) | Webhooks on row changes (captured in the change's transaction) and on schedules: delivery, retries, signatures |
+| [Subscriptions](docs/subscriptions.md) | Live queries: transports, authentication and RLS, what they cost, scaling on replicas, Apollo Router |
 | [Other databases and files](docs/foreign-data.md) | Foreign data wrappers (`postgres_fdw`, `file_fdw`, Parquet, S3): keys, relations, authorization, performance and caveats |
 | [Extending graphpg](docs/extending.md) | Where computed fields, custom operations, side effects, jobs and external logic go, and why there are no plugins |
 | [Comparison](docs/comparison.md) | How graphpg differs from PostGraphile and Hasura (GraphQL) and from PostgREST (REST) |

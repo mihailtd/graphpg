@@ -430,6 +430,7 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &Config) -> Res
 
     catalog.federation_enabled = config.graphql.federation.enabled;
     catalog.federation_version = config.graphql.federation.version.clone();
+    catalog.subscriptions_enabled = config.subscriptions.enabled;
 
     for (name, entity) in &config.entities {
         let path = format!("entities.{name}");
