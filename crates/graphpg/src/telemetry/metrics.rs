@@ -188,6 +188,9 @@ pub struct Metrics {
     planning_duration: Family<HistogramCell>,
     cache_requests: Family<AtomicU64>,
     event_deliveries: Family<AtomicU64>,
+    subscriptions_active: AtomicI64,
+    subscription_rounds: Family<HistogramCell>,
+    subscription_results: Family<AtomicU64>,
     operation_names: Mutex<HashSet<String>>,
     pools: RwLock<Vec<WatchedPool>>,
     started: SystemTime,
@@ -246,6 +249,24 @@ pub(super) const EVENT_DELIVERIES: Descriptor = Descriptor {
         "Event webhook delivery attempts, by trigger and outcome (delivered, retry, dead, unknown).",
     labels: &["graphpg.event.trigger", "graphpg.event.outcome"],
 };
+pub(super) const SUBSCRIPTIONS_ACTIVE: Descriptor = Descriptor {
+    name: "graphpg.subscription.active",
+    unit: "{subscription}",
+    help: "Subscriptions (live queries) open on the instance.",
+    labels: &[],
+};
+pub(super) const SUBSCRIPTION_ROUNDS: Descriptor = Descriptor {
+    name: "graphpg.subscription.round.duration",
+    unit: "s",
+    help: "Duration of a round of subscription re-runs (every subscriptions.interval).",
+    labels: &[],
+};
+pub(super) const SUBSCRIPTION_RESULTS: Descriptor = Descriptor {
+    name: "graphpg.subscription.results",
+    unit: "{result}",
+    help: "Subscription results sent because they changed, by kind (data, error).",
+    labels: &["graphpg.subscription.result"],
+};
 pub(super) const POOL_COUNT: Descriptor = Descriptor {
     name: "db.client.connection.count",
     unit: "{connection}",
@@ -288,6 +309,9 @@ impl Metrics {
             planning_duration: Family::new(PLANNING_DURATION),
             cache_requests: Family::new(CACHE_REQUESTS),
             event_deliveries: Family::new(EVENT_DELIVERIES),
+            subscriptions_active: AtomicI64::new(0),
+            subscription_rounds: Family::new(SUBSCRIPTION_ROUNDS),
+            subscription_results: Family::new(SUBSCRIPTION_RESULTS),
             operation_names: Mutex::new(HashSet::new()),
             pools: RwLock::new(Vec::new()),
             started: SystemTime::now(),
@@ -444,6 +468,46 @@ impl Metrics {
         }
     }
 
+    /// A subscription was opened (`1`) or closed (`-1`).
+    pub fn subscription_active(&self, delta: i64) {
+        self.subscriptions_active
+            .fetch_add(delta, Ordering::Relaxed);
+        #[cfg(feature = "otel")]
+        if let Some(otel) = self.otel() {
+            otel.subscriptions_active(delta);
+        }
+    }
+
+    /// A round of subscription re-runs took `seconds`.
+    pub fn subscription_round(&self, seconds: f64) {
+        if self.prometheus() {
+            self.subscription_rounds
+                .cell(&[], HistogramCell::new)
+                .observe(seconds);
+        }
+        #[cfg(feature = "otel")]
+        if let Some(otel) = self.otel() {
+            otel.subscription_round(seconds);
+        }
+    }
+
+    /// `count` subscription results of `kind` (`data`, `error`) were sent.
+    pub fn subscription_results(&self, kind: &str, count: u64) {
+        if count == 0 {
+            return;
+        }
+        let values = [kind];
+        if self.prometheus() {
+            self.subscription_results
+                .cell(&values, || AtomicU64::new(0))
+                .fetch_add(count, Ordering::Relaxed);
+        }
+        #[cfg(feature = "otel")]
+        if let Some(otel) = self.otel() {
+            otel.subscription_results(&values, count);
+        }
+    }
+
     /// `name` while fewer than [`MAX_OPERATION_NAMES`] names were seen, else `_OTHER`.
     fn bounded_operation_name(&self, name: &str) -> String {
         let mut names = self.operation_names.lock().expect("metrics lock");
@@ -485,6 +549,7 @@ impl Metrics {
             &self.graphql_duration,
             &self.db_duration,
             &self.planning_duration,
+            &self.subscription_rounds,
         ] {
             let name = family.descriptor.prometheus_name(false);
             header(&mut out, &family.descriptor, &name, "histogram");
@@ -514,8 +579,19 @@ impl Metrics {
         let name = HTTP_ACTIVE.prometheus_name(false);
         header(&mut out, &HTTP_ACTIVE, &name, "gauge");
         let _ = writeln!(out, "{name} {}", self.http_active.load(Ordering::Relaxed));
+        let name = SUBSCRIPTIONS_ACTIVE.prometheus_name(false);
+        header(&mut out, &SUBSCRIPTIONS_ACTIVE, &name, "gauge");
+        let _ = writeln!(
+            out,
+            "{name} {}",
+            self.subscriptions_active.load(Ordering::Relaxed)
+        );
 
-        for family in [&self.cache_requests, &self.event_deliveries] {
+        for family in [
+            &self.cache_requests,
+            &self.event_deliveries,
+            &self.subscription_results,
+        ] {
             let name = family.descriptor.prometheus_name(true);
             header(&mut out, &family.descriptor, &name, "counter");
             for (values, cell) in family.sorted() {

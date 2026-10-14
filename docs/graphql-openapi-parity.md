@@ -75,7 +75,8 @@ The OpenAPI side is the REST API (`/rest`) and its generated OpenAPI 3.1 documen
 ## 4. What is left
 
 - **The batch / transaction endpoint** is the only capability of GraphQL that REST lacks and could have; it is a story of its own.
-- **Webhooks for GraphQL** wait for event delivery and subscriptions.
+- **Webhooks for GraphQL**: subscriptions are live queries (results), not change events; typed change events in the SDL would be a story of their own.
+- **Live results over REST** (`Accept: text/event-stream` on a resource): GraphQL has [subscriptions](subscriptions.md); the REST API has no stream of a resource yet. **Medium**: the same re-runs, planned from the REST grammar.
 - Everything else on the two lists above is a difference of protocol, kept on purpose.
 
 When a database feature is added, the question is the same as before: what does it become in the SDL, and what does it become in the OpenAPI document? This page is where the answer goes.

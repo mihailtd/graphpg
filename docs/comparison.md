@@ -32,7 +32,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Authentication | OAuth 2.0 resource server (JWKS, discovery) | Bring your own (middleware) | JWT or webhook |
 | Apollo Federation subgraph | Yes (v2) | Plugin | Yes (v3) |
 | `@defer` / `@stream` | Yes | Yes | No |
-| Subscriptions | No | Live queries and subscriptions through plugins | Yes |
+| Subscriptions | Live queries, opt-in: any query field, re-run every interval and sent when it changes, under RLS; WebSocket, SSE, multipart ([guide](subscriptions.md)) | Live queries and subscriptions through plugins | Yes (live queries and streaming) |
 | PostgreSQL 17/18 features (`JSON_TABLE` views, temporal keys, `RETURNING OLD`, `MERGE`) | Yes | Manual (custom SQL) | Manual |
 | Hierarchies (recursive, `ltree`) | Yes | Custom SQL or plugin | Custom SQL |
 | Search (trigram, pgvector, full-text, PostGIS, BM25) | Root fields from the indexes present | Plugins | Partial |
@@ -52,7 +52,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 ### When something else fits better
 
 - You need data from **APIs and services** (not databases) in a single query: Hasura or PostGraphile. Other databases and files reach graphpg through [foreign data wrappers](foreign-data.md).
-- You need **subscriptions** or an **admin console**: Hasura.
+- You need **streaming subscriptions** (each new row, from a cursor) or an **admin console**: Hasura. graphpg's subscriptions are live queries: the latest result, not each change (each change goes to [event triggers](events.md)).
 - You want to **rewrite how the schema is generated** (naming, field shapes, custom plugins): PostGraphile.
 
 ## Compared with PostgREST

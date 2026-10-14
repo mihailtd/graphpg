@@ -1665,6 +1665,9 @@ pub struct DatabaseCatalog {
     /// Federation version (e.g. "v2.3" or "v1").
     #[serde(default)]
     pub federation_version: Option<String>,
+    /// A `Subscription` type with the `Query` type's root fields (`subscriptions.enabled`).
+    #[serde(default)]
+    pub subscriptions_enabled: bool,
     /// Lookup maps derived from the catalog, built on first use. A catalog is immutable once
     /// inspection finishes; a schema reload builds a new catalog (and so a new index).
     #[serde(skip)]

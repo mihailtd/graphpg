@@ -11,6 +11,7 @@ pub mod reload;
 pub mod rest;
 pub mod router;
 pub(crate) mod sql_errors;
+pub mod subscriptions;
 pub mod watcher;
 
 pub use auth::{AuthError, AuthSessionContext, Authenticator};

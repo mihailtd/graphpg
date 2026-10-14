@@ -29,8 +29,19 @@ use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer, Expos
 /// Mounts the GraphQL API routes: `/graphql` (`POST`, and `GET` for queries), plus `/export`
 /// and `/import/{type_name}`.
 pub fn graphql_routes() -> Router<Arc<ServerState>> {
+    graphql_routes_with(false)
+}
+
+/// [`graphql_routes`], `GET /graphql` also upgrading to a WebSocket for subscriptions when
+/// `subscriptions` is on.
+pub fn graphql_routes_with(subscriptions: bool) -> Router<Arc<ServerState>> {
+    let graphql = if subscriptions {
+        post(graphql_handler).get(super::http::graphql_get_or_upgrade)
+    } else {
+        post(graphql_handler).get(graphql_get_handler)
+    };
     Router::new()
-        .route("/graphql", post(graphql_handler).get(graphql_get_handler))
+        .route("/graphql", graphql)
         .route("/export", post(export_handler))
         // An import streams NDJSON of any size: the body limit does not apply
         .route(
@@ -435,7 +446,7 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
     let limited = state.rate_limiter.is_some();
 
     if state.graphql_enabled {
-        let mut graphql = graphql_routes().layer(body_limit);
+        let mut graphql = graphql_routes_with(state.subscriptions.is_some()).layer(body_limit);
         if limited {
             graphql = graphql.layer(axum::middleware::from_fn_with_state(
                 state.clone(),

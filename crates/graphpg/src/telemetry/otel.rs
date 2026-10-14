@@ -5,7 +5,7 @@
 use super::metrics::{
     metrics, Descriptor, CACHE_REQUESTS, DB_DURATION, DURATION_BUCKETS, EVENT_DELIVERIES,
     GRAPHQL_DURATION, HTTP_ACTIVE, HTTP_DURATION, PLANNING_DURATION, POOL_COUNT, POOL_MAX,
-    POOL_PENDING,
+    POOL_PENDING, SUBSCRIPTIONS_ACTIVE, SUBSCRIPTION_RESULTS, SUBSCRIPTION_ROUNDS,
 };
 use crate::config::TelemetryConfig;
 use opentelemetry::metrics::{Counter, Histogram, Meter, ObservableUpDownCounter, UpDownCounter};
@@ -203,6 +203,9 @@ pub struct Instruments {
     planning_duration: Histogram<f64>,
     cache_requests: Counter<u64>,
     event_deliveries: Counter<u64>,
+    subscriptions_active: UpDownCounter<i64>,
+    subscription_rounds: Histogram<f64>,
+    subscription_results: Counter<u64>,
     /// Read from the watched pools at each export.
     _pools: Vec<ObservableUpDownCounter<i64>>,
 }
@@ -271,6 +274,17 @@ impl Instruments {
                 .with_unit(EVENT_DELIVERIES.unit)
                 .with_description(EVENT_DELIVERIES.help)
                 .build(),
+            subscriptions_active: meter
+                .i64_up_down_counter(SUBSCRIPTIONS_ACTIVE.name)
+                .with_unit(SUBSCRIPTIONS_ACTIVE.unit)
+                .with_description(SUBSCRIPTIONS_ACTIVE.help)
+                .build(),
+            subscription_rounds: histogram(&SUBSCRIPTION_ROUNDS),
+            subscription_results: meter
+                .u64_counter(SUBSCRIPTION_RESULTS.name)
+                .with_unit(SUBSCRIPTION_RESULTS.unit)
+                .with_description(SUBSCRIPTION_RESULTS.help)
+                .build(),
             _pools: vec![
                 pool_gauge(&POOL_COUNT, |p| {
                     vec![(p.idle, Some("idle")), (p.used, Some("used"))]
@@ -308,6 +322,19 @@ impl Instruments {
     pub fn cache_requests(&self, values: &[&str]) {
         self.cache_requests
             .add(1, &attributes(&CACHE_REQUESTS, values));
+    }
+
+    pub fn subscriptions_active(&self, delta: i64) {
+        self.subscriptions_active.add(delta, &[]);
+    }
+
+    pub fn subscription_round(&self, seconds: f64) {
+        self.subscription_rounds.record(seconds, &[]);
+    }
+
+    pub fn subscription_results(&self, values: &[&str], count: u64) {
+        self.subscription_results
+            .add(count, &attributes(&SUBSCRIPTION_RESULTS, values));
     }
 
     pub fn event_deliveries(&self, values: &[&str]) {

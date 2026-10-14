@@ -641,6 +641,16 @@ async fn run(
             .with_config(config.clone()),
     );
 
+    // Live queries: their re-runs, every `subscriptions.interval`
+    if let Some(hub) = &state.subscriptions {
+        hub.start(&state);
+        tracing::info!(
+            interval = %config.subscriptions.interval,
+            source = ?config.subscriptions.source,
+            "subscriptions (live queries) on: WebSocket (graphql-transport-ws), SSE and multipart at /graphql"
+        );
+    }
+
     if !state.replicas.is_empty() {
         state.refresh_replicas().await;
         let standbys = state

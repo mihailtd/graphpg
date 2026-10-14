@@ -708,7 +708,7 @@ impl ExecutionEngine {
     }
 
     /// Runs a statement returning one row with a `data` column, its estimates first.
-    async fn query_data<C: Connection>(
+    pub(crate) async fn query_data<C: Connection>(
         conn: &C,
         query: &CompiledQuery,
     ) -> Result<serde_json::Value, ExecutionError> {

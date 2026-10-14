@@ -34,6 +34,9 @@
     "events": {
       "$ref": "#/$defs/settings.events"
     },
+    "subscriptions": {
+      "$ref": "#/$defs/settings.subscriptions"
+    },
     "reload": {
       "$ref": "#/$defs/settings.reload"
     },
@@ -1846,6 +1849,71 @@
       },
       "additionalProperties": false
     },
+    "settings.subscriptions": {
+      "type": "object",
+      "description": "Live queries: a Subscription type with the Query type's root fields, whose result is sent again when it changes (re-run every interval, batched)",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "Serve subscriptions (default false)"
+        },
+        "interval": {
+          "type": "string",
+          "description": "How often subscriptions' queries run again (default 1s, at least 50ms), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+        },
+        "source": {
+          "enum": [
+            "replica",
+            "primary"
+          ],
+          "description": "Where they run: a read replica when there is one, or the primary (default replica)"
+        },
+        "max_per_instance": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "Subscriptions open at once on an instance (default 10000)"
+        },
+        "max_per_subject": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "Subscriptions open at once per client (token `sub`, or address), per instance (default 100)"
+        },
+        "batch": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "Subscriptions run in one statement at most (default 100)"
+        },
+        "concurrency": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "description": "Connections a round of re-runs uses at once (default 4)"
+        },
+        "keep_alive": {
+          "type": "string",
+          "description": "Keep-alive messages on idle streams (default 15s), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+        },
+        "init_timeout": {
+          "type": "string",
+          "description": "How long a WebSocket client has to send connection_init (default 10s), with a unit: `500ms`, `10s`, `5m`, `1h`, `7d`"
+        }
+      },
+      "additionalProperties": false
+    },
     "settings.reload": {
       "type": "object",
       "description": "Schema reload without a restart, in any mode: on NOTIFY <channel> and SIGHUP. The configuration is the one the server started with",
@@ -2459,6 +2527,9 @@
         },
         "events": {
           "$ref": "#/$defs/settings.events"
+        },
+        "subscriptions": {
+          "$ref": "#/$defs/settings.subscriptions"
         },
         "reload": {
           "$ref": "#/$defs/settings.reload"
