@@ -53,6 +53,11 @@ GRANT SELECT ON live_test.notes TO live_user;
 INSERT INTO live_test.notes VALUES (1, 'alice', 'a1'), (2, 'bob', 'b1'), (3, 'alice', 'a2');
 
 CREATE VIEW live_test.item_names AS SELECT id, name FROM live_test.items;
+-- Tables named like graphpg's own types (FHIR has a `subscriptions` table)
+CREATE TABLE live_test.subscriptions (id int PRIMARY KEY, topic text NOT NULL);
+CREATE TABLE live_test.page_info (id int PRIMARY KEY);
+INSERT INTO live_test.subscriptions VALUES (1, 'news');
+GRANT SELECT ON live_test.subscriptions, live_test.page_info TO live_user, live_anon;
 GRANT SELECT ON live_test.item_names TO live_user, live_anon;
 CREATE TYPE live_test.mood AS ENUM ('happy', 'sad');
 
@@ -274,6 +279,30 @@ async fn the_subscription_type_mirrors_the_query_type_only_when_enabled() {
     let mut catalog = (*state.current_catalog()).clone();
     catalog.subscriptions_enabled = false;
     assert!(!SchemaBuilder::generate_sdl(&catalog).contains("type Subscription"));
+}
+
+#[tokio::test]
+async fn tables_named_like_graphpgs_own_types_take_their_schemas_name() {
+    let (app, state) = app().await;
+    let sdl = SchemaBuilder::generate_sdl(&state.current_catalog());
+    assert!(
+        sdl.contains("type LiveTestSubscription implements Node"),
+        "the table's type"
+    );
+    assert!(sdl.contains("type LiveTestPageInfo implements Node"));
+    assert!(sdl.contains("\ntype Subscription {"), "the root type");
+    // Its fields keep their names, in Query and in Subscription
+    let mut events = sse(
+        &app,
+        "subscription { subscriptions { topic } }",
+        json!({}),
+        None,
+    )
+    .await;
+    assert_eq!(
+        events.next().await.1,
+        json!({ "data": { "subscriptions": [{ "topic": "news" }] } })
+    );
 }
 
 #[tokio::test]

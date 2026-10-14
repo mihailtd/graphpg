@@ -437,11 +437,12 @@ fn database_value(
         // GeoJSON, bound as its text
         (spatial, value) if spatial.is_spatial() => scalars::geojson(value, label),
         (_, J::String(name)) if enum_key.is_some() => {
-            match enum_key
-                .and_then(|k| catalog.find_enum(k))
-                .and_then(|e| e.label_of(&name))
-            {
-                Some(db_label) => J::String(db_label.to_string()),
+            match enum_key.and_then(|k| catalog.find_enum(k)) {
+                Some(e) => match e.label_of(&name) {
+                    Some(db_label) => J::String(db_label.to_string()),
+                    // A value GraphQL would refuse in a literal can come in a variable
+                    None => scalars::not_a_value_of(&e.type_name, J::String(name), label),
+                },
                 None => J::String(name),
             }
         }
@@ -2816,10 +2817,40 @@ impl<'a> PlanningContext<'a> {
             }
         }
         for cursor in [&after, &before].into_iter().flatten() {
-            if sort.len() > 1 && SqlCompiler::decode_composite_cursor(cursor).len() != sort.len() {
-                return Err(PlannerError::InvalidInput(format!(
+            let invalid = || {
+                PlannerError::InvalidInput(format!(
                     "Invalid cursor `{cursor}`: it was not issued by this connection with this `orderBy`"
-                )));
+                ))
+            };
+            if sort.len() > 1 {
+                if SqlCompiler::decode_composite_cursor(cursor).len() != sort.len() {
+                    return Err(invalid());
+                }
+                continue;
+            }
+            // A one-column cursor is the base64 of the key's text: anything else would reach
+            // PostgreSQL as a value of the key's type
+            use base64::Engine;
+            let text = base64::engine::general_purpose::STANDARD
+                .decode(cursor)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .filter(|text| !text.contains('\0'))
+                .ok_or_else(invalid)?;
+            let column = sort
+                .first()
+                .filter(|k| k.expr.is_none())
+                .and_then(|k| table_meta.get_column(&k.column));
+            // Types whose text output is also the form inputs are checked in
+            if let Some(col) = column.filter(|c| {
+                matches!(
+                    c.pg_type,
+                    PgType::Uuid | PgType::Int2 | PgType::Int4 | PgType::Int8
+                )
+            }) {
+                if !scalars::is_valid(&col.pg_type, serde_json::Value::String(text)) {
+                    return Err(invalid());
+                }
             }
         }
         let step = Step::PgConnection {
@@ -3897,7 +3928,13 @@ impl<'a> PlanningContext<'a> {
                     field_alias: key,
                     column_name: col.name.clone(),
                     is_range: col.pg_type.is_range(),
-                    output: self.plan_output(&col.pg_type, col.enum_key.as_deref(), None),
+                    extremes: crate::plan::step::Extremes::of(&col.pg_type),
+                    // A range's or composite's fields are those selected under it
+                    output: self.plan_output(
+                        &col.pg_type,
+                        col.enum_key.as_deref(),
+                        Some(&col_sel.children),
+                    ),
                 });
             }
             aggs.parts.push(AggregatePart {
@@ -3949,6 +3986,7 @@ impl<'a> PlanningContext<'a> {
                             field_alias: c.response_key().to_string(),
                             column_name: col.name.clone(),
                             is_range: false,
+                            extremes: Default::default(),
                             output: ValueOutput::Plain,
                         })
                     })
@@ -5050,11 +5088,11 @@ impl<'a> PlanningContext<'a> {
                 table_alias: table_alias.to_string(),
                 values: arr.iter().map(input).collect(),
                 is_not,
-                pg_cast: col.pg_type.sql_cast(),
+                pg_cast: json_compare_cast(col).or_else(|| col.pg_type.sql_cast()),
             })
         };
         let text = || value.as_str().map(str::to_string);
-        let cast = col.pg_type.sql_cast();
+        let cast = json_compare_cast(col).or_else(|| col.pg_type.sql_cast());
         let is_array = col.pg_type.is_array();
 
         // Regular expressions, `IS DISTINCT FROM`, and a comparison against any or all of a list
@@ -5083,6 +5121,9 @@ impl<'a> PlanningContext<'a> {
                 let like = if op.starts_with('i') { "ILIKE" } else { "LIKE" };
                 let quantifier = if op.ends_with("All") { "ALL" } else { "ANY" };
                 let list = value.as_array()?;
+                for item in list.iter().filter_map(|v| v.as_str()) {
+                    scalars::like_pattern(item.to_string(), &col.field_name);
+                }
                 return Some(template(
                     &format!("{{c}} {like} {quantifier}({{0}}::text[])"),
                     vec![pg_array_literal(&serde_json::Value::Array(list.clone()))],
@@ -5124,10 +5165,10 @@ impl<'a> PlanningContext<'a> {
             "greaterThan" => binary(">", input(value), cast),
             "greaterThanOrEqualTo" => binary(">=", input(value), cast),
             // User-supplied patterns keep their wildcards
-            "like" => pattern("LIKE", text()?),
-            "notLike" => pattern("NOT LIKE", text()?),
-            "ilike" => pattern("ILIKE", text()?),
-            "notIlike" => pattern("NOT ILIKE", text()?),
+            "like" => pattern("LIKE", scalars::like_pattern(text()?, &col.field_name)),
+            "notLike" => pattern("NOT LIKE", scalars::like_pattern(text()?, &col.field_name)),
+            "ilike" => pattern("ILIKE", scalars::like_pattern(text()?, &col.field_name)),
+            "notIlike" => pattern("NOT ILIKE", scalars::like_pattern(text()?, &col.field_name)),
             // Literal substrings: `%` and `_` in the value match themselves
             "startsWith" => pattern("LIKE", format!("{}%", escape_like(&text()?))),
             "notStartsWith" => pattern("NOT LIKE", format!("{}%", escape_like(&text()?))),
@@ -5378,6 +5419,12 @@ fn sort_key(table_meta: &TableMetadata, column: &str, descending: bool) -> SortK
 enum Lookup {
     Values(Vec<WhereCondition>),
     Join(JoinCondition),
+}
+
+/// `json` values compare as `jsonb`: `json` has no equality of its own, and its text keeps
+/// the whitespace it was written with.
+fn json_compare_cast(col: &ColumnMetadata) -> Option<String> {
+    (col.pg_type == PgType::Json).then(|| "jsonb".to_string())
 }
 
 fn column_cast(table_meta: &TableMetadata, column: &str) -> Option<String> {

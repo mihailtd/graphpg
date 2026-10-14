@@ -524,12 +524,44 @@ pub struct RelatedRows {
     pub junction: Option<JunctionJoin>,
 }
 
+/// How `min` and `max` of a column are computed: PostgreSQL has these aggregates for most
+/// types it can order, but not for `uuid`, `boolean`, `macaddr`, `ltree` or `citext`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Extremes {
+    /// `min(c)`, `max(c)`.
+    #[default]
+    Native,
+    /// `min(c::text)::uuid`: a uuid's text sorts as its bytes do.
+    UuidText,
+    /// `bool_and(c)`, `bool_or(c)`.
+    Bool,
+    /// The first value in the column's own order (`array_agg(c ORDER BY c)`), for types
+    /// without the aggregates.
+    Sorted,
+}
+
+impl Extremes {
+    /// How `min` and `max` of a column of `pg_type` are computed.
+    pub fn of(pg_type: &crate::catalog::PgType) -> Self {
+        use crate::catalog::PgType;
+        match pg_type {
+            PgType::Uuid => Self::UuidText,
+            PgType::Bool => Self::Bool,
+            PgType::MacAddr | PgType::MacAddr8 | PgType::Ltree | PgType::Citext => Self::Sorted,
+            _ => Self::Native,
+        }
+    }
+}
+
 /// A selected field in an aggregation group (min/max/sum/avg).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AggregateField {
     pub field_alias: String,
     pub column_name: String,
     pub is_range: bool,
+    /// How `min` and `max` are computed for the column's type.
+    #[serde(default)]
+    pub extremes: Extremes,
     /// Conversion of min/max values for the response.
     #[serde(default)]
     pub output: ValueOutput,
@@ -1183,6 +1215,29 @@ impl Step {
             id_cast: None,
             cursor_columns: Vec::new(),
             hypertable: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::PgType;
+
+    #[test]
+    fn min_and_max_of_types_postgresql_has_no_aggregate_for() {
+        assert_eq!(Extremes::of(&PgType::Int4), Extremes::Native);
+        assert_eq!(Extremes::of(&PgType::Text), Extremes::Native);
+        assert_eq!(Extremes::of(&PgType::TimestampTz), Extremes::Native);
+        assert_eq!(Extremes::of(&PgType::Uuid), Extremes::UuidText);
+        assert_eq!(Extremes::of(&PgType::Bool), Extremes::Bool);
+        for t in [
+            PgType::MacAddr,
+            PgType::MacAddr8,
+            PgType::Ltree,
+            PgType::Citext,
+        ] {
+            assert_eq!(Extremes::of(&t), Extremes::Sorted, "{t:?}");
         }
     }
 }

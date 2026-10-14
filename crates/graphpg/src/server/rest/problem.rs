@@ -268,6 +268,16 @@ impl ProblemDetails {
             .with_code("SOURCE_UNAVAILABLE");
         }
 
+        if err.is_input_error() {
+            let message = match root {
+                ExecutionError::InvalidInput(message) => message.clone(),
+                _ => crate::server::sql_errors::db_error(err)
+                    .map(|db| db.message().to_string())
+                    .unwrap_or_else(|| err.to_string()),
+            };
+            return Self::new(StatusCode::BAD_REQUEST, message).with_code("BAD_USER_INPUT");
+        }
+
         if err.is_timeout() {
             return Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,

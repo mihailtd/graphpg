@@ -1314,6 +1314,9 @@ impl Ctx {
     }
 }
 
+/// The largest `X-Debug-SQL` / `X-Debug-Explain` header sent (see `respond`).
+const MAX_DEBUG_HEADER_BYTES: usize = 8 * 1024;
+
 tokio::task_local! {
     /// What `debug.sql` and `debug.explain` collect during a request: the statements and the
     /// plans, sent back in `X-Debug-SQL` and `X-Debug-Explain` headers.
@@ -1337,8 +1340,19 @@ async fn respond(instance: String, work: impl Future<Output = RestResult>) -> Re
         .await;
     let mut response =
         result.unwrap_or_else(|problem| problem.with_instance(instance).into_response());
+    // A header over 8 KiB is refused by common clients and proxies (Node's limit is 16 KiB
+    // for all of them, Nginx's buffers 4 to 8 KiB): a larger value is served apart
     let encode = |value: &serde_json::Value| {
-        percent_encode(value.to_string().as_bytes(), URL_ENCODE_SET).to_string()
+        let encoded = percent_encode(value.to_string().as_bytes(), URL_ENCODE_SET).to_string();
+        if encoded.len() <= MAX_DEBUG_HEADER_BYTES {
+            return encoded;
+        }
+        let id = super::debug::keep_oversized(value.clone());
+        let pointer = serde_json::json!({
+            "omitted": format!("{} bytes, too large for a header", encoded.len()),
+            "at": format!("/debug/sql/{id}"),
+        });
+        percent_encode(pointer.to_string().as_bytes(), URL_ENCODE_SET).to_string()
     };
     if !debug.sql.is_empty() {
         set_header(

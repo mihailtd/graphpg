@@ -4,6 +4,8 @@ graphpg serves a REST API next to GraphQL, planned onto the same operation plan:
 
 A resource is a table, view or materialized view, named as in the database (`/rest/forums`; with several schemas, the default schema's table when names collide). Views follow what PostgreSQL allows: they are always readable, writable only where PostgreSQL can update them and a key is declared (`graphpg.yaml`), and read by key only once they have one. Coming from PostgREST? The [comparison](comparison.md#compared-with-postgrest) maps its grammar to this one. Rows use the API's field names (`archivedAt`) and carry the real primary key under the key column's name (`id` is the UUID, not a Relay global ID). For tables that are the parent of a table-per-type (CTI) hierarchy, rows automatically include `__typename` and subtype columns matching their concrete type. Subtype columns can also be filtered (`filter[seats][gte]=4`: some subtype row has a `seats` of at least 4) and ordered by (`order=seats`: parents without a subtype row sort as `NULL`); GraphQL's `Filter` and `OrderBy` inputs have them too.
 
+`GET /rest` lists what the API serves: its resources (`name`, `schema`, GraphQL `type` and `path`), its functions (`path` under `/rest/rpc/`), and the OpenAPI document's path when it is served.
+
 ## Strict by design
 
 Anything the API does not understand is a **400**, never ignored: an unknown query parameter, column, operator or body member, an invalid value, a body that is not an object. A typo cannot turn into an unfiltered read or a write that does nothing. Bodies and filters are checked against the same input types GraphQL uses, so nested writes are validated down to their members.
@@ -226,7 +228,7 @@ POST /rest/rpc/bump_counter   {"args": {"counterId": 1, "by": 5}}   → {"id": 1
 
 ## Debugging
 
-With `debug.sql` and `debug.explain` on (dev only, see [configuration](configuration.md)) every response, errors included, carries the statements it ran in `X-Debug-SQL` and, with `explain`, the `EXPLAIN ANALYZE` plans in `X-Debug-Explain`: JSON, percent-encoded. The counterpart of GraphQL's `extensions.sql` and `extensions.explain`.
+With `debug.sql` and `debug.explain` on (dev only, see [configuration](configuration.md)) every response, errors included, carries the statements it ran in `X-Debug-SQL` and, with `explain`, the `EXPLAIN ANALYZE` plans in `X-Debug-Explain`: JSON, percent-encoded. The counterpart of GraphQL's `extensions.sql` and `extensions.explain`. A header is at most 8 KiB (clients and proxies refuse larger ones: Node's limit is 16 KiB for all headers, Nginx's buffers 4 to 8 KiB); a larger value is replaced by `{"omitted": ..., "at": "/debug/sql/<id>"}`, where the full value is served (the last 50 are kept).
 
 ## Several schemas
 

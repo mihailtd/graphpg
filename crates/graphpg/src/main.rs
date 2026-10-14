@@ -511,11 +511,25 @@ async fn run(
             .is_some();
 
     // Pinned schemas: what the database generates now against the exported files
+    let pinned_openapi;
     {
         use graphpg::config::models::PinMode;
         use graphpg::schema_pin::{drifted, startup_check, Artifacts, PinStatus};
-        let artifacts = Artifacts::build(&catalog, &config, &default_schema, &schema);
-        let results = startup_check(&artifacts, &config);
+        // Generating them costs seconds on a large schema: only when one is pinned
+        let pinned = [
+            &config.export.graphql,
+            &config.export.subgraph,
+            &config.export.openapi,
+        ]
+        .iter()
+        .any(|path| std::path::Path::new(path.as_str()).exists());
+        let artifacts = (config.export.pin != PinMode::Off && pinned)
+            .then(|| Artifacts::build(&catalog, &config, &default_schema, &schema));
+        let results = artifacts
+            .as_ref()
+            .map(|a| startup_check(a, &config))
+            .unwrap_or_default();
+        pinned_openapi = artifacts.map(|a| a.openapi);
         for result in &results {
             if result.status == PinStatus::Missing {
                 tracing::debug!("{} ({}): no pinned file", result.artifact, result.path);
@@ -625,21 +639,24 @@ async fn run(
         );
     }
 
-    let state = Arc::new(
-        ServerState::new(pool, schema, catalog, default_schema, config.debug.into())
-            .with_mode(mode)
-            .with_error_detail(config.errors.detail)
-            .with_sql_comments(config.database.sql_comments)
-            .with_replicas(replicas)
-            .with_auth(authenticator)
-            .with_graphiql(config.graphql.ui)
-            .with_introspection(config.graphql.introspection)
-            .with_scalar(config.openapi.ui)
-            .with_graphql_enabled(config.graphql.enabled)
-            .with_openapi_enabled(config.openapi.enabled)
-            .with_persisted_queries(persisted)
-            .with_config(config.clone()),
-    );
+    let state = ServerState::new(pool, schema, catalog, default_schema, config.debug.into())
+        .with_mode(mode)
+        .with_error_detail(config.errors.detail)
+        .with_sql_comments(config.database.sql_comments)
+        .with_replicas(replicas)
+        .with_auth(authenticator)
+        .with_graphiql(config.graphql.ui)
+        .with_introspection(config.graphql.introspection)
+        .with_scalar(config.openapi.ui)
+        .with_graphql_enabled(config.graphql.enabled)
+        .with_openapi_enabled(config.openapi.enabled)
+        .with_persisted_queries(persisted)
+        .with_config(config.clone());
+    // The document the pinned-schema check generated is the one the server would build
+    let state = Arc::new(match pinned_openapi {
+        Some(doc) if state.serves_openapi_document() => state.with_openapi_document(doc),
+        _ => state,
+    });
 
     // Live queries: their re-runs, every `subscriptions.interval`
     if let Some(hub) = &state.subscriptions {

@@ -36,6 +36,36 @@ pub(crate) fn finish() -> Vec<InputError> {
     ERRORS.with(|e| std::mem::take(&mut *e.borrow_mut()))
 }
 
+/// A `LIKE` pattern, refused when it ends with the escape character: PostgreSQL fails on it,
+/// but only when a row's value matches up to it (a request that worked would fail once the
+/// data changes).
+pub(crate) fn like_pattern(pattern: String, label: &str) -> String {
+    let trailing = pattern.chars().rev().take_while(|c| *c == '\\').count();
+    if trailing % 2 == 1 {
+        report(
+            label,
+            &Value::String(pattern.clone()),
+            "a LIKE pattern (it ends with the escape character `\\`: write `\\\\` to match one)",
+        );
+    }
+    pattern
+}
+
+/// Reports `value` as not one of enum `type_name`'s values.
+pub(crate) fn not_a_value_of(type_name: &str, value: Value, label: &str) -> Value {
+    report(label, &value, &format!("a value of `{type_name}`"))
+}
+
+/// Whether `value` is a valid input of `pg_type`, leaving the errors collected so far as they
+/// are.
+pub(crate) fn is_valid(pg_type: &PgType, value: Value) -> bool {
+    let saved = finish();
+    convert(pg_type, value, "");
+    let valid = finish().is_empty();
+    ERRORS.with(|e| *e.borrow_mut() = saved);
+    valid
+}
+
 fn shown(value: &Value) -> String {
     match value {
         Value::String(s) => format!("\"{s}\""),
@@ -513,5 +543,40 @@ mod tests {
             "r",
         );
         assert_eq!(range, Value::String("(,\"5\"]".to_string()));
+    }
+
+    #[test]
+    fn like_patterns_cannot_end_with_the_escape_character() {
+        start();
+        for ok in [
+            "abc",
+            "a%",
+            "50\\%",
+            "ends with an escaped backslash \\\\",
+            "",
+        ] {
+            assert_eq!(like_pattern(ok.to_string(), "p"), ok);
+        }
+        assert!(finish().is_empty());
+        for bad in ["abc\\", "\\", "a\\\\\\"] {
+            like_pattern(bad.to_string(), "p");
+        }
+        let errors = finish();
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert!(errors[0].message.contains("escape character"));
+    }
+
+    #[test]
+    fn validity_is_checked_without_touching_the_errors_collected() {
+        start();
+        convert(&PgType::Uuid, Value::String("nope".to_string()), "first");
+        assert!(is_valid(
+            &PgType::Uuid,
+            Value::String("00000000-0000-0000-0000-000000000001".to_string())
+        ));
+        assert!(!is_valid(&PgType::Int4, Value::String("x".to_string())));
+        let errors = finish();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].path.as_deref(), Some("first"));
     }
 }

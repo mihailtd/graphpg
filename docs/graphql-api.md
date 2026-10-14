@@ -55,7 +55,7 @@ Connections page by **keyset**. The `orderBy` columns are followed by the primar
 
 ### Aggregates and grouped aggregates
 
-Every connection has `aggregates` (`min`/`max` of orderable columns, `sum`/`avg` of numeric ones) and `groupedAggregates`, over the rows its `condition` and `filter` select (before paging):
+Every connection has `aggregates` (`min`/`max` of orderable columns, `sum`/`avg` of numeric ones) and `groupedAggregates`, over the rows its `condition` and `filter` select (before paging). `min`/`max` work on every orderable type, including those PostgreSQL has no such aggregate for: `uuid`, `boolean` (`false` < `true`), `macaddr`, `ltree` and `citext` (in the type's own order, case-insensitive for `citext`). The `min` and `max` of a range column are ranges: the first and last in the range type's order (by lower bound, then upper):
 
 ```graphql
 ordersConnection(filter: { status: { notEqualTo: CANCELLED } }) {
