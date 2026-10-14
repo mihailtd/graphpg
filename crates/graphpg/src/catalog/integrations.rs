@@ -1,6 +1,6 @@
 //! Integrations with PostgreSQL extensions (see `docs/extensions.md`): what graphpg infers from
 //! an extension the database **uses**, not merely has installed. Each integration detects its
-//! use in the exposed schemas (hypertables, JSON Schema checks, queues, index access methods)
+//! use in the exposed schemas (hypertables, JSON Schema checks, index access methods, foreign tables)
 //! and can be switched off with `extensions.integrations.<name>: off`.
 use serde::{Deserialize, Serialize};
 
@@ -9,25 +9,21 @@ use serde::{Deserialize, Serialize};
 pub enum Integration {
     TimescaleDb,
     PgJsonschema,
-    Pgmq,
     Pgvectorscale,
     VectorChord,
     PgRoonga,
     PgStatStatements,
-    PgDuckdb,
     PostgresFdw,
 }
 
 impl Integration {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 7] = [
         Self::TimescaleDb,
         Self::PgJsonschema,
-        Self::Pgmq,
         Self::Pgvectorscale,
         Self::VectorChord,
         Self::PgRoonga,
         Self::PgStatStatements,
-        Self::PgDuckdb,
         Self::PostgresFdw,
     ];
 
@@ -36,12 +32,10 @@ impl Integration {
         match self {
             Self::TimescaleDb => "timescaledb",
             Self::PgJsonschema => "pg_jsonschema",
-            Self::Pgmq => "pgmq",
             Self::Pgvectorscale => "pgvectorscale",
             Self::VectorChord => "vectorchord",
             Self::PgRoonga => "pgroonga",
             Self::PgStatStatements => "pg_stat_statements",
-            Self::PgDuckdb => "pg_duckdb",
             Self::PostgresFdw => "postgres_fdw",
         }
     }
@@ -51,12 +45,10 @@ impl Integration {
         match self {
             Self::TimescaleDb => "timescaledb",
             Self::PgJsonschema => "pg_jsonschema",
-            Self::Pgmq => "pgmq",
             Self::Pgvectorscale => "vectorscale",
             Self::VectorChord => "vchord",
             Self::PgRoonga => "pgroonga",
             Self::PgStatStatements => "pg_stat_statements",
-            Self::PgDuckdb => "pg_duckdb",
             Self::PostgresFdw => "postgres_fdw",
         }
     }
@@ -78,12 +70,11 @@ impl Integration {
                  WHERE n.nspname = ANY($1) AND con.contype = 'c'
                    AND pg_get_constraintdef(con.oid) ~ '\\mjsonb?_matches_schema\\('"
             }
-            Self::Pgmq => "SELECT count(*) FROM pgmq.list_queues() WHERE $1::text[] IS NOT NULL",
             Self::Pgvectorscale => INDEXES_USING_DISKANN,
             Self::VectorChord => INDEXES_USING_VCHORD,
             Self::PgRoonga => INDEXES_USING_PGROONGA,
             Self::PostgresFdw => POSTGRES_FDW_TABLES,
-            Self::PgStatStatements | Self::PgDuckdb => return None,
+            Self::PgStatStatements => return None,
         })
     }
 
@@ -92,10 +83,9 @@ impl Integration {
         match self {
             Self::TimescaleDb => "hypertable",
             Self::PgJsonschema => "JSON Schema check",
-            Self::Pgmq => "queue",
             Self::Pgvectorscale | Self::VectorChord | Self::PgRoonga => "index",
             Self::PostgresFdw => "foreign table",
-            Self::PgStatStatements | Self::PgDuckdb => "",
+            Self::PgStatStatements => "",
         }
     }
 }
