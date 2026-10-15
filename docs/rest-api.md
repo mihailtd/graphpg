@@ -321,7 +321,7 @@ Errors are RFC 9457 `application/problem+json`:
 | 413 | A bulk create over `limits.bulk_rows`, or a body over `limits.request_body_bytes` |
 | 422 | A validation failure (not null, check, `*_REQUIRED`, …), or more than 10 000 groups |
 | 429 | Over the client's [rate limit](configuration.md#rate-limits) (`RATE_LIMITED`, with `Retry-After`) |
-| 503 | The database is unavailable, a statement ran past `limits.statement_timeout` (`STATEMENT_TIMEOUT`), or a [foreign data source](foreign-data.md#errors) is down (`SOURCE_UNAVAILABLE`) |
+| 503 | The database is unavailable or its connection was lost during the request (`DATABASE_UNAVAILABLE`), its schema changed under the request (`SCHEMA_CHANGED`), a statement ran past `limits.statement_timeout` (`STATEMENT_TIMEOUT`), or a [foreign data source](foreign-data.md#errors) is down (`SOURCE_UNAVAILABLE`) |
 
 In **prod** mode raw PostgreSQL messages never reach the client: unexpected failures say so in general terms, with a `requestId` that is also written to the server log together with the real error. **Dev** mode adds the detail.
 

@@ -22,19 +22,18 @@ pub fn start_schema_watcher(options: WatcherOptions, state: Arc<ServerState>) {
     });
 }
 
-async fn run_watcher_loop(
-    options: WatcherOptions,
-    state: Arc<ServerState>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    tracing::info!("dev mode: watching the database schema and the config file for changes");
-
-    // 1. Establish dedicated client connection for LISTEN
-    let (client, mut connection) = tokio_postgres::connect(&options.database_url, NoTls).await?;
-
-    // Channel for notifications
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(100);
-
-    // Spawn connection poller that receives notifications
+/// DDL notifications (`NOTIFY graphpg_watch` from an event trigger) on a connection of their
+/// own: `None` when it cannot connect. The channel closes when the connection fails.
+async fn listen_for_ddl(options: &WatcherOptions) -> Option<tokio::sync::mpsc::Receiver<()>> {
+    let (client, mut connection) = match tokio_postgres::connect(&options.database_url, NoTls).await
+    {
+        Ok(connected) => connected,
+        Err(e) => {
+            tracing::warn!(error = %e, "dev mode: the schema watcher cannot connect; changes are found by polling");
+            return None;
+        }
+    };
+    let (tx, rx) = tokio::sync::mpsc::channel::<()>(100);
     tokio::spawn(async move {
         let mut stream = futures::stream::poll_fn(move |cx| connection.poll_message(cx));
         use futures::StreamExt;
@@ -54,7 +53,7 @@ async fn run_watcher_loop(
         }
     });
 
-    // 2. Install PostgreSQL Event Trigger on DDL (ddl_command_end and sql_drop)
+    // Install the PostgreSQL event trigger on DDL (ddl_command_end and sql_drop)
     let setup_sql = r#"
         CREATE OR REPLACE FUNCTION _graphpg_watch_notify() RETURNS event_trigger AS $$
         BEGIN
@@ -87,8 +86,37 @@ async fn run_watcher_loop(
     } else {
         tracing::info!("dev mode: DDL event trigger installed (ddl_command_end, sql_drop)");
     }
+    // The connection lives as long as its client: until the watcher drops the channel
+    tokio::spawn(async move {
+        let client = client;
+        until_closed(&client).await;
+    });
+    Some(rx)
+}
 
-    // 3. Watch loop: listens for notifications AND periodically polls catalog state and the
+/// Waits until `client`'s connection is closed.
+async fn until_closed(client: &tokio_postgres::Client) {
+    while !client.is_closed() {
+        sleep(Duration::from_secs(5)).await;
+    }
+}
+
+/// The next DDL notification; never, without a listener.
+async fn next_notification(rx: &mut Option<tokio::sync::mpsc::Receiver<()>>) -> Option<()> {
+    match rx {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn run_watcher_loop(
+    options: WatcherOptions,
+    state: Arc<ServerState>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing::info!("dev mode: watching the database schema and the config file for changes");
+    let mut rx = listen_for_ddl(&options).await;
+
+    // Watch loop: listens for notifications AND periodically polls catalog state and the
     // config file
     let fingerprint = |state: Arc<ServerState>,
                        schemas: Vec<String>,
@@ -114,11 +142,18 @@ async fn run_watcher_loop(
 
     loop {
         tokio::select! {
-            _ = rx.recv() => {
+            notified = next_notification(&mut rx) => {
+                if notified.is_none() {
+                    // The listener's connection failed: poll until it reconnects
+                    rx = None;
+                    continue;
+                }
                 // Debounce multi-statement DDL migrations
                 sleep(Duration::from_millis(200)).await;
                 // Drain any pending notifications in channel
-                while rx.try_recv().is_ok() {}
+                if let Some(rx) = rx.as_mut() {
+                    while rx.try_recv().is_ok() {}
+                }
 
                 match reload_and_regenerate(&options, &state).await {
                     Ok(reloaded) => {
@@ -129,6 +164,9 @@ async fn run_watcher_loop(
                 }
             }
             _ = sleep(Duration::from_secs(2)) => {
+                if rx.is_none() {
+                    rx = listen_for_ddl(&options).await;
+                }
                 // Secondary fallback: poll catalog fingerprint
                 let current_fingerprint = current(&schemas).await;
                 if current_fingerprint != last_class_fingerprint {

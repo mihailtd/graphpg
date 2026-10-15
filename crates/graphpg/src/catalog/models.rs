@@ -631,6 +631,11 @@ pub struct ColumnMetadata {
     /// as a scalar (see `DatabaseCatalog::domains`); `pg_type` is its base type.
     #[serde(default)]
     pub domain: Option<String>,
+    /// Types whose Relay global IDs the column takes in place of its raw value: its table's
+    /// own for a single-column primary key, the referenced table's for a single-column foreign
+    /// key. A global ID of another type is refused.
+    #[serde(default)]
+    pub node_types: Vec<String>,
 }
 
 impl ColumnMetadata {
@@ -1217,6 +1222,7 @@ impl FunctionArgument {
             omit: false,
             readonly: false,
             domain: None,
+            node_types: Vec::new(),
         }
     }
 

@@ -879,6 +879,7 @@ pub async fn execute_incremental_stream(
                 return;
             }
         };
+        let client = crate::execution::engine::PanicSafe::new(client);
         if let Err(err) = client
             .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await
@@ -920,7 +921,7 @@ pub async fn execute_incremental_stream(
 
         // The snapshot only read; a connection that cannot end it is not returned to the pool
         if client.batch_execute("ROLLBACK").await.is_err() {
-            drop(deadpool_postgres::Object::take(client));
+            drop(deadpool_postgres::Object::take(client.into_inner()));
         }
         chunks.close().await;
     });

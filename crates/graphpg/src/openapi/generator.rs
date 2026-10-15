@@ -2897,6 +2897,7 @@ mod tests {
                     readonly: false,
                     enum_key: None,
                     domain: None,
+                    node_types: Vec::new(),
                 },
                 ColumnMetadata {
                     name: "email".to_string(),
@@ -2914,6 +2915,7 @@ mod tests {
                     readonly: false,
                     enum_key: None,
                     domain: None,
+                    node_types: Vec::new(),
                 },
             ],
             primary_key: vec!["id".to_string()],
@@ -3034,6 +3036,7 @@ mod tests {
             readonly: false,
             enum_key: None,
             domain: None,
+            node_types: Vec::new(),
         };
         let table = TableMetadata {
             timescale: None,

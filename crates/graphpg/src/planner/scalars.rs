@@ -51,6 +51,15 @@ pub(crate) fn like_pattern(pattern: String, label: &str) -> String {
     pattern
 }
 
+/// Reports `value`, the global ID of a `type_name`, passed where the ID of `expected` goes.
+pub(crate) fn wrong_node_type(type_name: &str, expected: &str, value: Value, label: &str) -> Value {
+    report(
+        label,
+        &value,
+        &format!("the ID of {expected} (it is the ID of a `{type_name}`)"),
+    )
+}
+
 /// Reports `value` as not one of enum `type_name`'s values.
 pub(crate) fn not_a_value_of(type_name: &str, value: Value, label: &str) -> Value {
     report(label, &value, &format!("a value of `{type_name}`"))

@@ -1252,6 +1252,7 @@ impl Ctx {
                 .get()
                 .await
                 .map_err(|e| self.unavailable(&e))?;
+            let client = crate::execution::engine::PanicSafe::new(client);
             tokio::spawn(
                 async move {
                     let mut plans = Vec::new();
@@ -1273,6 +1274,7 @@ impl Ctx {
                 .read_pool(None)
                 .await
                 .map_err(|e| self.unavailable(&e))?;
+            let client = crate::execution::engine::PanicSafe::new(client);
             tokio::spawn(
                 async move {
                     let mut plans = Vec::new();
@@ -1303,6 +1305,9 @@ impl Ctx {
             let _ = DEBUG.try_with(|d| d.borrow_mut().explain.extend(plans));
         }
         result.map_err(|err| {
+            if err.is_schema_changed() {
+                self.state.schema_out_of_date();
+            }
             ProblemDetails::from_execution_error(
                 &err,
                 &self.catalog,

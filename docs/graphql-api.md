@@ -169,7 +169,7 @@ Root mutation fields run **in order**, each as its own statement, inside one tra
 - A later field sees what earlier fields wrote (`createAuthor` then `createBook(input: { authorId })` in one request).
 - Inserts and updates return the row's key; the payload is then read by key in a separate statement, so nested relations reflect the write (`createBook { book { author { books { title } } } }` includes the new book).
 - If any field fails, the whole operation is rolled back and the error names the failing field.
-- Rows are addressed by their key: `id: ID!` (Relay ID or raw value) for a single-column key, one argument per column for a composite key. Relations without a key get no update/delete mutations.
+- Rows are addressed by their key, typed as the column (`updateBook(id: Int!)`), one argument per column for a composite key, or by global ID (`updateBookByNodeId(nodeId: ID!)`). Relations without a key get no update/delete mutations.
 
 ### Writes by filter
 
@@ -234,11 +234,16 @@ A query is one SQL statement, so a failure in it would fail every field. graphpg
 
 - **The successful path is unchanged:** one statement. Running the fields apart costs one statement per root field, and only when something fails. With one root field, nothing runs again: the failure is its own.
 - **Nulls follow the GraphQL spec.** A nullable root field (a lookup such as `forum(id:)`, a scalar function) becomes `null`. A non-null one (lists `[Forum!]!`, connections) cannot, so `data` itself is `null`. The request parameter `onError` changes that, as proposed for the spec in [RFC 1163](https://rfcs.graphql.org/rfcs/1163/): `"NULL"` leaves any failed field `null` and keeps the rest, while `"HALT"` fails the whole request without `data`, as before partial results. The default is `"PROPAGATE"`. The RFC's earlier names, `NO_PROPAGATE` and `ABORT`, are accepted too.
-- **Some failures still fail the whole request.** These are the ones that aren't about one field's data: `STATEMENT_TIMEOUT`, a lost connection to graphpg's own database, resource exhaustion and transient conflicts. Running the fields again would not help. A [foreign data source](foreign-data.md#errors) that is down is about its fields only: they fail with `SOURCE_UNAVAILABLE`.
+- **Some failures still fail the whole request.** These are the ones that aren't about one field's data: `STATEMENT_TIMEOUT`, a lost connection to graphpg's own database (`DATABASE_UNAVAILABLE`), a schema changed under the request (`SCHEMA_CHANGED`), resource exhaustion and transient conflicts. Running the fields again would not help. A [foreign data source](foreign-data.md#errors) that is down is about its fields only: they fail with `SOURCE_UNAVAILABLE`.
 - **Mutations are all or nothing**, as before: a failing mutation field rolls back the operation.
 - **HTTP status:** a response with `data` is `200`, whatever failed in it, per GraphQL over HTTP. With `data: null`, it has the status of its first error.
 
 The granularity is the root field. A failure deeper in a selection (a computed field of one row) fails the root field it is under.
+
+**Retryable failures** answer `503`, and a client may send the request again:
+
+- `DATABASE_UNAVAILABLE`: graphpg cannot reach its database, or the connection was lost while the request ran (a restart, a failover). Whether a mutation that was committing took effect is unknown: make retried writes idempotent (an upsert, `expectedVersion`).
+- `SCHEMA_CHANGED`: the request was compiled from a schema the database no longer has (a migration ran meanwhile). graphpg reads the database again by itself (with `reload.enabled`, the default), even without DDL watching, so the retry runs on the new schema, or is refused if it names what was removed.
 
 ## Rows before a write (`RETURNING OLD`, PostgreSQL 18)
 

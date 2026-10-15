@@ -72,7 +72,9 @@ CREATE POLICY editors_see_their_department ON documents FOR SELECT TO authentica
 
 If `roles.authenticated` is unset, requests run as graphpg's login role. RLS does not apply to superusers or `BYPASSRLS` roles, and only applies to table owners with `FORCE ROW LEVEL SECURITY`. graphpg warns at startup when the login role bypasses RLS.
 
-Each request runs in a transaction that starts with one statement setting `role` and the claim settings with `set_config(..., true)`. PostgreSQL discards them when the transaction ends, so a pooled connection never carries one request's identity into the next. This covers `/graphql`, `@defer`/`@stream` responses, `/export` and `/import`.
+Claims are data, never SQL: they are bound as parameters of `set_config`. A claim never replaces `claims_setting` or a mapped setting through `prefix` (a claim named `claims` under the prefix `request.jwt.` is skipped), and a token whose claims contain a NUL character, which PostgreSQL settings cannot hold, is refused (`401`).
+
+Each request runs in a transaction that starts with one statement setting `role` and the claim settings with `set_config(..., true)`. PostgreSQL discards them when the transaction ends, so a pooled connection never carries one request's identity into the next: a request whose client goes away still runs to its commit or rollback, and a connection whose request failed unexpectedly mid-transaction is closed rather than returned to the pool. This covers `/graphql`, `@defer`/`@stream` responses, `/export` and `/import`.
 
 ## GraphiQL
 

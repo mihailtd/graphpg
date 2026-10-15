@@ -83,9 +83,18 @@ pub async fn reload_schema(state: &ServerState) -> Result<(), ReloadError> {
     Ok(())
 }
 
-/// Reloads on `NOTIFY <channel>` and on `SIGHUP`, until the process ends.
+/// The source of reloads asked for by requests that found the schema out of date
+/// (`ServerState::schema_out_of_date`).
+pub const OUT_OF_DATE: &str = "schema out of date";
+/// Those reloads are at most this frequent: a statement can also fail so for a reason a
+/// reload does not change (a function referring to a missing table).
+const MIN_STALE_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Reloads on `NOTIFY <channel>`, on `SIGHUP` and when requests find the schema out of date,
+/// until the process ends.
 pub fn start_reload_listener(database_url: String, channel: String, state: Arc<ServerState>) {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<&'static str>(16);
+    let _ = state.reload_requests.set(tx.clone());
 
     #[cfg(unix)]
     {
@@ -104,9 +113,16 @@ pub fn start_reload_listener(database_url: String, channel: String, state: Arc<S
     tokio::spawn(listen(database_url, channel, "schema reload requests", tx));
 
     tokio::spawn(async move {
+        let mut last_stale: Option<std::time::Instant> = None;
         while let Some(source) = rx.recv().await {
             tokio::time::sleep(DEBOUNCE).await;
             while rx.try_recv().is_ok() {}
+            if source == OUT_OF_DATE {
+                if last_stale.is_some_and(|at| at.elapsed() < MIN_STALE_INTERVAL) {
+                    continue;
+                }
+                last_stale = Some(std::time::Instant::now());
+            }
             tracing::info!(source, "schema reload requested");
             if let Err(e) = reload_schema(&state).await {
                 tracing::error!(error = %e, "schema reload refused: still serving the previous schema");

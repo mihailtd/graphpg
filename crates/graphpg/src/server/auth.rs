@@ -278,6 +278,12 @@ impl Authenticator {
         // Without a `kid`, the key set's keys of the token's algorithm are tried in turn
         for key in &keys {
             match jsonwebtoken::decode::<Map<String, Value>>(token, key, &validation) {
+                // PostgreSQL text holds no NUL character: a claim with one cannot be a setting
+                Ok(data) if has_nul(&Value::Object(data.claims.clone())) => {
+                    return Err(AuthError::InvalidToken(
+                        "the token's claims contain a NUL character".to_string(),
+                    ))
+                }
                 Ok(data) => return Ok(data.claims),
                 Err(err) if *err.kind() == ErrorKind::InvalidSignature => continue,
                 Err(err) => return Err(AuthError::InvalidToken(describe(err.kind()))),
@@ -305,9 +311,15 @@ impl Authenticator {
         ));
         if !session.prefix.is_empty() {
             for (name, value) in &claims {
-                // Setting names are identifiers: `https://example.com/roles` gets none
-                if is_identifier(name) {
-                    settings.push((format!("{}{name}", session.prefix), setting_value(value)));
+                // Setting names are identifiers: `https://example.com/roles` gets none. A claim
+                // never replaces the claims setting or a mapped one (the token's issuer may let
+                // users choose some claims)
+                let setting = format!("{}{name}", session.prefix);
+                if is_identifier(name)
+                    && setting != session.claims_setting
+                    && !session.mappings.values().any(|m| *m == setting)
+                {
+                    settings.push((setting, setting_value(value)));
                 }
             }
         }
@@ -370,6 +382,16 @@ fn claim<'c>(claims: &'c Map<String, Value>, path: &str) -> Option<&'c Value> {
         current = current.as_object()?.get(part)?;
     }
     Some(current)
+}
+
+/// Whether a NUL character is in `value`, a key or a string of it.
+fn has_nul(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s.contains('\0'),
+        Value::Array(items) => items.iter().any(has_nul),
+        Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || has_nul(v)),
+        _ => false,
+    }
 }
 
 /// A claim as a setting value: strings as they are, other values as JSON.

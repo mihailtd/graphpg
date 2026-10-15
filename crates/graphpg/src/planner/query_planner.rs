@@ -365,6 +365,60 @@ impl<'a> QueryPlanner<'a> {
     }
 }
 
+/// The raw key of a Relay global ID passed for `col`: a column taking the IDs of known types
+/// (`ColumnMetadata::node_types`) refuses the ID of another one; other key-like columns take
+/// any. Values that are not the global ID of a type are left as they are.
+fn global_id_value(
+    catalog: &DatabaseCatalog,
+    col: &ColumnMetadata,
+    value: serde_json::Value,
+    label: &str,
+) -> serde_json::Value {
+    let Some((type_name, raw)) = value.as_str().and_then(SchemaBuilder::decode_global_id) else {
+        return value;
+    };
+    if col.node_types.contains(&type_name) {
+        return serde_json::Value::String(raw);
+    }
+    if catalog.table_for_type_any(&type_name).is_none() {
+        return value;
+    }
+    if !col.node_types.is_empty() {
+        let expected = col
+            .node_types
+            .iter()
+            .map(|t| format!("`{t}`"))
+            .collect::<Vec<_>>()
+            .join(" or ");
+        return super::scalars::wrong_node_type(&type_name, &expected, value, label);
+    }
+    let key_like = col.is_primary_key || col.name.ends_with("_id") || col.pg_type == PgType::Uuid;
+    if key_like {
+        serde_json::Value::String(raw)
+    } else {
+        value
+    }
+}
+
+/// The raw key a value names for `col` when looking a row up: `None` for the global ID of a
+/// type the column does not take (it names no row of this table).
+fn key_value(
+    catalog: &DatabaseCatalog,
+    col: &ColumnMetadata,
+    value: serde_json::Value,
+) -> Option<serde_json::Value> {
+    let Some((type_name, raw)) = value.as_str().and_then(SchemaBuilder::decode_global_id) else {
+        return Some(value);
+    };
+    if col.node_types.contains(&type_name) {
+        Some(serde_json::Value::String(raw))
+    } else if catalog.table_for_type_any(&type_name).is_some() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
 /// Unwraps a Relay global ID (`base64("Type:pk")`) passed where a raw key is expected.
 fn unwrap_global_id(value: serde_json::Value) -> serde_json::Value {
     if let serde_json::Value::String(s) = &value {
@@ -520,12 +574,7 @@ fn converted_value(
     label: &str,
     limits: Option<&TypeLimits>,
 ) -> serde_json::Value {
-    let key_like = col.is_primary_key || col.name.ends_with("_id") || col.pg_type == PgType::Uuid;
-    let value = if key_like {
-        unwrap_global_id(value)
-    } else {
-        value
-    };
+    let value = global_id_value(catalog, col, value, label);
     let value = database_value(
         catalog,
         &col.pg_type,
@@ -955,7 +1004,10 @@ impl<'a> PlanningContext<'a> {
                     break;
                 };
 
-                let unwrapped = unwrap_global_id(v.clone());
+                let Some(unwrapped) = key_value(self.catalog(), pk_col, v.clone()) else {
+                    all_found = false;
+                    break;
+                };
                 let pk_cast = column_cast(table_meta, pk_col_name);
                 if pk_cast.as_deref() == Some("uuid") {
                     if let Some(s) = unwrapped.as_str() {
@@ -993,7 +1045,10 @@ impl<'a> PlanningContext<'a> {
                         all_found = false;
                         break;
                     };
-                    let unwrapped = unwrap_global_id(v.clone());
+                    let Some(unwrapped) = key_value(self.catalog(), col, v.clone()) else {
+                        all_found = false;
+                        break;
+                    };
                     let cast = column_cast(table_meta, &col.name);
                     if cast.as_deref() == Some("uuid") {
                         if let Some(s) = unwrapped.as_str() {
