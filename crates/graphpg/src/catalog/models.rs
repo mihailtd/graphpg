@@ -1628,6 +1628,31 @@ impl<'a> Polymorphism<'a> {
     }
 }
 
+/// Names of the types graphpg defines itself (roots, scalars, shared inputs): a table, type
+/// or view cannot take one.
+pub const BUILTIN_TYPE_NAMES: &[&str] = &[
+    "Query",
+    "Mutation",
+    "Subscription",
+    "Node",
+    "PageInfo",
+    "JSON",
+    "String",
+    "Int",
+    "Float",
+    "Boolean",
+    "ID",
+    "ConflictAction",
+    "LTreeFilter",
+    "FullTextFilter",
+    "GeoJSONFilter",
+    "GeoJSONDistanceInput",
+    "BoundingBoxInput",
+    "GlobalSearchResults",
+    "GlobalSearchHit",
+    "GlobalSearchNode",
+];
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DatabaseCatalog {
     /// Extensions the schema uses that graphpg integrates with.
@@ -2916,7 +2941,7 @@ impl DatabaseCatalog {
 
         for t in &mut self.tables {
             let conflict = table_name_counts.get(&t.name).copied().unwrap_or(0) > 1;
-            let (prefix_pascal, prefix_camel) = if conflict {
+            let (_, prefix_camel) = if conflict {
                 (to_pascal_case(&t.schema), to_camel_case(&t.schema))
             } else {
                 (String::new(), String::new())
@@ -2924,8 +2949,10 @@ impl DatabaseCatalog {
 
             if t.type_name.is_empty() {
                 let base = table_to_type_name(&t.name);
-                t.type_name = if conflict {
-                    format!("{prefix_pascal}{base}")
+                // A table named like one of graphpg's own types (`subscriptions` would be the
+                // `Subscription` root) takes its schema's name in front, as clashing tables do
+                t.type_name = if conflict || BUILTIN_TYPE_NAMES.contains(&base.as_str()) {
+                    format!("{}{base}", to_pascal_case(&t.schema))
                 } else {
                     base
                 };
@@ -3211,28 +3238,7 @@ impl DatabaseCatalog {
 
     /// Reserved names of everything but enum and composite types.
     fn reserved_type_names_except_values(&self) -> HashSet<String> {
-        const BUILTINS: &[&str] = &[
-            "Query",
-            "Mutation",
-            "Subscription",
-            "Node",
-            "PageInfo",
-            "JSON",
-            "String",
-            "Int",
-            "Float",
-            "Boolean",
-            "ID",
-            "ConflictAction",
-            "LTreeFilter",
-            "FullTextFilter",
-            "GeoJSONFilter",
-            "GeoJSONDistanceInput",
-            "BoundingBoxInput",
-            "GlobalSearchResults",
-            "GlobalSearchHit",
-            "GlobalSearchNode",
-        ];
+        const BUILTINS: &[&str] = BUILTIN_TYPE_NAMES;
         const TABLE_SUFFIXES: &[&str] = &[
             "",
             "Condition",

@@ -380,7 +380,8 @@ prod:
 
 ### Development mode (`--mode dev`)
 
-- `watch.enabled` defaults to `true`: graphpg installs an event trigger on `ddl_command_end` and `sql_drop`, listens for asynchronous notifications (`LISTEN graphpg_watch`), and re-introspects live catalogs in ~1.5s without interrupting in-flight requests.
+- `watch.enabled` defaults to `true`: graphpg installs an event trigger on `ddl_command_end` and `sql_drop`, listens for asynchronous notifications (`LISTEN graphpg_watch`), and re-introspects live catalogs without interrupting in-flight requests (about half a second for a schema of 170 tables).
+- Event triggers need a superuser. Without one (managed databases, a less privileged role), graphpg polls a fingerprint of the catalog every 2 seconds instead: relations, columns (names, types, nullability, defaults), constraints, indexes, functions, types and enum values, comments, policies and grants, so any change the API is built from reloads it.
 - When `watch.export` is `true` (default), changes automatically write the files defined in `export:` (`export.graphql`, `export.openapi`, `export.subgraph`, `export.config_schema`).
 - `graphql.ui` (GraphiQL), `openapi.ui` (Scalar), `graphql.introspection`, `graphql.sdl` and `errors.detail: full` default to on, and `headers.preset` to `relaxed`.
 - The watcher hot-reload always uses the selected mode overlay.

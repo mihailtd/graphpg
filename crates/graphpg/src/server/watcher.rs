@@ -17,7 +17,7 @@ pub struct WatcherOptions {
 pub fn start_schema_watcher(options: WatcherOptions, state: Arc<ServerState>) {
     tokio::spawn(async move {
         if let Err(err) = run_watcher_loop(options, state).await {
-            tracing::error!("Dev mode schema watcher encountered error: {}", err);
+            tracing::error!(error = %err, "dev mode: the schema watcher stopped");
         }
     });
 }
@@ -26,7 +26,7 @@ async fn run_watcher_loop(
     options: WatcherOptions,
     state: Arc<ServerState>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("⚡ [dev mode] Starting PostgreSQL schema watcher (LISTEN graphpg_watch)...");
+    tracing::info!("dev mode: watching the database schema and the config file for changes");
 
     // 1. Establish dedicated client connection for LISTEN
     let (client, mut connection) = tokio_postgres::connect(&options.database_url, NoTls).await?;
@@ -46,7 +46,7 @@ async fn run_watcher_loop(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Watch connection error: {}", e);
+                    tracing::warn!(error = %e, "dev mode: the schema watcher's connection failed; changes are found by polling");
                     break;
                 }
                 _ => {}
@@ -72,18 +72,20 @@ async fn run_watcher_loop(
                 CREATE EVENT TRIGGER _graphpg_watch_drop ON sql_drop
                 EXECUTE FUNCTION _graphpg_watch_notify();
             END IF;
-        EXCEPTION WHEN OTHERS THEN
-            NULL;
         END $$;
 
         LISTEN graphpg_watch;
     "#;
 
+    // Event triggers need a superuser: without one, DDL is found by polling the catalog
     if let Err(e) = client.batch_execute(setup_sql).await {
-        tracing::warn!("Could not create event triggers (may lack superuser): {}. Falling back to active catalog polling.", e);
+        tracing::info!(
+            reason = %e,
+            "dev mode: no DDL event trigger (it needs a superuser); polling the catalog every 2 seconds"
+        );
         let _ = client.batch_execute("LISTEN graphpg_watch;").await;
     } else {
-        println!("✓ [dev mode] PostgreSQL event trigger installed on ddl_command_end and sql_drop");
+        tracing::info!("dev mode: DDL event trigger installed (ddl_command_end, sql_drop)");
     }
 
     // 3. Watch loop: listens for notifications AND periodically polls catalog state and the
@@ -103,7 +105,7 @@ async fn run_watcher_loop(
     };
     // The schemas the last load inspected (the config file may change them)
     let mut schemas = load_config(&options)
-        .map(|c| c.database.schemas)
+        .map(|c| c.database.resolved_schemas())
         .unwrap_or_default();
     let current = |schemas: &Vec<String>| {
         fingerprint(state.clone(), schemas.clone(), options.config_path.clone())
@@ -123,7 +125,7 @@ async fn run_watcher_loop(
                         schemas = reloaded;
                         last_class_fingerprint = current(&schemas).await;
                     }
-                    Err(e) => tracing::error!("Error reloading schema on DDL notification: {}", e),
+                    Err(e) => tracing::error!(error = %e, "dev mode: the schema could not be reloaded after DDL"),
                 }
             }
             _ = sleep(Duration::from_secs(2)) => {
@@ -131,14 +133,14 @@ async fn run_watcher_loop(
                 let current_fingerprint = current(&schemas).await;
                 if current_fingerprint != last_class_fingerprint {
                     last_class_fingerprint = current_fingerprint;
-                    println!("⚡ [dev mode] Catalog or config modification detected via polling...");
+                    tracing::debug!("dev mode: the catalog or the config file changed");
                     match reload_and_regenerate(&options, &state).await {
                         Ok(reloaded) if reloaded != schemas => {
                             schemas = reloaded;
                             last_class_fingerprint = current(&schemas).await;
                         }
                         Ok(_) => {}
-                        Err(e) => tracing::error!("Error reloading schema on catalog poll: {}", e),
+                        Err(e) => tracing::error!(error = %e, "dev mode: the schema could not be reloaded"),
                     }
                 }
             }
@@ -146,24 +148,56 @@ async fn run_watcher_loop(
     }
 }
 
-/// Compute a quick fingerprint of the catalog (relcount, max_oid, routine_count) across `schemas`
+/// A fingerprint of what the API is built from in `schemas`, compared between polls: a change
+/// to a relation, column, constraint, index, function, type or comment changes it. Empty when
+/// the database cannot be read.
 async fn query_catalog_fingerprint(state: &ServerState, schemas: &[String]) -> String {
     let client = match state.pool.get().await {
         Ok(c) => c,
         Err(_) => return String::new(),
     };
+    catalog_fingerprint(&client, schemas)
+        .await
+        .unwrap_or_default()
+}
 
-    let query = "
-        SELECT concat(
-            (SELECT count(*)::text || ':' || coalesce(max(oid)::text, '0') FROM pg_class WHERE relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname = ANY($1))),
-            '|',
-            (SELECT count(*)::text || ':' || coalesce(max(oid)::text, '0') FROM pg_proc WHERE pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname = ANY($1)))
-        );
-    ";
-    match client.query_one(query, &[&schemas]).await {
-        Ok(row) => row.get::<_, Option<String>>(0).unwrap_or_default(),
-        Err(_) => String::new(),
-    }
+/// A hash of the catalog rows the API is built from in `schemas` (see
+/// [`query_catalog_fingerprint`]).
+pub async fn catalog_fingerprint(
+    client: &tokio_postgres::Client,
+    schemas: &[String],
+) -> Result<String, tokio_postgres::Error> {
+    const SQL: &str = "
+WITH ns AS (SELECT oid FROM pg_namespace WHERE nspname = ANY($1)),
+rel AS (SELECT oid FROM pg_class WHERE relnamespace IN (SELECT oid FROM ns))
+SELECT md5(concat_ws('|',
+    (SELECT string_agg(concat_ws(',', oid, relname, relkind, relrowsecurity), ';' ORDER BY oid)
+       FROM pg_class WHERE oid IN (SELECT oid FROM rel)),
+    (SELECT string_agg(concat_ws(',', attrelid, attnum, attname, atttypid, atttypmod, attnotnull,
+                                 atthasdef, attgenerated, attisdropped), ';' ORDER BY attrelid, attnum)
+       FROM pg_attribute WHERE attrelid IN (SELECT oid FROM rel) AND attnum > 0),
+    (SELECT string_agg(concat_ws(',', oid, conname, contype, pg_get_constraintdef(oid)), ';' ORDER BY oid)
+       FROM pg_constraint WHERE connamespace IN (SELECT oid FROM ns)),
+    (SELECT string_agg(concat_ws(',', indexrelid, indisunique), ';' ORDER BY indexrelid)
+       FROM pg_index WHERE indrelid IN (SELECT oid FROM rel)),
+    (SELECT string_agg(concat_ws(',', oid, proname, md5(prosrc), provolatile,
+                                 pg_get_function_identity_arguments(oid), prorettype), ';' ORDER BY oid)
+       FROM pg_proc WHERE pronamespace IN (SELECT oid FROM ns)),
+    (SELECT string_agg(concat_ws(',', oid, typname, typtype), ';' ORDER BY oid)
+       FROM pg_type WHERE typnamespace IN (SELECT oid FROM ns)),
+    (SELECT string_agg(concat_ws(',', enumtypid, enumsortorder, enumlabel), ';' ORDER BY enumtypid, enumsortorder)
+       FROM pg_enum WHERE enumtypid IN (SELECT oid FROM pg_type WHERE typnamespace IN (SELECT oid FROM ns))),
+    (SELECT string_agg(concat_ws(',', objoid, objsubid, md5(description)), ';' ORDER BY objoid, objsubid)
+       FROM pg_description WHERE objoid IN (SELECT oid FROM rel)
+          OR objoid IN (SELECT oid FROM pg_proc WHERE pronamespace IN (SELECT oid FROM ns))
+          OR objoid IN (SELECT oid FROM pg_type WHERE typnamespace IN (SELECT oid FROM ns))),
+    (SELECT string_agg(concat_ws(',', oid, polname, polrelid), ';' ORDER BY oid)
+       FROM pg_policy WHERE polrelid IN (SELECT oid FROM rel)),
+    (SELECT string_agg(concat_ws(',', grantee, table_name, privilege_type), ';' ORDER BY grantee, table_name, privilege_type)
+       FROM information_schema.role_table_grants WHERE table_schema = ANY($1))
+))";
+    let row = client.query_one(SQL, &[&schemas]).await?;
+    Ok(row.get::<_, Option<String>>(0).unwrap_or_default())
 }
 
 /// The config file (if any) with the selected mode applied, as at startup.
@@ -241,17 +275,13 @@ async fn reload_and_regenerate(
         }
     }
 
-    let elapsed = start.elapsed();
-    println!(
-        "⚡ [dev mode] Schema hot-reloaded and re-exported (GraphQL SDL + OpenAPI + YAML JSON Schema) in {:?}",
-        elapsed
-    );
     tracing::info!(
-        elapsed = ?elapsed,
-        "Hot-reloaded GraphQL schema and re-exported schema artifacts"
+        elapsed = ?start.elapsed(),
+        exported = config.watch.export,
+        "dev mode: schema reloaded"
     );
 
-    Ok(config.database.schemas)
+    Ok(config.database.resolved_schemas())
 }
 
 fn write_file(path: &str, content: &str) -> std::io::Result<()> {

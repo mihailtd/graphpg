@@ -808,7 +808,7 @@ async fn test_rest_endpoint_enabled_and_disabled() {
     ));
     let app_enabled = create_router(state_enabled);
 
-    // GET /rest returns 200 OK with "hello world"
+    // GET /rest lists the resources and functions, as links
     let req = Request::builder()
         .method("GET")
         .uri("/rest")
@@ -817,7 +817,22 @@ async fn test_rest_endpoint_enabled_and_disabled() {
     let res = app_enabled.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = res.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(&body[..], b"hello world");
+    let index: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let users = index["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "users")
+        .expect("users is a resource");
+    assert_eq!(users["path"], "/rest/users");
+    assert_eq!(users["type"], "User");
+    assert!(index["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["path"].as_str().unwrap().starts_with("/rest/rpc/")));
+    // The document is not served by default outside dev mode: no link to it
+    assert!(index.get("openapi").is_none());
 
     // When openapi_enabled is false, GET /rest returns 404
     let state_disabled = Arc::new(

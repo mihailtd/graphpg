@@ -260,6 +260,10 @@ pub fn debug_routes(state: &ServerState) -> Router<Arc<ServerState>> {
     if on {
         router = router.route("/debug/statements", get(super::debug::statements_handler));
     }
+    // Debug values too large for a header (debug.sql and debug.explain are dev-only)
+    if state.debug.sql || state.debug.explain {
+        router = router.route("/debug/sql/{id}", get(super::debug::oversized_handler));
+    }
     router
 }
 

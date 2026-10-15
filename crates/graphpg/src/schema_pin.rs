@@ -241,6 +241,11 @@ fn check_openapi(generated: &Value, path: &str) -> PinStatus {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return PinStatus::Missing,
         Err(e) => return PinStatus::Unreadable(e.to_string()),
     };
+    // The file as `schema export` writes it: no need to parse it (a large schema's document
+    // is tens of megabytes, and parsed, several times that)
+    if normalize(&text) == normalize(&render_openapi(generated, path)) {
+        return PinStatus::Match;
+    }
     let pinned: Result<Value, String> = if is_yaml(path) {
         serde_yaml::from_str(&text).map_err(|e| e.to_string())
     } else {

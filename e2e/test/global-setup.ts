@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +26,10 @@ export async function setup(project: { provide: (key: "graphqlUrl", value: strin
   await resetDatabase();
   const port = await freePort();
   tempConfigPath = join(tmpdir(), `graphpg-e2e-${port}.yaml`);
-  writeFileSync(tempConfigPath, `server:\n  port: ${port}\ndatabase:\n  schemas: [blog]\n`);
+  writeFileSync(
+    tempConfigPath,
+    `server:\n  port: ${port}\ndatabase:\n  schemas: [blog]\ngraphql:\n  introspection: true\nsubscriptions:\n  enabled: true\n  interval: 200ms\n`,
+  );
 
   server = spawn(binary, ["--config", tempConfigPath], {
     env: { ...process.env, DATABASE_URL: databaseUrl },

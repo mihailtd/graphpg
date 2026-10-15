@@ -164,6 +164,23 @@ pub(crate) fn execution_error(
         );
     }
 
+    if err.is_input_error() {
+        return (
+            StatusCode::OK,
+            GraphQLError {
+                message: match root_error(err) {
+                    Some(ExecutionError::InvalidInput(message)) => message.clone(),
+                    _ => match sql_errors::db_error(err) {
+                        Some(db) => db.message().to_string(),
+                        None => err.to_string(),
+                    },
+                },
+                path,
+                extensions: Some(serde_json::json!({ "code": "BAD_USER_INPUT" })),
+            },
+        );
+    }
+
     if let Some(ExecutionError::TooManyRows { max, actual }) = root_error(err) {
         return (
             StatusCode::OK,
@@ -325,8 +342,9 @@ pub struct ServerState {
     pub openapi_spec: bool,
     /// Path to serve the OpenAPI document at (defaults to `/openapi.json`).
     pub openapi_path: String,
-    /// Cached OpenAPI 3.1 document.
-    pub openapi_document: std::sync::RwLock<Arc<serde_json::Value>>,
+    /// The OpenAPI 3.1 document, built when first asked for (on a large schema it takes
+    /// seconds and tens of megabytes, which a server that does not serve it never pays).
+    openapi_document: std::sync::Mutex<Option<Arc<serde_json::Value>>>,
     /// The engine configuration, if passed to the state.
     pub config: Option<crate::config::Config>,
     /// Runtime mode (dev or prod).
@@ -369,12 +387,6 @@ impl ServerState {
         default_schema: String,
         debug: DebugOptions,
     ) -> Self {
-        let openapi_doc = OpenApiGenerator::generate_with_schema(
-            &catalog,
-            &crate::config::Config::default(),
-            &default_schema,
-            Some(&schema),
-        );
         Self {
             pool,
             schema: std::sync::RwLock::new(Arc::new(schema)),
@@ -392,7 +404,7 @@ impl ServerState {
             openapi_enabled: true,
             openapi_spec: false,
             openapi_path: "/openapi.json".to_string(),
-            openapi_document: std::sync::RwLock::new(Arc::new(openapi_doc)),
+            openapi_document: std::sync::Mutex::new(None),
             config: None,
             mode: crate::config::Mode::Prod,
             introspection: false,
@@ -609,15 +621,15 @@ impl ServerState {
             .subscriptions
             .enabled
             .then(|| super::subscriptions::Hub::new(config.subscriptions.clone()));
-        let cat = self.current_catalog();
-        let doc = OpenApiGenerator::generate_with_schema(
-            &cat,
-            &config,
-            &self.default_schema,
-            Some(&self.current_schema()),
-        );
-        *self.openapi_document.write().unwrap() = Arc::new(doc);
+        *self.openapi_document.lock().unwrap() = None;
         self.config = Some(config);
+        self
+    }
+
+    /// Uses `doc` as the OpenAPI document (one already generated for this schema and
+    /// configuration, by the pinned-schema check at startup).
+    pub fn with_openapi_document(self, doc: serde_json::Value) -> Self {
+        *self.openapi_document.lock().unwrap() = Some(Arc::new(doc));
         self
     }
 
@@ -640,19 +652,25 @@ impl ServerState {
         self.catalog.read().unwrap().clone()
     }
 
+    /// The OpenAPI document of the current schema, generated on the first call after a start
+    /// or a reload.
     pub fn current_openapi_document(&self) -> Arc<serde_json::Value> {
-        self.openapi_document.read().unwrap().clone()
+        let mut doc = self.openapi_document.lock().unwrap();
+        if let Some(doc) = &*doc {
+            return doc.clone();
+        }
+        let config = self.config.clone().unwrap_or_default();
+        let generated = Arc::new(OpenApiGenerator::generate_with_schema(
+            &self.current_catalog(),
+            &config,
+            &self.default_schema,
+            Some(&self.current_schema()),
+        ));
+        *doc = Some(generated.clone());
+        generated
     }
 
     pub fn reload(&self, schema: Valid<Schema>, catalog: DatabaseCatalog) {
-        let cfg = self.config.as_ref().cloned().unwrap_or_default();
-        let doc = OpenApiGenerator::generate_with_schema(
-            &catalog,
-            &cfg,
-            &self.default_schema,
-            Some(&schema),
-        );
-        *self.openapi_document.write().unwrap() = Arc::new(doc);
         if let Some(persisted) = &self.persisted {
             for problem in persisted.check(&schema) {
                 tracing::warn!("persisted query manifest: {problem}");
@@ -660,6 +678,7 @@ impl ServerState {
         }
         *self.schema.write().unwrap() = Arc::new(schema);
         *self.catalog.write().unwrap() = Arc::new(catalog);
+        *self.openapi_document.lock().unwrap() = None;
         // Statements prepared, documents validated and operations compiled for the previous
         // schema will not be reused
         self.pool.manager().statement_caches.clear();
@@ -808,8 +827,50 @@ pub(crate) async fn ready_handler(State(state): State<Arc<ServerState>>) -> Resp
     }
 }
 
-pub(crate) async fn rest_handler() -> impl IntoResponse {
-    (StatusCode::OK, "hello world")
+/// `GET /rest`: what the REST API serves, as links: its resources (tables and views), its
+/// functions, and the OpenAPI document describing them when it is served.
+pub(crate) async fn rest_handler(State(state): State<Arc<ServerState>>) -> Response {
+    let catalog = state.current_catalog();
+    let path_of = |schema: &str, name: &str| {
+        if schema == state.default_schema {
+            format!("{}/{name}", super::rest::REST_PREFIX)
+        } else {
+            format!("{}/{schema}/{name}", super::rest::REST_PREFIX)
+        }
+    };
+    let resources: Vec<serde_json::Value> = catalog
+        .tables
+        .iter()
+        .filter(|t| {
+            let ops = &t.operations;
+            ops.list || ops.read || ops.create || ops.update || ops.delete
+        })
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name,
+                "schema": t.schema,
+                "type": t.type_name,
+                "path": path_of(&t.schema, &t.name),
+            })
+        })
+        .collect();
+    let functions: Vec<serde_json::Value> =
+        super::rest::rpc_functions(&catalog, &state.default_schema, None)
+            .into_iter()
+            .map(|f| {
+                let path = if f.schema == state.default_schema {
+                    format!("{}/rpc/{}", super::rest::REST_PREFIX, f.name)
+                } else {
+                    format!("{}/{}/rpc/{}", super::rest::REST_PREFIX, f.schema, f.name)
+                };
+                serde_json::json!({ "name": f.name, "schema": f.schema, "path": path })
+            })
+            .collect();
+    let mut index = serde_json::json!({ "resources": resources, "functions": functions });
+    if state.serves_openapi_document() {
+        index["openapi"] = serde_json::json!(state.openapi_path);
+    }
+    Json(index).into_response()
 }
 
 fn sdl_response(sdl: String) -> Response {

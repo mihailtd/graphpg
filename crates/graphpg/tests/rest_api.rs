@@ -1465,6 +1465,44 @@ async fn debug_headers_carry_the_sql_and_the_plans_in_dev() {
     // Failures carry them too
     let r = get(&explain, "/rest/forums?filter[name][nope]=1").await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // A value too large for a header (clients and proxies refuse those) is served apart, and
+    // the header says where
+    let r = get(
+        &explain,
+        "/rest/forums?first=1&include=messages.author,messages.forum.messages&first[messages]=2",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let mut pointed = 0;
+    for name in ["x-debug-sql", "x-debug-explain"] {
+        let raw = r.header(name).unwrap();
+        assert!(raw.len() <= 8 * 1024, "{name}: {} bytes", raw.len());
+        let value: Value = serde_json::from_str(
+            &percent_encoding::percent_decode_str(raw)
+                .decode_utf8()
+                .unwrap(),
+        )
+        .unwrap();
+        if let Some(at) = value.get("at").and_then(Value::as_str) {
+            pointed += 1;
+            let full = get(&explain, at).await;
+            assert_eq!(full.status, StatusCode::OK, "{at}");
+            assert!(full.body.is_array(), "{}", full.body);
+        }
+    }
+    assert!(
+        pointed > 0,
+        "the plans of four nested relations exceed 8 KiB"
+    );
+    assert_eq!(
+        get(&explain, "/debug/sql/nope").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(&off, "/debug/sql/nope").await.status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]

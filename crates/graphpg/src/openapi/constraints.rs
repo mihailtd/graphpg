@@ -123,6 +123,17 @@ pub fn keywords(table: &TableMetadata, column: &ColumnMetadata) -> Map<String, V
 
 fn keywords_of(constraints: &[ConstraintMetadata], column: &ColumnMetadata) -> Map<String, Value> {
     let mut out = Map::new();
+    // Most columns have no `CHECK` of their own: the patterns below are compiled per column,
+    // which on a schema of thousands of columns costs seconds when done for every one
+    let checks: Vec<&ConstraintMetadata> = constraints
+        .iter()
+        .filter(|c| {
+            c.kind == ConstraintKind::Check && c.columns.len() == 1 && c.columns[0] == column.name
+        })
+        .collect();
+    if checks.is_empty() {
+        return out;
+    }
     let numeric = matches!(
         column.pg_type,
         PgType::Int2 | PgType::Int4 | PgType::Float4 | PgType::Float8
@@ -150,9 +161,7 @@ fn keywords_of(constraints: &[ConstraintMetadata], column: &ColumnMetadata) -> M
     .unwrap();
     let pattern = Regex::new(&format!(r"^\(?{ident}\)? ~ '((?:[^']|'')*)'(?:::\w+)?$")).unwrap();
 
-    for constraint in constraints.iter().filter(|c| {
-        c.kind == ConstraintKind::Check && c.columns.len() == 1 && c.columns[0] == column.name
-    }) {
+    for constraint in checks {
         let Some(definition) = constraint.definition.trim().strip_prefix("CHECK ") else {
             continue;
         };

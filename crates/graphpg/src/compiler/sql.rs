@@ -433,7 +433,7 @@ impl SqlCompiler {
             .collect();
         let from = match source {
             Some(source) => Self::function_from(source, table_alias, &mut params),
-            None => Self::from_item(schema, table, table_alias, None),
+            None => Self::from_item(schema, table, table_alias),
         };
         let limit = first
             .map(|n| format!(" LIMIT {}", Self::bind_count(&mut params, n)))
@@ -682,28 +682,10 @@ impl SqlCompiler {
         }
     }
 
-    /// `FROM` item of a relation step: the target table, joined to its junction table for
-    /// many-to-many relations.
-    fn from_item(
-        schema: &str,
-        table: &str,
-        table_alias: &str,
-        join: Option<&JoinCondition>,
-    ) -> String {
-        let mut from = format!("{} {}", quote_qualified(schema, table), table_alias);
-        if let Some(junc) = join.and_then(|j| j.junction.as_ref()) {
-            let on = junc
-                .target
-                .iter()
-                .map(|(jc, tc)| format!("{} = {}", col("_junc", jc), col(table_alias, tc)))
-                .collect::<Vec<_>>()
-                .join(" AND ");
-            from.push_str(&format!(
-                " JOIN {} _junc ON {on}",
-                quote_qualified(&junc.junction_schema, &junc.junction_table)
-            ));
-        }
-        from
+    /// `FROM` item of a relation step: the target table. A many-to-many relation reaches it
+    /// through its junction table in [`join_clause`](Self::join_clause).
+    fn from_item(schema: &str, table: &str, table_alias: &str) -> String {
+        format!("{} {}", quote_qualified(schema, table), table_alias)
     }
 
     /// The children of every parent at once (`JoinCondition::batch`): rows whose key is
@@ -772,7 +754,7 @@ impl SqlCompiler {
             page.push(format!("{rn} <= {upto}"));
         }
         let page_sql = Self::where_sql(&page);
-        let from = Self::from_item(schema, table, table_alias, None);
+        let from = Self::from_item(schema, table, table_alias);
         let inner = format!(
             "SELECT * FROM (SELECT {table_alias}.*, row_number() OVER (PARTITION BY {key}{order_sql}) AS \"__rn\" FROM {from}{where_sql}) {table_alias}{page_sql}"
         );
@@ -897,7 +879,7 @@ impl SqlCompiler {
             .unwrap_or_default();
         let from = match tree {
             Some(tree) => Self::tree_from(schema, table, table_alias, tree, params),
-            None => Self::from_item(schema, table, table_alias, join_condition.as_ref()),
+            None => Self::from_item(schema, table, table_alias),
         };
 
         if *is_single {
@@ -3069,7 +3051,9 @@ impl SqlCompiler {
         let base_where = where_clauses.len();
 
         for (cursor, after) in [(after, true), (before, false)] {
-            let Some(cursor) = cursor.as_ref().filter(|_| !only_estimates) else {
+            // Cursors bound only the page: a connection reading no page (only `totalCount`, or
+            // aggregates) leaves them out, and must not bind them either
+            let Some(cursor) = cursor.as_ref().filter(|_| !only_estimates && needs_page) else {
                 continue;
             };
             // Single-column keysets use the raw value as cursor; others a JSON array
@@ -3162,7 +3146,7 @@ impl SqlCompiler {
         };
         let from = match source {
             Some(source) => Self::function_from(source, table_alias, params),
-            None => Self::from_item(schema, table, table_alias, join_condition.as_ref()),
+            None => Self::from_item(schema, table, table_alias),
         };
         let mut outer_pairs = Vec::new();
 
@@ -3219,7 +3203,7 @@ impl SqlCompiler {
                 );
                 let from = match source {
                     Some(source) => Self::function_from(source, table_alias, &mut estimate_params),
-                    None => Self::from_item(schema, table, table_alias, None),
+                    None => Self::from_item(schema, table, table_alias),
                 };
                 let sql = format!("SELECT 1 FROM {from}{}", Self::where_sql(&clauses));
                 let param = Self::bind_str(params, String::new());
@@ -3239,7 +3223,7 @@ impl SqlCompiler {
                     } else {
                         let from = match source {
                             Some(source) => Self::function_from(source, table_alias, params),
-                            None => Self::from_item(schema, table, table_alias, None),
+                            None => Self::from_item(schema, table, table_alias),
                         };
                         format!(
                             "SELECT count(*) FROM {from}{}",
@@ -3455,12 +3439,26 @@ impl SqlCompiler {
                     let c = col(table_alias, &f.column_name);
                     let expr = match part.function.as_str() {
                         "min" | "max" => {
-                            let arg = match (f.is_range, part.function.as_str()) {
-                                (true, "min") => format!("lower({c})"),
-                                (true, _) => format!("upper({c})"),
-                                _ => c,
+                            use crate::plan::step::Extremes;
+                            let min = part.function == "min";
+                            // A range's minimum is a range: the first in the range type's
+                            // order (by lower bound, then upper), as for types without the
+                            // aggregates
+                            let extremes = if f.is_range { Extremes::Sorted } else { f.extremes };
+                            let value = match extremes {
+                                Extremes::Native => format!("{}({c}){filter}", part.function),
+                                Extremes::UuidText => {
+                                    format!("{}({c}::text){filter}::uuid", part.function)
+                                }
+                                Extremes::Bool if min => format!("bool_and({c}){filter}"),
+                                Extremes::Bool => format!("bool_or({c}){filter}"),
+                                // NULLS LAST: a value wins over a NULL when there is one
+                                Extremes::Sorted => format!(
+                                    "(array_agg({c} ORDER BY {c}{} NULLS LAST){filter})[1]",
+                                    if min { "" } else { " DESC" }
+                                ),
                             };
-                            Self::value_output(&format!("{}({arg}){filter}", part.function), &f.output, 0)
+                            Self::value_output(&value, &f.output, 0)
                         }
                         "count_distinct" => match rows {
                             Some((from, conditions)) => {
@@ -4409,6 +4407,16 @@ impl SqlCompiler {
         Self::bind_str(params, Self::param_text(value))
     }
 
+    /// [`bind`](Self::bind) for a value read as `cast`: a `json` / `jsonb` value is bound as
+    /// JSON text, so a JSON string is the string (`"abc"`), not its characters.
+    fn bind_as(params: &mut Vec<String>, value: &serde_json::Value, cast: Option<&str>) -> usize {
+        if matches!(cast, Some("json") | Some("jsonb")) {
+            Self::bind_str(params, value.to_string())
+        } else {
+            Self::bind(params, value)
+        }
+    }
+
     /// Text form of a column value as bound parameter, formatting JSON/JSONB values as valid JSON.
     fn cv_text(cv: &ColumnValue) -> Option<String> {
         if cv.value.is_null() {
@@ -4484,6 +4492,8 @@ impl SqlCompiler {
     /// bare and its indexes are usable; otherwise both sides are compared as text.
     fn compare(column_expr: &str, operator: &str, param_idx: usize, cast: Option<&str>) -> String {
         match cast {
+            // A `json` column compares as `jsonb` (a no-op for a `jsonb` one)
+            Some("jsonb") => format!("({column_expr})::jsonb {operator} ${param_idx}::text::jsonb"),
             Some(ty) => format!("{} {} ${}::text::{}", column_expr, operator, param_idx, ty),
             None => format!("{}::text {} ${}", column_expr, operator, param_idx),
         }
@@ -4501,13 +4511,27 @@ impl SqlCompiler {
 
     /// FK join to the parent row. Both sides share a type, so no casts — keeps the
     /// child's FK index usable for the per-parent lateral lookup.
+    ///
+    /// A many-to-many relation is the target rows some junction row links to the parent
+    /// (`EXISTS`, a semi-join): each target row once, however many junction rows link it,
+    /// so counts, pages and cursors agree.
     fn join_clause(table_alias: &str, join: &JoinCondition) -> String {
         let pairs: Vec<String> = match &join.junction {
-            Some(junc) => junc
-                .source
-                .iter()
-                .map(|(jc, pc)| format!("{} = {}", col("_junc", jc), col(&join.parent_alias, pc)))
-                .collect(),
+            Some(junc) => {
+                let linked: Vec<String> = junc
+                    .target
+                    .iter()
+                    .map(|(jc, tc)| format!("{} = {}", col("_junc", jc), col(table_alias, tc)))
+                    .chain(junc.source.iter().map(|(jc, pc)| {
+                        format!("{} = {}", col("_junc", jc), col(&join.parent_alias, pc))
+                    }))
+                    .collect();
+                vec![format!(
+                    "EXISTS (SELECT 1 FROM {} _junc WHERE {})",
+                    quote_qualified(&junc.junction_schema, &junc.junction_table),
+                    linked.join(" AND ")
+                )]
+            }
             None => join
                 .columns
                 .iter()
@@ -4851,7 +4875,7 @@ impl SqlCompiler {
                 value,
                 pg_cast,
             } => {
-                let idx = Self::bind(params, value);
+                let idx = Self::bind_as(params, value, pg_cast.as_deref());
                 Self::compare(&col(table_alias, column), operator, idx, pg_cast.as_deref())
             }
             FilterExpr::Pattern {
@@ -4880,7 +4904,7 @@ impl SqlCompiler {
                     let placeholders: Vec<String> = values
                         .iter()
                         .map(|v| {
-                            let idx = Self::bind(params, v);
+                            let idx = Self::bind_as(params, v, pg_cast.as_deref());
                             match pg_cast.as_deref() {
                                 Some(cast) => format!("${}::text::{}", idx, cast),
                                 None => format!("${}", idx),
@@ -4888,11 +4912,11 @@ impl SqlCompiler {
                         })
                         .collect();
                     let op = if *is_not { "NOT IN" } else { "IN" };
-                    format!(
-                        "{} {op} ({})",
-                        col(table_alias, column),
-                        placeholders.join(", ")
-                    )
+                    let column = match pg_cast.as_deref() {
+                        Some("jsonb") => format!("({})::jsonb", col(table_alias, column)),
+                        _ => col(table_alias, column),
+                    };
+                    format!("{column} {op} ({})", placeholders.join(", "))
                 }
             }
             FilterExpr::IsNull {
@@ -5066,31 +5090,32 @@ impl SqlCompiler {
     /// subquery.
     fn related_rows(related: &RelatedRows) -> (String, Vec<String>) {
         let alias = &related.alias;
-        let mut from = format!(
+        let from = format!(
             "{} {alias}",
             quote_qualified(&related.schema, &related.table)
         );
         let mut clauses: Vec<String> = Vec::new();
         match &related.junction {
+            // Each related row once, however many junction rows link it (see `join_clause`)
             Some(j) => {
                 let junction = format!("{alias}_j");
-                let on: Vec<String> = j
+                let linked: Vec<String> = j
                     .target
                     .iter()
                     .map(|(jc, tc)| format!("{} = {}", col(&junction, jc), col(alias, tc)))
+                    .chain(j.source.iter().map(|(jc, pc)| {
+                        format!(
+                            "{} = {}",
+                            col(&junction, jc),
+                            col(&related.parent_alias, pc)
+                        )
+                    }))
                     .collect();
-                from.push_str(&format!(
-                    " JOIN {} {junction} ON {}",
+                clauses.push(format!(
+                    "EXISTS (SELECT 1 FROM {} {junction} WHERE {})",
                     quote_qualified(&j.junction_schema, &j.junction_table),
-                    on.join(" AND ")
+                    linked.join(" AND ")
                 ));
-                clauses.extend(j.source.iter().map(|(jc, pc)| {
-                    format!(
-                        "{} = {}",
-                        col(&junction, jc),
-                        col(&related.parent_alias, pc)
-                    )
-                }));
             }
             None => clauses.extend(related.columns.iter().map(|(rc, pc)| {
                 format!("{} = {}", col(alias, rc), col(&related.parent_alias, pc))

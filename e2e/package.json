@@ -5,6 +5,7 @@
   "scripts": {
     "generate": "drizzle-kit generate",
     "test": "vitest run",
+    "explore": "node src/explore-cli.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "format": "biome format --write .",

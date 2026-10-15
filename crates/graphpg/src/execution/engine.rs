@@ -29,6 +29,11 @@ pub enum ExecutionError {
     #[error("{0}")]
     Rejected(String),
 
+    /// An input value PostgreSQL cannot take, found before the statement ran (text with a
+    /// NUL character).
+    #[error("{0}")]
+    InvalidInput(String),
+
     /// `expectedVersion` did not match: the row changed since that version was read.
     #[error("the `{table}` row changed since `expectedVersion` was read")]
     StaleVersion { schema: String, table: String },
@@ -59,8 +64,32 @@ impl ExecutionError {
             }
             ExecutionError::EmptyResult => "empty_result".to_string(),
             ExecutionError::Rejected(_) => "rejected".to_string(),
+            ExecutionError::InvalidInput(_) => "invalid_input".to_string(),
             ExecutionError::StaleVersion { .. } => "stale_version".to_string(),
             ExecutionError::TooManyRows { .. } => "too_many_rows".to_string(),
+        }
+    }
+
+    /// The client's input is at fault: a value PostgreSQL cannot take, or one only the client
+    /// writes that PostgreSQL rejected (a JSON path, a regular expression or a `LIKE` pattern:
+    /// graphpg's own SQL has none, they are always bound parameters).
+    pub fn is_input_error(&self) -> bool {
+        match self {
+            ExecutionError::Mutation { source, .. } => source.is_input_error(),
+            ExecutionError::InvalidInput(_) => true,
+            ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => {
+                e.as_db_error().is_some_and(|db| {
+                    let code = db.code();
+                    *code == SqlState::INVALID_REGULAR_EXPRESSION
+                        || *code == SqlState::INVALID_ESCAPE_SEQUENCE
+                        // `\u0000` in a JSON value: no `jsonb` (nor text) holds it
+                        || *code == SqlState::UNTRANSLATABLE_CHARACTER
+                        || ((*code == SqlState::SYNTAX_ERROR
+                            || *code == SqlState::INVALID_TEXT_REPRESENTATION)
+                            && db.message().contains("jsonpath"))
+                })
+            }
+            _ => false,
         }
     }
 
@@ -558,6 +587,7 @@ impl ExecutionEngine {
                 error,
                 context: write.statement.context.clone(),
             };
+            Self::check_params(&query.params)?;
             let statement = conn.prepare(&query.sql).await?;
             let params = Self::param_refs(&query.params);
             let count = if write.returning.is_empty() && !write.collect {
@@ -712,6 +742,7 @@ impl ExecutionEngine {
         conn: &C,
         query: &CompiledQuery,
     ) -> Result<serde_json::Value, ExecutionError> {
+        Self::check_params(&query.params)?;
         let params = Self::resolved_params(conn.client(), query).await?;
         let statement = conn.prepare(&query.sql).await?;
         let row = conn
@@ -759,6 +790,18 @@ impl ExecutionEngine {
             .query(&explain_sql, &Self::param_refs(&params))
             .await?;
         Ok(rows.iter().map(|row| row.get::<_, String>(0)).collect())
+    }
+
+    /// Refuses text PostgreSQL cannot hold: a NUL character, which no text type (nor `jsonb`)
+    /// accepts. Without the check, the database's encoding error would be a server error.
+    pub(crate) fn check_params(params: &[String]) -> Result<(), ExecutionError> {
+        if params.iter().any(|p| p.contains('\0')) {
+            return Err(ExecutionError::InvalidInput(
+                "a text value contains the NUL character (\\u0000), which PostgreSQL cannot store"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn param_refs(params: &[String]) -> Vec<&(dyn ToSql + Sync)> {
