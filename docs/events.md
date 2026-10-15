@@ -13,6 +13,8 @@ graphpg calls your HTTP endpoints when rows change (**event triggers**) and on a
 
 ## How it works
 
+![A write and its event in one transaction; workers claim events with SKIP LOCKED leases, deliver signed webhooks, and dead-letter what keeps failing](../packages/website/src/public/diagrams/event-triggers.webp)
+
 1. **Capture, in the change's transaction.** graphpg installs triggers on the tables you name. They write each change into its own table, `graphpg_events.event`, in the same transaction as the change. An event exists if and only if its change committed: a rolled-back write raises nothing, and a committed one cannot lose its event.
 2. **Delivery, at least once.** A worker in each graphpg instance claims due events and `POST`s them to your endpoint. It wakes when a capture trigger notifies it (`NOTIFY`), when the next retry or scheduled event falls due, and at least every 5 seconds. Claims are leases taken with `FOR UPDATE SKIP LOCKED`, so any number of instances share the work without delivering an event twice. If an instance dies mid-delivery, its lease runs out and the event is delivered again.
 3. **Retries, then a dead letter.** A delivery that isn't acknowledged with a 2xx is retried with exponential backoff, until `retry.max_attempts`. Then the event is `dead`: kept, inspectable and replayable with SQL.
