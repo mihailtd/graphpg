@@ -1140,9 +1140,20 @@ impl TableMetadata {
         !self.primary_key.is_empty() || self.lookup_keys().next().is_some()
     }
 
-    /// Plural of the type name: `Forums`, `Categories`, `Addresses`.
+    /// Plural of the type name: `Forums`, `Categories`, `Addresses`. A type that is its own
+    /// plural (`Evidence`, `Series`) takes its table's name when that differs (`evidences`), else
+    /// `List` (`SeriesList`), so names of many rows never equal those of one.
     pub fn plural_type_name(&self) -> String {
-        pluralize(&self.type_name)
+        let plural = pluralize(&self.type_name);
+        if plural != self.type_name {
+            return plural;
+        }
+        let table = to_pascal_case(&self.name);
+        if table != self.type_name {
+            table
+        } else {
+            format!("{}List", self.type_name)
+        }
     }
 }
 
@@ -1168,24 +1179,10 @@ pub fn conflict_key_value(key: &UniqueKey, columns: &[&ColumnMetadata]) -> Strin
         .join("_AND_")
 }
 
-/// English plural of a PascalCase name (of its last word).
+/// English plural of a PascalCase name (of its head noun): `Categories`, `People`,
+/// `EpisodesOfCare`.
 pub fn pluralize(name: &str) -> String {
-    let lower = name.to_ascii_lowercase();
-    let consonant_y = lower.ends_with('y')
-        && !lower.ends_with("ay")
-        && !lower.ends_with("ey")
-        && !lower.ends_with("oy")
-        && !lower.ends_with("uy");
-    if consonant_y {
-        format!("{}ies", &name[..name.len() - 1])
-    } else if ["s", "x", "z", "ch", "sh"]
-        .iter()
-        .any(|s| lower.ends_with(s))
-    {
-        format!("{name}es")
-    } else {
-        format!("{name}s")
-    }
+    super::inflect::plural(name)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1805,6 +1802,8 @@ pub struct MutationField {
     /// Columns of the unique key addressing the row of an update or delete by unique key
     /// (`updateUserByEmail`); empty for the primary key.
     pub unique_key: Vec<String>,
+    /// The row is addressed by its Relay global ID (`updateUserByNodeId(nodeId:)`).
+    pub by_node_id: bool,
 }
 
 /// A field of a table's GraphQL object type and what backs it. Computed once per catalog and
@@ -2310,8 +2309,8 @@ impl DatabaseCatalog {
         out
     }
 
-    /// Root mutation fields of `table`, in schema order: per verb the single-row field, its
-    /// by-unique-key variants, then the many-rows field.
+    /// Root mutation fields of `table`, in schema order: per verb the single-row field (by
+    /// primary key), its by-node-ID and by-unique-key variants, then the many-rows field.
     pub fn table_mutation_fields(&self, table: &TableMetadata) -> Vec<MutationField> {
         let ops = table.operations;
         let writable = table.writable_columns().next().is_some();
@@ -2319,48 +2318,54 @@ impl DatabaseCatalog {
         let lookups: Vec<Vec<&ColumnMetadata>> =
             table.lookup_keys().map(|(_, cols)| cols).collect();
         let mut out = Vec::new();
-        let mut push = |action: MutationAction, key: &[&ColumnMetadata]| {
+        let node = table.implements_node();
+        let mut push = |action: MutationAction, key: &[&ColumnMetadata], by_node_id: bool| {
+            let suffix = match (by_node_id, key.is_empty()) {
+                (true, _) => "ByNodeId".to_string(),
+                (false, true) => String::new(),
+                (false, false) => unique_key_suffix(key),
+            };
             out.push(MutationField {
-                name: action.field_name(
-                    table,
-                    &if key.is_empty() {
-                        String::new()
-                    } else {
-                        unique_key_suffix(key)
-                    },
-                ),
+                name: action.field_name(table, &suffix),
                 table: table.name.clone(),
                 action,
                 unique_key: key.iter().map(|c| c.name.clone()).collect(),
+                by_node_id,
             });
         };
         if ops.create {
-            push(MutationAction::Create, &[]);
+            push(MutationAction::Create, &[], false);
         }
         if ops.create_many && writable {
-            push(MutationAction::CreateMany, &[]);
+            push(MutationAction::CreateMany, &[], false);
         }
         if ops.update && writable {
             if has_pk {
-                push(MutationAction::Update, &[]);
+                push(MutationAction::Update, &[], false);
+                if node {
+                    push(MutationAction::Update, &[], true);
+                }
             }
             for key in &lookups {
-                push(MutationAction::Update, key);
+                push(MutationAction::Update, key, false);
             }
         }
         if ops.update_many && writable {
-            push(MutationAction::UpdateMany, &[]);
+            push(MutationAction::UpdateMany, &[], false);
         }
         if ops.delete {
             if has_pk {
-                push(MutationAction::Delete, &[]);
+                push(MutationAction::Delete, &[], false);
+                if node {
+                    push(MutationAction::Delete, &[], true);
+                }
             }
             for key in &lookups {
-                push(MutationAction::Delete, key);
+                push(MutationAction::Delete, key, false);
             }
         }
         if ops.delete_many {
-            push(MutationAction::DeleteMany, &[]);
+            push(MutationAction::DeleteMany, &[], false);
         }
         out
     }
@@ -4187,19 +4192,10 @@ pub fn connection_field_names(table_name: &str) -> (String, String) {
     )
 }
 
+/// Type name of a table, its singular: `order_items` -> `OrderItem`, `people` -> `Person`,
+/// `episodes_of_care` -> `EpisodeOfCare`.
 pub fn table_to_type_name(table_name: &str) -> String {
-    let singular = if let Some(stem) = table_name.strip_suffix("ies") {
-        format!("{stem}y")
-    } else if let Some(stem) = table_name
-        .strip_suffix('s')
-        .filter(|_| !table_name.ends_with("ss"))
-    {
-        stem.to_string()
-    } else {
-        table_name.to_string()
-    };
-
-    to_pascal_case(&singular)
+    to_pascal_case(&super::inflect::singular(table_name))
 }
 
 /// Singular snake_case name of a table: `care_plans` -> `care_plan`, `users` -> `user`.

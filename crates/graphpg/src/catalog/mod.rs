@@ -1,3 +1,4 @@
+pub mod inflect;
 pub mod inspector;
 pub mod integrations;
 pub mod models;

@@ -569,7 +569,7 @@ async fn test_connect_or_create() {
             r#"mutation { createMember(input: { email: "n1@x", team: { connectOrCreate: { where: { name: "Red" }, create: { name: "Red" } } } }) { member { team { name } } } }"#,
             r#"mutation { createMember(input: { email: "n2@x", team: { connectOrCreate: { where: { name: "Red" }, create: { name: "Red" } } } }) { member { team { name } } } }"#,
             r#"{ teamsConnection(filter: { name: { equalTo: "Red" } }) { totalCount nodes { members { email } } } }"#,
-            r#"mutation { updateTeam(id: "VGVhbTox", input: { members: { connectOrCreate: [
+            r#"mutation { updateTeam(id: 1, input: { members: { connectOrCreate: [
                 { where: { email: "loner@x" }, create: { email: "loner@x" } },
                 { where: { email: "new@x" }, create: { email: "new@x", role: "lead" } }
             ] } }) { team { members { email role } } } }"#,
@@ -606,13 +606,13 @@ async fn test_connect_or_create() {
 #[tokio::test]
 async fn test_nested_update_delete_and_referenced_update() {
     let env = setup().await;
-    let team = r#"updateTeam(id: "VGVhbTox""#;
+    let team = r#"updateTeam(id: 1"#;
     let results = env
         .rolled_back(&[
             &format!(
                 r#"mutation {{ {team}, input: {{ members: {{ update: [{{ where: {{ email: "a@x" }}, data: {{ role: "owner" }} }}], delete: [{{ email: "b@x" }}] }} }}) {{ team {{ members {{ email role }} }} }} }}"#
             ),
-            r#"mutation { updateMember(id: "TWVtYmVyOjM=", input: { team: { update: { name: "Renamed" } } }) { member { email team { name } } } }"#,
+            r#"mutation { updateMember(id: 3, input: { team: { update: { name: "Renamed" } } }) { member { email team { name } } } }"#,
         ])
         .await;
     let updated = results[0].clone().unwrap();
@@ -636,7 +636,7 @@ async fn test_nested_update_delete_and_referenced_update() {
         "{err}"
     );
     let err = env
-        .rolled_back(&[r#"mutation { updateTeam(id: "VGVhbTox", input: { tags: { delete: [{ label: "old" }] } }) { team { name } } }"#])
+        .rolled_back(&[r#"mutation { updateTeam(id: 1, input: { tags: { delete: [{ label: "old" }] } }) { team { name } } }"#])
         .await
         .remove(0)
         .unwrap_err();
@@ -651,7 +651,7 @@ async fn test_sync_with_merge() {
         .contains("  sync: [CreateMemberInput!]\n"));
     let results = env
         .rolled_back(&[
-            r#"mutation { updateTeam(id: "VGVhbTox", input: { members: { sync: [
+            r#"mutation { updateTeam(id: 1, input: { members: { sync: [
                 { id: 1, email: "a@x", role: "lead" },
                 { email: "fresh@x", role: "member" }
             ] } }) { team { members { databaseId email role } } } }"#,
@@ -686,7 +686,7 @@ async fn test_sync_with_merge() {
     );
 
     let err = env
-        .rolled_back(&[r#"mutation { updateTeam(id: "VGVhbTox", input: { members: { sync: [{ email: "a@x" }, { email: "z@x", role: "x" }] } }) { team { name } } }"#])
+        .rolled_back(&[r#"mutation { updateTeam(id: 1, input: { members: { sync: [{ email: "a@x" }, { email: "z@x", role: "x" }] } }) { team { name } } }"#])
         .await
         .remove(0)
         .unwrap_err();
@@ -868,7 +868,7 @@ async fn test_read_replica_routing() {
     );
 
     // Mutations run on the primary and report its WAL position
-    let (_, headers, body) = graphql(state, json!({ "query": r#"mutation { updateAccount(id: "QWNjb3VudDox", input: { owner: "Doe, Jane" }) { account { owner } } }"# }), &[]).await;
+    let (_, headers, body) = graphql(state, json!({ "query": r#"mutation { updateAccount(id: 1, input: { owner: "Doe, Jane" }) { account { owner } } }"# }), &[]).await;
     assert_eq!(body["extensions"]["database"], "primary");
     let lsn = headers
         .get(WAL_POSITION_HEADER)

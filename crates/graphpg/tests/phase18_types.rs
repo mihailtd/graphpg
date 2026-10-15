@@ -359,14 +359,14 @@ async fn test_global_search_across_tables() {
     let env = setup().await;
     assert!(
         env.sdl
-            .contains("union GlobalSearchNode = Article | Note | People\n"),
+            .contains("union GlobalSearchNode = Article | Note | Person\n"),
         "{}",
         env.block("type", "Query")
     );
     let data = env
         .run(
             r#"{ globalSearch(query: "search") {
-                hits { score node { __typename ... on Article { title } ... on Note { text } ... on People { name } } }
+                hits { score node { __typename ... on Article { title } ... on Note { text } ... on Person { name } } }
                 hasMore
             } }"#,
         )
@@ -391,7 +391,7 @@ async fn test_global_search_across_tables() {
     assert!(
         found
             .iter()
-            .any(|(t, n)| *t == "People" && n["name"] == "Search Man"),
+            .any(|(t, n)| *t == "Person" && n["name"] == "Search Man"),
         "trigram-indexed types too: {found:?}"
     );
     assert!(found.iter().all(|(_, n)| n.get("title").is_some()

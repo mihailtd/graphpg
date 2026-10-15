@@ -269,7 +269,9 @@ async fn writes_go_through_postgres_fdw() {
     let id = SchemaBuilder::encode_global_id("Invoice", "900");
     graphql(
         &app,
-        &format!(r#"mutation {{ deleteInvoice(id: "{id}") {{ invoice {{ databaseId }} }} }}"#),
+        &format!(
+            r#"mutation {{ deleteInvoiceByNodeId(nodeId: "{id}") {{ invoice {{ databaseId }} }} }}"#
+        ),
     )
     .await;
     assert_eq!(count().await, 0);

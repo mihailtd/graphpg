@@ -417,7 +417,6 @@ fn key_args(table: &TableMetadata, key: &serde_json::Value) -> HashMap<String, s
     if table.primary_key.len() == 1 {
         if let Some(col) = table.get_column(&table.primary_key[0]) {
             args.insert(col.field_name.clone(), key.clone());
-            args.insert("id".to_string(), key.clone());
         }
     } else if let Some(obj) = key.as_object() {
         args.extend(obj.iter().map(|(k, v)| (k.clone(), v.clone())));
@@ -1595,6 +1594,7 @@ fn mutation_field_by(
         .into_iter()
         .find(|m| {
             m.action == action
+                && !m.by_node_id
                 && m.unique_key.len() == unique.len()
                 && unique.iter().all(|u| m.unique_key.contains(u))
         })

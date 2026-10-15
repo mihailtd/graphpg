@@ -793,18 +793,11 @@ impl SchemaBuilder {
         format!("enum {name} {{\n{values}}}\n\n")
     }
 
-    /// Arguments addressing one row by key: `(id: ID!)` for a single-column key (a Relay ID
-    /// or the raw key), one argument per key column otherwise.
-    fn key_args(
-        catalog: &DatabaseCatalog,
-        table: &TableMetadata,
-        relay_id: bool,
-    ) -> Option<String> {
+    /// Arguments addressing one row by key: one per key column, typed as the column; a row of
+    /// a table with a temporal key by its entity and a point in time.
+    fn key_args(catalog: &DatabaseCatalog, table: &TableMetadata) -> Option<String> {
         let key = table.key_columns()?;
-        // A row of a table with a temporal key is looked up by its entity and a point in time
-        if let (false, Some(period), Some(as_of)) =
-            (relay_id, table.period_key(), Self::as_of_arg(table))
-        {
+        if let (Some(period), Some(as_of)) = (table.period_key(), Self::as_of_arg(table)) {
             if table.primary_key.contains(&period.period) {
                 let mut args: Vec<String> = key
                     .iter()
@@ -814,9 +807,6 @@ impl SchemaBuilder {
                 args.push(as_of);
                 return Some(args.join(", "));
             }
-        }
-        if relay_id && table.implements_node() {
-            return Some("id: ID!".to_string());
         }
         Some(
             key.iter()
@@ -1497,7 +1487,7 @@ impl SchemaBuilder {
 
             // B. Single row by key (raw key values)
             if ops.read {
-                if let Some(args) = Self::key_args(catalog, table, false) {
+                if let Some(args) = Self::key_args(catalog, table) {
                     let doc = if args.contains(" asOf: ") {
                         format!("Lookup a single {type_name} by its key: the version valid at `asOf`, or the latest version.")
                     } else {
@@ -1803,16 +1793,20 @@ impl SchemaBuilder {
                     .iter()
                     .filter_map(|c| table.get_column(c))
                     .collect();
-                let key_args = if unique_key.is_empty() {
-                    Self::key_args(catalog, table, true)
+                // The row's key, typed as queries take it (every column of a temporal key)
+                let key_columns: Vec<&ColumnMetadata> = if unique_key.is_empty() {
+                    table.key_columns().unwrap_or_default()
                 } else {
-                    Some(
-                        unique_key
-                            .iter()
-                            .map(|c| format!("{}: {}!", c.field_name, catalog.column_type(c, true)))
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    )
+                    unique_key.clone()
+                };
+                let key_args = if field.by_node_id {
+                    "nodeId: ID!".to_string()
+                } else {
+                    key_columns
+                        .iter()
+                        .map(|c| format!("{}: {}!", c.field_name, catalog.column_type(c, true)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 };
                 let key_names = unique_key
                     .iter()
@@ -1837,16 +1831,16 @@ impl SchemaBuilder {
                         format!("inputs: [Create{type_name}Input!]!{on_conflict}"),
                     ),
                     MutationAction::Update => (
-                        if unique_key.is_empty() { String::new() } else { format!("Update the `{type_name}` with the given {key_names}.") },
-                        format!("{}, input: Update{type_name}Input!{expected_version}", key_args.unwrap_or_default()),
+                        if field.by_node_id { format!("Update the `{type_name}` whose global `id` is `nodeId`.") } else if unique_key.is_empty() { String::new() } else { format!("Update the `{type_name}` with the given {key_names}.") },
+                        format!("{}, input: Update{type_name}Input!{expected_version}", key_args),
                     ),
                     MutationAction::UpdateMany => (
                         format!("Update every `{type_name}` matching `where`."),
                         format!("where: {type_name}Filter!, set: Update{type_name}Input!, \"\"\"Allow a `where` without conditions, which updates every row (see `limits.require_filter`).\"\"\" unfiltered: Boolean = false"),
                     ),
                     MutationAction::Delete => (
-                        if unique_key.is_empty() { String::new() } else { format!("Delete the `{type_name}` with the given {key_names}.") },
-                        format!("{}{expected_version}", key_args.unwrap_or_default()),
+                        if field.by_node_id { format!("Delete the `{type_name}` whose global `id` is `nodeId`.") } else if unique_key.is_empty() { String::new() } else { format!("Delete the `{type_name}` with the given {key_names}.") },
+                        format!("{}{expected_version}", key_args),
                     ),
                     MutationAction::DeleteMany => {
                         (format!("Delete every `{type_name}` matching `where`."), format!("where: {type_name}Filter!, \"\"\"Allow a `where` without conditions, which deletes every row (see `limits.require_filter`).\"\"\" unfiltered: Boolean = false"))

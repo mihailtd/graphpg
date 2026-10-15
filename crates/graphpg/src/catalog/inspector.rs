@@ -2195,13 +2195,7 @@ fn extract_computed_field_name(func_name: &str, table_name: &str) -> String {
     if let Some(rest) = func_name.strip_prefix(&table_prefix) {
         return super::models::to_camel_case(rest);
     }
-    let singular = if let Some(stripped) = table_name.strip_suffix("ies") {
-        format!("{}y", stripped)
-    } else if let Some(stripped) = table_name.strip_suffix('s') {
-        stripped.to_string()
-    } else {
-        table_name.to_string()
-    };
+    let singular = super::inflect::singular(table_name);
     let singular_prefix = format!("{}_", singular);
     if let Some(rest) = func_name.strip_prefix(&singular_prefix) {
         return super::models::to_camel_case(rest);
