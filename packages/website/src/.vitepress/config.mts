@@ -29,6 +29,10 @@ export default defineConfig({
     ["meta", { name: "theme-color", content: "#336791" }],
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:title", content: "graphpg: GraphQL and REST for PostgreSQL" }],
+    ["meta", { property: "og:image", content: `${base}og.png` }],
+    ["meta", { name: "twitter:card", content: "summary_large_image" }],
+    ["meta", { name: "twitter:image", content: `${base}og.png` }],
+
     [
       "meta",
       {
@@ -79,6 +83,7 @@ export default defineConfig({
           text: "Getting started",
           items: [
             { text: "Introduction", link: "/docs/" },
+            { text: "AI agents", link: "/docs/ai-agents" },
             { text: "Configuration", link: "/docs/configuration" },
             { text: "Schema mapping", link: "/docs/schema-mapping" },
           ],

@@ -1,12 +1,12 @@
 ---
 layout: home
 title: graphpg
-titleTemplate: GraphQL and REST for PostgreSQL
+titleTemplate: GraphQL and REST for PostgreSQL, ready for AI agents
 
 hero:
   name: graphpg
-  text: GraphQL and REST, generated from your PostgreSQL schema
-  tagline: One Rust binary reads the catalogs, plans every request into a single SQL statement, and serves both APIs. No resolvers to write, no schema kept in two places.
+  text: Your PostgreSQL, as typed APIs for AI agents and the apps they build
+  tagline: One Rust binary turns your schema into GraphQL and REST, with vector and hybrid search from your indexes, MCP tools through Apollo's MCP Server, and Row-Level Security on every call.
   image:
     src: /logo.svg
     alt: graphpg
@@ -15,66 +15,202 @@ hero:
       text: Get started
       link: /docs/
     - theme: alt
-      text: See the features
-      link: "#everything-you-would-otherwise-write-by-hand"
+      text: graphpg for AI agents
+      link: /docs/ai-agents
     - theme: alt
       text: GitHub
       link: https://github.com/mihailtd/graphpg
 
 features:
+  - title: Retrieval from your indexes
+    details: A vector index and a lexical one give semantic, BM25 and hybrid search fields, fused by reciprocal rank in one SQL statement, scoped by filters and Row-Level Security.
+    link: /docs/ai-agents#retrieval-vector-bm25-and-hybrid-search
+    linkText: Search for RAG
+  - title: MCP tools for your agents
+    details: Put Apollo's MCP Server in front of graphpg and each GraphQL operation you list becomes a typed tool, run with the agent's own token.
+    link: /docs/ai-agents#mcp-tools-through-apollo-mcp-server
+    linkText: Set up MCP
+  - title: A contract coding agents can trust
+    details: The GraphQL SDL and the OpenAPI 3.1 document are generated from the database and pinned in CI; errors carry typed codes. Agents code against real types, not guesses.
+    link: /docs/ai-agents#agents-that-build-applications
+    linkText: Agentic development
+  - title: Guardrails in the database
+    details: Each agent gets a role, its rows and nothing else. Page size, depth, cost and timeouts are checked before any SQL runs; an allow-list can limit it to known operations.
+    link: /docs/ai-agents#guardrails
+    linkText: Guardrails
   - title: One statement per request
     details: Nested selections compile to lateral joins and JSON aggregation, so a deep query is one round trip and never N+1. Connections page by keyset, an index seek on every page.
     link: /docs/graphql-api
     linkText: GraphQL API
-  - title: A REST API with OpenAPI 3.1
-    details: Typed filters, embedding, ETags, nested and bulk writes, aggregates, functions and search at /rest, described by a generated OpenAPI 3.1 document and the bundled Scalar reference.
-    link: /docs/rest-api
-    linkText: REST API
-  - title: Your constraints become your API
-    details: Foreign keys become relations, unique keys lookups, enums and CHECKs become types, and violations come back as typed error codes like EMAIL_TAKEN or AUTHOR_NOT_FOUND.
-    link: /docs/schema-mapping
-    linkText: Schema mapping
-  - title: Authorization stays in the database
-    details: OAuth 2.0 bearer tokens are verified and their claims reach Row-Level Security policies. With RBAC on, each role sees only the schema its GRANTs allow.
-    link: /docs/authentication
-    linkText: Authentication
-  - title: Live queries and webhooks
-    details: Any query as a subscription over WebSocket, SSE or multipart HTTP, under RLS. Signed webhooks on row changes and cron schedules, captured in the change's own transaction.
-    link: /docs/subscriptions
-    linkText: Subscriptions
-  - title: Safe by default in production
-    details: Page size, depth, cost, bulk size, body size and statement_timeout are enforced on the plan before any SQL runs. Pinned schemas fail CI and startup on drift.
-    link: /docs/configuration#safety-limits
-    linkText: Safety limits
+  - title: Agents that react to change
+    details: Signed webhooks on row changes and schedules, captured in the change's own transaction, start agent work without polling. Live queries push new results.
+    link: /docs/events
+    linkText: Event triggers
 ---
 
 <div class="home-sections">
 
 <section class="home-section">
 
-<p class="eyebrow">How it works</p>
+<p class="eyebrow">Built for AI</p>
 
-## From catalogs to an API, at startup
+## Two ways AI uses graphpg
 
-<div class="pipeline">
-  <div class="pipeline-step">
-    <span class="pipeline-num">1</span>
-    <h3>Read the catalogs</h3>
-    <p>Tables, views, keys, constraints, types, functions, indexes and privileges, once at startup and again on <code>NOTIFY graphpg_reload</code>.</p>
+<div class="usecases">
+  <div class="usecase">
+    <h3>Agents that use your data</h3>
+    <p>Assistants and autonomous agents read and write your data through tools: search for retrieval, lookups and lists for context, mutations for actions.</p>
+    <ul>
+      <li>Vector, BM25 and hybrid search from the indexes you already have</li>
+      <li>MCP tools through Apollo's MCP Server, or OpenAPI tools over <code>/rest</code></li>
+      <li>The agent's own role, Row-Level Security, limits and an operation allow-list</li>
+      <li>Webhooks on row changes to start agent runs</li>
+    </ul>
+    <a href="./docs/ai-agents#agents-that-use-your-data">Agents that use your data →</a>
   </div>
-  <div class="pipeline-step">
-    <span class="pipeline-num">2</span>
-    <h3>Build both APIs</h3>
-    <p>A GraphQL schema and a REST API with its OpenAPI 3.1 document, planned onto one engine that shares filters, limits, errors and authorization.</p>
-  </div>
-  <div class="pipeline-step">
-    <span class="pipeline-num">3</span>
-    <h3>Compile each request</h3>
-    <p>Every query or write becomes one parameterized SQL statement, run as the caller's role with their claims, so Row-Level Security applies.</p>
+  <div class="usecase">
+    <h3>Agents that build applications</h3>
+    <p>Coding agents write the schema in SQL and the app against generated, typed APIs, with checks that catch their mistakes early.</p>
+    <ul>
+      <li>GraphQL SDL and OpenAPI 3.1 in files, for typed client generation</li>
+      <li>Drift between database and contract fails CI and production startup</li>
+      <li>Typed error codes from constraints, <code>@constraint</code> on fields</li>
+      <li>No resolvers: behaviour lives in SQL, where it can be tested</li>
+    </ul>
+    <a href="./docs/ai-agents#agents-that-build-applications">Agents that build applications →</a>
   </div>
 </div>
 
 </section>
+
+<section class="home-section">
+
+<p class="eyebrow">Retrieval</p>
+
+## Hybrid search is one field
+
+Create a vector index and a lexical one; graphpg adds semantic, lexical and hybrid search to both APIs. Hybrid search fuses the two rankings by reciprocal rank inside one SQL statement, after your filters and policies have scoped the candidates.
+
+::: code-group
+
+```sql [schema.sql]
+CREATE TABLE documents (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id uuid NOT NULL,
+    title text NOT NULL,
+    body text NOT NULL,
+    embedding vector(1536) NOT NULL
+);
+CREATE INDEX ON documents USING hnsw (embedding vector_cosine_ops);  -- semantic
+CREATE INDEX ON documents USING gist (title gist_trgm_ops);          -- lexical, or ParadeDB bm25
+```
+
+```graphql [GraphQL]
+query Retrieve($embedding: [Float!]!, $tenant: UUID!) {
+  documentsHybridSearch(query: "refund policy", vector: $embedding, first: 5,
+                        filter: { tenantId: { equalTo: $tenant } }) {
+    hits { score node { id title body } }
+  }
+}
+```
+
+```bash [REST]
+curl -X POST localhost:4000/rest/documents/search/hybrid \
+     -H 'content-type: application/json' \
+     -d '{"query": "refund policy", "vector": [0.012, -0.034, ...], "first": 5}'
+```
+
+:::
+
+<figure class="home-figure">
+  <img src="/diagrams/search-vectors.webp" alt="Hybrid search: a lexical and a semantic ranking computed in the database, fused by reciprocal rank and returned as one result" loading="lazy" width="1600" height="2000">
+</figure>
+
+</section>
+
+<section class="home-section">
+
+<p class="eyebrow">MCP</p>
+
+## Tools for your agents, from operations you choose
+
+[Apollo MCP Server](https://www.apollographql.com/docs/apollo-mcp-server) turns GraphQL operations into MCP tools. Point it at graphpg, list the operations an agent may run, and give it the agent's token: each call runs as that role, under its policies and limits.
+
+::: code-group
+
+```yaml [mcp.yaml]
+endpoint: http://localhost:4000/graphql
+transport:
+  type: stdio
+headers:
+  Authorization: "Bearer ${env.GRAPHPG_AGENT_TOKEN}"
+schema:
+  source: local
+  path: ./schema.graphql          # graphpg export-graphql
+operations:
+  source: local
+  paths:
+    - ./operations/SearchPosts.graphql
+    - ./operations/AddComment.graphql
+overrides:
+  mutation_mode: explicit         # listed mutations only
+```
+
+```graphql [SearchPosts.graphql]
+query SearchPosts($query: String!) {
+  postsFuzzySearch(query: $query, first: 5) {
+    hits { score node { id title excerpt(length: 200) } }
+  }
+}
+```
+
+```json [Claude Desktop]
+{
+  "mcpServers": {
+    "graphpg": {
+      "command": "apollo-mcp-server",
+      "args": ["/path/to/mcp.yaml"],
+      "env": { "GRAPHPG_AGENT_TOKEN": "..." }
+    }
+  }
+}
+```
+
+:::
+
+</section>
+
+<section class="home-section">
+
+<p class="eyebrow">Agentic development</p>
+
+## A contract coding agents can't drift from
+
+<div class="pipeline pipeline-4">
+  <div class="pipeline-step">
+    <span class="pipeline-num">1</span>
+    <h3>The agent writes SQL</h3>
+    <p>Tables, constraints, policies and functions in a migration. That is the whole backend.</p>
+  </div>
+  <div class="pipeline-step">
+    <span class="pipeline-num">2</span>
+    <h3>The API follows</h3>
+    <p>Dev mode reloads the schema and rewrites <code>schema.graphql</code> and <code>openapi.json</code> as it changes.</p>
+  </div>
+  <div class="pipeline-step">
+    <span class="pipeline-num">3</span>
+    <h3>Types catch mistakes</h3>
+    <p>Generated clients stop compiling where a change broke them; typed error codes say which constraint a write violated.</p>
+  </div>
+  <div class="pipeline-step">
+    <span class="pipeline-num">4</span>
+    <h3>CI holds the line</h3>
+    <p><code>graphpg schema export --check</code> fails on drift, and production refuses to start with a schema it was not built for.</p>
+  </div>
+</div>
+
+</section>
+
 
 <section class="home-section">
 
@@ -214,6 +350,21 @@ curl 'localhost:4000/rest/rpc/popular_tags'
     <p><code>graphpg advise --statements</code> finds the costliest operations in <code>pg_stat_statements</code> and the indexes they lack, checked with hypopg.</p>
   </div>
 </div>
+
+</section>
+
+<section class="home-section">
+
+<p class="eyebrow">Performance</p>
+
+## Fast where it counts
+
+Each request is one statement, so most of the time is PostgreSQL's own work, and graphpg keeps the rest small. Against PostgREST on the same database, the reads below ran at 1.4 to 3 times the throughput. Where PostgreSQL dominates it was about even: deep `offset` pagination, and bulk updates by filter (2% behind). Single-row writes ran at 1.1 to 1.4 times.
+
+<figure class="home-figure home-figure-wide">
+  <img src="/charts/benchmark-throughput.webp" alt="Requests per second, graphpg against PostgREST 16.4 on PostgreSQL 18.6: single row by key 74,031 against 24,606; keyset pagination 35,040 against 22,077; list of 20 rows 33,426 against 21,282; filtered list 32,501 against 19,894; 20 posts with author and comments 17,227 against 11,995" loading="lazy" width="1600" height="885">
+  <figcaption>graphpg 1.0.1 and PostgREST 16.4, one run of <code>benchmarks/rest</code> on one machine (2026-10-07). Reads only; every scenario, writes included, is in the <a href="./docs/comparison#throughput-against-postgrest">comparison</a>.</figcaption>
+</figure>
 
 </section>
 

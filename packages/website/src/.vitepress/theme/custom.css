@@ -184,6 +184,86 @@
   border-color: var(--vp-button-alt-hover-border);
 }
 
+.usecases {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+  .usecases {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.usecase {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  padding: 24px;
+  background: var(--vp-c-bg-soft);
+}
+
+.usecase h3 {
+  font-size: 18px;
+}
+
+.usecase p,
+.usecase li {
+  font-size: 14px;
+  color: var(--vp-c-text-2);
+}
+
+.usecase ul {
+  margin: 12px 0 16px;
+}
+
+.usecase a {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@media (min-width: 960px) {
+  .pipeline-4 {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 768px) and (max-width: 959px) {
+  .pipeline-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.home-figure {
+  margin: 32px auto 0;
+  max-width: 560px;
+}
+
+.home-figure-wide {
+  max-width: 880px;
+}
+
+.home-figure img {
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+
+.home-figure figcaption {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+}
+
+/* diagrams in the guides: dark artwork, kept to a readable width */
+.vp-doc p > img[src*="/diagrams/"] {
+  display: block;
+  max-width: min(100%, 560px);
+  margin: 24px auto;
+  border-radius: 12px;
+}
+
 /* wide reference tables (configuration, comparison) scroll instead of squeezing */
 .vp-doc table {
   display: block;

@@ -24,6 +24,9 @@ function rewriteTarget(target, from) {
   if (/^([a-z]+:|#|\/)/i.test(target)) return target;
   const [path, hash = ""] = target.split(/(?=#)/);
   const repoPath = posix.normalize(posix.join(posix.dirname(from), path)).replace(/\/$/, "");
+  // the site's own assets (images the docs and README show) are served from its root
+  const publicDir = "packages/website/src/public/";
+  if (repoPath.startsWith(publicDir)) return `/${repoPath.slice(publicDir.length)}${hash}`;
   const page = pages.get(repoPath);
   if (page) {
     const link = posix.relative(posix.dirname(pages.get(from)), page) || posix.basename(page);
@@ -68,8 +71,9 @@ for (const [from, to] of pages) {
   let markdown = readFileSync(join(root, from), "utf8");
   const fields = { source: from };
   if (from === "README.md") {
-    // The introduction: the README without its title, which the site's home page already shows.
-    markdown = markdown.replace(/^# graphpg\n/, "# Introduction\n");
+    // The introduction: the README without its title and cover image, which the site's home
+    // page already shows.
+    markdown = markdown.replace(/^[\s\S]*?^# graphpg\n/m, "# Introduction\n");
     fields.title = "Introduction";
   }
   writeFileSync(join(src, to), frontmatter(fields) + rewriteLinks(markdown, from));

@@ -5,3 +5,4 @@ src/.vitepress/release.json
 # vitepress
 src/.vitepress/cache/
 src/.vitepress/dist/
+.assets-unused/
