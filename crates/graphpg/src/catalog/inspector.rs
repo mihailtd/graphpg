@@ -378,7 +378,15 @@ impl<'a> CatalogInspector<'a> {
         schema_names: &[&str],
         catalog: &DatabaseCatalog,
     ) -> Result<Vec<Advice>, CatalogError> {
-        let mut advice = Vec::new();
+        // Types named by graphpg because the name derived from the database was taken
+        let mut advice: Vec<Advice> = catalog
+            .renamed_types
+            .iter()
+            .map(|r| Advice {
+                level: AdviceLevel::Warning,
+                message: r.message(),
+            })
+            .collect();
         let rows = self
             .client
             .query(
@@ -1932,6 +1940,20 @@ pub fn finalize(
     catalog.apply_comment_hints();
     catalog.assign_default_names();
     crate::config::apply_presentation(&mut catalog, config).map_err(CatalogError::Config)?;
+    // A table the config names was not renamed after all
+    let names: std::collections::HashMap<String, String> = catalog
+        .tables
+        .iter()
+        .map(|t| {
+            (
+                format!("table `{}.{}`", t.schema, t.name),
+                t.type_name.clone(),
+            )
+        })
+        .collect();
+    catalog
+        .renamed_types
+        .retain(|r| names.get(&r.object).is_none_or(|name| *name == r.given));
     catalog.prune_hidden_search_indexes();
     catalog.resolve_value_type_names();
     catalog.resolve_polymorphic_names();

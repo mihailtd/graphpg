@@ -191,8 +191,18 @@ fn describe_pg_error(err: &tokio_postgres::Error) -> String {
     }
 }
 
-/// Upper bound on prepared statements cached per pooled connection.
+/// Prepared statements cached per pooled connection by default (`database.statement_cache`).
 pub const MAX_CACHED_STATEMENTS: usize = 512;
+
+static STATEMENT_CACHE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(MAX_CACHED_STATEMENTS);
+
+/// Sets how many prepared statements each pooled connection caches (`database.statement_cache`;
+/// 0: none). Each one holds a plan in its PostgreSQL backend: with many distinct operations on
+/// a wide schema, a smaller cache keeps the backends' memory down.
+pub fn set_statement_cache(size: usize) {
+    STATEMENT_CACHE.store(size, std::sync::atomic::Ordering::Relaxed);
+}
 
 /// A connection statements are prepared on: plain clients prepare each time, pooled clients
 /// through their per-connection statement cache.
@@ -223,7 +233,7 @@ impl Connection for Client {
 
 /// Repeated SQL skips PostgreSQL's parse/analyze/plan phase, which for nested JSON queries
 /// often costs more than execution itself. The cache is per connection and bounded: it is
-/// cleared once it holds `MAX_CACHED_STATEMENTS` statements. Values, page sizes and offsets
+/// cleared once it holds `database.statement_cache` statements. Values, page sizes and offsets
 /// are bound as parameters, so only distinct operations (and which arguments they pass)
 /// produce distinct SQL.
 impl Connection for deadpool_postgres::ClientWrapper {
@@ -232,7 +242,11 @@ impl Connection for deadpool_postgres::ClientWrapper {
     }
 
     async fn prepare(&self, sql: &str) -> Result<Statement, tokio_postgres::Error> {
-        if self.statement_cache.size() >= MAX_CACHED_STATEMENTS {
+        let limit = STATEMENT_CACHE.load(std::sync::atomic::Ordering::Relaxed);
+        if limit == 0 {
+            return Client::prepare(self, sql).await;
+        }
+        if self.statement_cache.size() >= limit {
             self.statement_cache.clear();
         }
         self.prepare_cached(sql).await

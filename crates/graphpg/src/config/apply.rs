@@ -23,6 +23,17 @@ fn check_name(errors: &mut Errors, path: &str, name: &str) -> bool {
     ok
 }
 
+/// A type name of the config: a valid name, and not one of graphpg's own types.
+fn check_type_name(errors: &mut Errors, path: &str, name: &str) -> bool {
+    if crate::catalog::models::BUILTIN_TYPE_NAMES.contains(&name) {
+        errors.push(format!(
+            "{path}: `{name}` is one of graphpg's own types: choose another name"
+        ));
+        return false;
+    }
+    check_name(errors, path, name)
+}
+
 /// Position, among `objects` (`(schema, name)` pairs), of the object a config key names:
 /// `schema.name`, or a bare name. A bare name several schemas share resolves to the default
 /// schema's (the first of the config's `schemas`); without one there it is ambiguous. `Err`
@@ -445,7 +456,7 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &Config) -> Res
             omitted.push((table.schema.clone(), table.name.clone()));
         }
         if let Some(type_name) = &entity.type_name {
-            if check_name(&mut errors, &format!("{path}.type_name"), type_name) {
+            if check_type_name(&mut errors, &format!("{path}.type_name"), type_name) {
                 table.type_name = type_name.clone();
             }
         }
@@ -612,7 +623,7 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &Config) -> Res
         let path = format!("types.{name}");
         if let Some(e) = catalog.enums.iter_mut().find(|e| &e.config_name == name) {
             if let Some(type_name) = &ty.type_name {
-                if check_name(&mut errors, &format!("{path}.type_name"), type_name) {
+                if check_type_name(&mut errors, &format!("{path}.type_name"), type_name) {
                     e.type_name = type_name.clone();
                 }
             }
@@ -645,7 +656,7 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &Config) -> Res
             .find(|c| &c.config_name == name)
         {
             if let Some(type_name) = &ty.type_name {
-                if check_name(&mut errors, &format!("{path}.type_name"), type_name) {
+                if check_type_name(&mut errors, &format!("{path}.type_name"), type_name) {
                     c.type_name = type_name.clone();
                 }
             }
@@ -679,7 +690,7 @@ pub fn apply_presentation(catalog: &mut DatabaseCatalog, config: &Config) -> Res
             }
         } else if let Some(d) = catalog.domains.iter_mut().find(|d| &d.config_name == name) {
             if let Some(type_name) = &ty.type_name {
-                if check_name(&mut errors, &format!("{path}.type_name"), type_name) {
+                if check_type_name(&mut errors, &format!("{path}.type_name"), type_name) {
                     d.type_name = type_name.clone();
                 }
             }

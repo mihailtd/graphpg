@@ -1628,6 +1628,31 @@ impl<'a> Polymorphism<'a> {
     }
 }
 
+/// A GraphQL type graphpg named itself, the name derived from the database being taken.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenamedType {
+    /// What it is the type of: "table `public.subscriptions`", "enum `public.status`".
+    pub object: String,
+    /// The name derived from the database.
+    pub wanted: String,
+    /// The name it got.
+    pub given: String,
+    /// Why `wanted` was taken.
+    pub reason: String,
+    /// `graphpg.yaml` that names it: `entities: { subscriptions: { type_name: <Name> } }`.
+    pub config: String,
+}
+
+impl RenamedType {
+    /// The startup warning.
+    pub fn message(&self) -> String {
+        format!(
+            "the GraphQL type of {} would be `{}`, but {}: graphpg named it `{}`. Choose its name in graphpg.yaml: `{}`",
+            self.object, self.wanted, self.reason, self.given, self.config
+        )
+    }
+}
+
 /// Names of the types graphpg defines itself (roots, scalars, shared inputs): a table, type
 /// or view cannot take one.
 pub const BUILTIN_TYPE_NAMES: &[&str] = &[
@@ -1690,6 +1715,10 @@ pub struct DatabaseCatalog {
     /// Federation version (e.g. "v2.3" or "v1").
     #[serde(default)]
     pub federation_version: Option<String>,
+    /// GraphQL types graphpg named itself because the name derived from the database was
+    /// taken: reported at startup, with the configuration that names them.
+    #[serde(default)]
+    pub renamed_types: Vec<RenamedType>,
     /// A `Subscription` type with the `Query` type's root fields (`subscriptions.enabled`).
     #[serde(default)]
     pub subscriptions_enabled: bool,
@@ -2939,6 +2968,7 @@ impl DatabaseCatalog {
             *table_name_counts.entry(t.name.clone()).or_default() += 1;
         }
 
+        let mut renamed = Vec::new();
         for t in &mut self.tables {
             let conflict = table_name_counts.get(&t.name).copied().unwrap_or(0) > 1;
             let (_, prefix_camel) = if conflict {
@@ -2951,8 +2981,26 @@ impl DatabaseCatalog {
                 let base = table_to_type_name(&t.name);
                 // A table named like one of graphpg's own types (`subscriptions` would be the
                 // `Subscription` root) takes its schema's name in front, as clashing tables do
-                t.type_name = if conflict || BUILTIN_TYPE_NAMES.contains(&base.as_str()) {
-                    format!("{}{base}", to_pascal_case(&t.schema))
+                let builtin = BUILTIN_TYPE_NAMES.contains(&base.as_str());
+                t.type_name = if conflict || builtin {
+                    let given = format!("{}{base}", to_pascal_case(&t.schema));
+                    let key = if conflict {
+                        format!("{}.{}", t.schema, t.name)
+                    } else {
+                        t.name.clone()
+                    };
+                    renamed.push(RenamedType {
+                        object: format!("table `{}.{}`", t.schema, t.name),
+                        wanted: base.clone(),
+                        reason: if builtin {
+                            format!("`{base}` is one of graphpg's own types")
+                        } else {
+                            format!("tables named `{}` exist in several schemas", t.name)
+                        },
+                        given: given.clone(),
+                        config: format!("entities: {{ {key}: {{ type_name: <Name> }} }}"),
+                    });
+                    given
                 } else {
                     base
                 };
@@ -2997,6 +3045,7 @@ impl DatabaseCatalog {
                 }
             }
         }
+        self.renamed_types.extend(renamed);
         for c in &mut self.composites {
             if c.type_name.is_empty() {
                 c.type_name = to_pascal_case(&c.config_name);
@@ -3200,23 +3249,41 @@ impl DatabaseCatalog {
             self.enums[i].type_name = name;
         }
         let mut taken = self.reserved_type_names_except_values();
+        let mut renamed = Vec::new();
+        let mut note = |kind: &str, key: &str, wanted: &str, given: &str| {
+            if wanted != given {
+                renamed.push(RenamedType {
+                    object: format!("{kind} `{key}`"),
+                    wanted: wanted.to_string(),
+                    given: given.to_string(),
+                    reason: format!("`{wanted}` is already the name of another type"),
+                    config: format!("types: {{ {key}: {{ type_name: <Name> }} }}"),
+                });
+            }
+        };
         for c in &mut self.composites {
             let mut name = claim_name(&mut taken, &c.type_name);
             while taken.contains(&format!("{name}Input")) {
                 name = claim_name(&mut taken, &c.type_name);
             }
             taken.insert(format!("{name}Input"));
+            note("composite type", &c.config_name, &c.type_name, &name);
             c.type_name = name;
         }
         for e in &mut self.enums {
-            e.type_name = claim_name(&mut taken, &e.type_name);
+            let name = claim_name(&mut taken, &e.type_name);
+            note("enum", &e.config_name, &e.type_name, &name);
+            e.type_name = name;
             for suffix in ["Filter", "ListFilter"] {
                 taken.insert(format!("{}{suffix}", e.type_name));
             }
         }
         for d in &mut self.domains {
-            d.type_name = claim_name(&mut taken, &d.type_name);
+            let name = claim_name(&mut taken, &d.type_name);
+            note("domain", &d.config_name, &d.type_name, &name);
+            d.type_name = name;
         }
+        self.renamed_types.extend(renamed);
         self.invalidate_index();
     }
 

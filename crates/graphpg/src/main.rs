@@ -283,6 +283,7 @@ async fn run(
     let secrets = Secrets::from_env()?;
 
     let statement_timeout = config.limits.statement_timeout.map(|t| t.0);
+    graphpg::execution::engine::set_statement_cache(config.database.statement_cache);
     let pool = create_pool_with(
         &secrets.database_url,
         config.database.pool_size,

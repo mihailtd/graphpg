@@ -93,6 +93,7 @@ One file configures a server for every environment. Shared settings come first; 
 ```yaml
 database:
   pool_size: 10
+  statement_cache: 512          # prepared statements per connection (0: none); see performance.md
   schemas: [auth, app]          # the first is the default schema (default: app_public)
   sql_comments: true            # sqlcommenter comments on every statement
 
@@ -209,6 +210,14 @@ Strings may read non-secret environment variables: `${NAME}` (an error when unse
 The sections that follow, `entities`, `functions`, `types`, `extensions` and `search`, change the generated APIs where the database cannot say what is wanted. Schema design (tables, constraints, types, functions) stays in SQL; these hold only API-level operations, keyed by **database** names so renames never break them, and shared by every API.
 
 The server loads `--config <path>`, else `./graphpg.yaml` when present. `graphpg export-config-schema` writes a JSON Schema (`graphpg.schema.json`) listing the actual relations, columns, constraints and functions for editor completion and validation. In dev mode the config is re-read when it changes. Every reference is validated at startup and all problems are reported together.
+
+Type names are derived from database names (`order_items` → `OrderItem`). When a derived name is taken (a table named like one of graphpg's own types, `subscriptions` or `page_info`, or two tables of the same name in different schemas), graphpg puts the schema's name in front (`LiveSubscription`) and warns at startup and in `graphpg advise`, naming the type it chose and the setting that chooses another:
+
+```
+the GraphQL type of table `live.subscriptions` would be `Subscription`, but `Subscription` is one of graphpg's own types: graphpg named it `LiveSubscription`. Choose its name in graphpg.yaml: `entities: { subscriptions: { type_name: <Name> } }`
+```
+
+Composite types, enums and domains are warned about the same way (`types: { <name>: { type_name: <Name> } }`). A `type_name` naming one of graphpg's own types is refused.
 
 ```yaml
 entities:                      # tables, views, materialized views, foreign tables
