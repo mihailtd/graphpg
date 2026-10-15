@@ -39,7 +39,9 @@ jobs:
           persist-credentials: false
           # the "last updated" date of each page comes from git history
           fetch-depth: 0
-      - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
+      # v0.6.3, not v0.6.4: GitHub stopped serving v0.6.4's commit (261c62c) by SHA on 2026-10-15
+      # (its tag still works). They differ only in the Node runtime (20 → 24).
+      - uses: moonrepo/setup-toolchain@8794f0318b9df4a43a5ddc23cefd16f595b423dd # v0.6.3
         with:
           auto-install: true
       - run: pnpm install --frozen-lockfile
