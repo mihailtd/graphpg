@@ -191,3 +191,69 @@ async fn reload_without_configured_schemas_reads_the_default_one() {
     let catalog = state.current_catalog();
     assert!(catalog.find_table("app_public", "forums").is_some());
 }
+
+/// Without DDL watching (prod), a request compiled from a schema the database no longer has
+/// fails as `SCHEMA_CHANGED` (retryable, not an internal error), and the server reads the
+/// database again by itself.
+#[tokio::test]
+async fn requests_that_find_the_schema_out_of_date_reload_it() {
+    let db = fresh().await;
+    let state = state(CONFIG).await;
+    start_reload_listener(
+        common::db_url().to_string(),
+        "graphpg_reload_stale_test".to_string(),
+        state.clone(),
+    );
+    db.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.books RENAME COLUMN title TO name"
+    ))
+    .await
+    .unwrap();
+
+    let stale = graphql(&state, "{ books { title } }").await;
+    assert_eq!(
+        stale["errors"][0]["extensions"]["code"], "SCHEMA_CHANGED",
+        "{stale}"
+    );
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let reply = graphql(&state, "{ books { name } }").await;
+        if reply["data"]["books"] == json!([{ "name": "Dune" }]) {
+            return;
+        }
+    }
+    panic!("the server did not read the changed schema again");
+}
+
+/// Reading the catalog while DDL runs: a column dropped after the reading's snapshot is still
+/// in the catalog it reads, but no longer has privileges (`has_column_privilege` is null), which
+/// must not crash the reading.
+#[tokio::test]
+async fn reading_the_catalog_during_ddl_does_not_panic() {
+    let db = connect().await;
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS ddl_race CASCADE; CREATE SCHEMA ddl_race; \
+         CREATE TABLE ddl_race.t (id int PRIMARY KEY, gone int);",
+    )
+    .await
+    .unwrap();
+    let reader = connect().await;
+    reader
+        .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT 1")
+        .await
+        .unwrap();
+    db.batch_execute("ALTER TABLE ddl_race.t DROP COLUMN gone")
+        .await
+        .unwrap();
+
+    let config = Config::from_yaml("database:\n  schemas: [ddl_race]\n").unwrap();
+    let inspector = CatalogInspector::new(&reader);
+    let reading =
+        std::panic::AssertUnwindSafe(inspector.inspect_schema_with_config("ddl_race", &config));
+    let outcome = futures::FutureExt::catch_unwind(reading).await;
+    assert!(outcome.is_ok(), "reading the catalog panicked");
+    reader.batch_execute("ROLLBACK").await.unwrap();
+    db.batch_execute("DROP SCHEMA ddl_race CASCADE")
+        .await
+        .unwrap();
+}

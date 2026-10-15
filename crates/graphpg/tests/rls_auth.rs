@@ -88,6 +88,16 @@ async fn setup_rls_db(client: &tokio_postgres::Client) {
             TO rls_anon_user
             USING (department = 'public_info');
 
+        -- The claims a request runs with
+        CREATE FUNCTION rls_test.current_claims() RETURNS text
+            LANGUAGE sql STABLE AS $$ SELECT current_setting('request.jwt.claims', true) $$;
+        GRANT EXECUTE ON FUNCTION rls_test.current_claims() TO rls_app_user, rls_anon_user;
+
+        -- A slow read: requests cancelled while it runs
+        CREATE FUNCTION rls_test.slow_documents() RETURNS SETOF rls_test.documents
+            LANGUAGE sql STABLE AS $$ SELECT pg_sleep(0.5); SELECT * FROM rls_test.documents $$;
+        GRANT EXECUTE ON FUNCTION rls_test.slow_documents() TO rls_app_user, rls_anon_user;
+
         -- Seed initial records
         INSERT INTO rls_test.documents (name, owner_id, department, tenant_id) VALUES
             ('Alice Smith', 'alice', 'cardiology', 'tenant-1'),
@@ -171,6 +181,14 @@ async fn setup_app(auth_cfg: AuthConfig) -> axum::Router {
 }
 
 async fn setup_app_with_secret(auth_cfg: AuthConfig, secret: Option<&str>) -> axum::Router {
+    setup_app_with_pool(auth_cfg, secret, 5).await
+}
+
+async fn setup_app_with_pool(
+    auth_cfg: AuthConfig,
+    secret: Option<&str>,
+    pool_size: usize,
+) -> axum::Router {
     let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
         .await
         .expect("Failed to connect to local PostgreSQL 18.6");
@@ -198,7 +216,7 @@ async fn setup_app_with_secret(auth_cfg: AuthConfig, secret: Option<&str>) -> ax
         .expect("valid auth configuration");
     let state = Arc::new(
         ServerState::new(
-            create_pool(common::db_url(), 5).expect("Failed to create pool"),
+            create_pool(common::db_url(), pool_size).expect("Failed to create pool"),
             schema,
             catalog,
             "rls_test".to_string(),
@@ -477,6 +495,109 @@ async fn test_rls_zero_session_leakage_across_pooled_connections() {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["department"], "public_info");
     }
+}
+
+/// A request cancelled mid-transaction (its client went away) must not hand its transaction,
+/// with its role and claims, to the next request on the connection.
+#[tokio::test]
+async fn test_cancelled_requests_leak_no_session_to_the_next_one() {
+    let app = setup_app_with_pool(secret_config(), Some(JWT_SECRET), 1).await;
+    let alice = bearer(&token(
+        json!({ "sub": "alice", "role": "editor", "department": "cardiology" }),
+    ));
+    let bob = bearer(&token(json!({ "sub": "bob" })));
+    for _ in 0..3 {
+        let slow = post(
+            &app,
+            "/graphql",
+            json!({ "query": "{ slowDocuments { nodes { id } } }" }),
+            alice.clone(),
+        );
+        if let Ok(done) = tokio::time::timeout(std::time::Duration::from_millis(150), slow).await {
+            panic!("the slow request is cancelled while it runs: {done:?}");
+        }
+        let (status, _, res) = documents(&app, bob.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{res}");
+        let owners: Vec<_> = rows(&res).iter().map(|r| r["ownerId"].clone()).collect();
+        assert_eq!(owners, [json!("bob")], "Bob runs without Alice's claims");
+    }
+}
+
+/// Claims are data: one PostgreSQL cannot hold as a setting (a NUL character) refuses the
+/// token, and none overrides the claims setting or a mapped setting.
+#[tokio::test]
+async fn test_claims_cannot_break_or_override_settings() {
+    let app = setup_app(secret_config()).await;
+    let nul = bearer(&token(json!({ "sub": "alice\u{0}" })));
+    let (status, _, res) = documents(&app, nul).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{res}");
+
+    // `prefix` + a claim's name is `claims_setting`: the claim does not replace the claims
+    let mut cfg = secret_config();
+    cfg.session_variables.prefix = "request.jwt.".to_string();
+    cfg.session_variables.claims_setting = "request.jwt.claims".to_string();
+    let app = setup_app(cfg).await;
+    let forged = bearer(&token(
+        json!({ "sub": "bob", "claims": "{\"sub\": \"alice\"}" }),
+    ));
+    let (status, _, res) = post(
+        &app,
+        "/graphql",
+        json!({ "query": "{ documents { ownerId } }" }),
+        forged,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    let claims = graphpg_claims(&app, &token(json!({ "sub": "bob", "claims": "x" }))).await;
+    assert_eq!(claims["sub"], "bob", "{claims}");
+}
+
+/// `request.jwt.claims` as a request with `token` sees it.
+async fn graphpg_claims(app: &axum::Router, token: &str) -> serde_json::Value {
+    let (status, _, res) = post(
+        app,
+        "/graphql",
+        json!({ "query": "{ currentClaims }" }),
+        bearer(token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    serde_json::from_str(res["data"]["currentClaims"].as_str().unwrap()).unwrap()
+}
+
+/// The REST index (`GET /rest`) is authenticated like every REST route.
+#[tokio::test]
+async fn test_rest_index_needs_a_valid_token() {
+    let mut cfg = secret_config();
+    cfg.roles.anonymous = None;
+    let app = setup_app(cfg).await;
+    let index = |headers: Vec<(&'static str, String)>| {
+        let app = app.clone();
+        async move {
+            let mut request = Request::builder().method("GET").uri("/rest");
+            for (k, v) in headers {
+                request = request.header(k, v);
+            }
+            let response = app
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            response.status()
+        }
+    };
+    assert_eq!(index(vec![]).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        index(bearer(&token_with(
+            json!({ "sub": "alice" }),
+            b"another-secret-of-at-least-32-bytes!!"
+        )))
+        .await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        index(bearer(&token(json!({ "sub": "alice" })))).await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]

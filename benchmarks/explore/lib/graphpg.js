@@ -24,6 +24,8 @@ const REFUSED = new Set([
   "PERMISSION_DENIED",
   "TOO_MANY_SUBSCRIPTIONS",
 ]);
+/** Refusals a client retries (503): the schema changed under the request, the database is down. */
+export const RETRYABLE = new Set(["SCHEMA_CHANGED", "DATABASE_UNAVAILABLE"]);
 // Typed constraint violations (`EMAIL_TAKEN`, `CHK_..._XOR`, `..._NOT_FOUND`): refusals of writes
 const TYPED = /^[A-Z][A-Z0-9_]*_(TAKEN|NOT_FOUND|REQUIRED|INVALID|TOO_LONG|OUT_OF_RANGE|CONFLICT|REFERENCED|VIOLATION|XOR)$|^CHK_|^STALE_VERSION$|^BULK_LIMIT_EXCEEDED$|^FILTER_REQUIRED$/;
 
@@ -42,12 +44,13 @@ export function gql(label, query, variables = {}, tags = {}) {
     body = null;
   }
   const errors = (body && body.errors) || [];
+  const retryable = errors.length > 0 && errors.every((e) => RETRYABLE.has((e.extensions && e.extensions.code) || ""));
   const failed =
-    res.status >= 500 ||
+    (res.status >= 500 && !retryable) ||
     !body ||
     errors.some((e) => {
       const code = (e.extensions && e.extensions.code) || "";
-      if (REFUSED.has(code) || TYPED.test(code)) return false;
+      if (REFUSED.has(code) || RETRYABLE.has(code) || TYPED.test(code)) return false;
       // The document's own validation: a request these scripts got wrong, not the engine
       return !(code === "" && /^Error: /.test(e.message || ""));
     });

@@ -10,6 +10,8 @@ import {
   crawlPlan,
   DURATION,
   engineFailures,
+  refusals,
+  RETRYABLE,
   GRAPHQL,
   loadSchema,
   runStep,
@@ -64,9 +66,15 @@ export function rest(data) {
   if (!data.resources.length) return;
   const path = data.resources[Math.floor(Math.random() * data.resources.length)];
   const res = http.get(`${BASE}${path}?first=20`, { tags: { op: "rest" } });
-  if (res.status >= 500) {
+  let code = "";
+  try {
+    code = res.json().code || "";
+  } catch (_) {}
+  if (res.status >= 500 && !RETRYABLE.has(code)) {
     engineFailures.add(1);
     console.error(`FAIL GET ${path} (${res.status}): ${String(res.body).slice(0, 300)}`);
+  } else if (res.status >= 400) {
+    refusals.add(1);
   }
 }
 

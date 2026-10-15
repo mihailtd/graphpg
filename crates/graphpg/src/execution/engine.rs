@@ -147,6 +147,54 @@ impl ExecutionError {
             .is_some_and(|db| db.code().code().starts_with("08"))
     }
 
+    /// The connection to the database broke while the operation ran: closed, or ended by the
+    /// server shutting down or restarting (SQLSTATE `57P01`-`57P03`). Whether a write that
+    /// was committing took effect is unknown.
+    pub fn is_connection_lost(&self) -> bool {
+        let e = match self {
+            ExecutionError::Mutation { source, .. } => return source.is_connection_lost(),
+            ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => e,
+            _ => return false,
+        };
+        if e.is_closed() {
+            return true;
+        }
+        match e.as_db_error() {
+            Some(db) => {
+                let code = db.code();
+                *code == SqlState::ADMIN_SHUTDOWN
+                    || *code == SqlState::CRASH_SHUTDOWN
+                    || *code == SqlState::CANNOT_CONNECT_NOW
+            }
+            // An I/O failure of graphpg's own connection
+            None => std::error::Error::source(e).is_some_and(|s| s.is::<std::io::Error>()),
+        }
+    }
+
+    /// The statement names a column, table, function or type the database no longer has (or
+    /// no longer has as the statement expects): the schema changed after the server last read
+    /// it, and requests compiled from that reading fail until it reads it again.
+    pub fn is_schema_changed(&self) -> bool {
+        let e = match self {
+            ExecutionError::Mutation { source, .. } => return source.is_schema_changed(),
+            ExecutionError::Postgres(e) | ExecutionError::Write { error: e, .. } => e,
+            _ => return false,
+        };
+        e.as_db_error().is_some_and(|db| {
+            let code = db.code();
+            *code == SqlState::UNDEFINED_COLUMN
+                || *code == SqlState::UNDEFINED_TABLE
+                || *code == SqlState::UNDEFINED_FUNCTION
+                || *code == SqlState::UNDEFINED_OBJECT
+                // A prepared statement whose table changed shape
+                || (*code == SqlState::FEATURE_NOT_SUPPORTED
+                    && db.message().contains("cached plan must not change result type"))
+                // A column whose type changed, read into a row of its old type
+                || (*code == SqlState::DATATYPE_MISMATCH
+                    && db.message().starts_with("ROW() column has type"))
+        })
+    }
+
     /// A failure that running the operation again may not hit: a serialization failure
     /// (under `REPEATABLE READ` or `SERIALIZABLE`) or a deadlock.
     pub fn is_transient(&self) -> bool {
@@ -255,6 +303,39 @@ impl Connection for deadpool_postgres::ClientWrapper {
     /// Pooled connections are handed out idle.
     fn may_be_in_transaction(&self) -> bool {
         false
+    }
+}
+
+/// A pooled connection discarded, not returned to the pool, when dropped by a panicking task:
+/// it may be inside a transaction holding a request's role and claims, which the next
+/// request on it would run in.
+pub struct PanicSafe(Option<deadpool_postgres::Object>);
+
+impl PanicSafe {
+    pub fn new(client: deadpool_postgres::Object) -> Self {
+        Self(Some(client))
+    }
+
+    pub fn into_inner(mut self) -> deadpool_postgres::Object {
+        self.0.take().expect("a connection until dropped")
+    }
+}
+
+impl std::ops::Deref for PanicSafe {
+    type Target = deadpool_postgres::ClientWrapper;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("a connection until dropped")
+    }
+}
+
+impl Drop for PanicSafe {
+    fn drop(&mut self) {
+        if let Some(client) = self.0.take() {
+            if std::thread::panicking() {
+                drop(deadpool_postgres::Object::take(client));
+            }
+        }
     }
 }
 

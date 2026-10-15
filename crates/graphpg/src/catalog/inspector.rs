@@ -675,10 +675,10 @@ impl<'a> CatalogInspector<'a> {
         let rel_query = format!(
             "SELECT c.oid, c.relname, c.relkind::text, obj_description(c.oid, 'pg_class'),
                     pg_relation_is_updatable(c.oid, true),
-                    (has_table_privilege(c.oid, 'SELECT') OR has_any_column_privilege(c.oid, 'SELECT')) AS can_select,
-                    (has_table_privilege(c.oid, 'INSERT') OR has_any_column_privilege(c.oid, 'INSERT')) AS can_insert,
-                    (has_table_privilege(c.oid, 'UPDATE') OR has_any_column_privilege(c.oid, 'UPDATE')) AS can_update,
-                    has_table_privilege(c.oid, 'DELETE') AS can_delete,
+                    coalesce(has_table_privilege(c.oid, 'SELECT') OR has_any_column_privilege(c.oid, 'SELECT'), false) AS can_select,
+                    coalesce(has_table_privilege(c.oid, 'INSERT') OR has_any_column_privilege(c.oid, 'INSERT'), false) AS can_insert,
+                    coalesce(has_table_privilege(c.oid, 'UPDATE') OR has_any_column_privilege(c.oid, 'UPDATE'), false) AS can_update,
+                    coalesce(has_table_privilege(c.oid, 'DELETE'), false) AS can_delete,
                     n.nspname::text
              FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -775,6 +775,8 @@ impl<'a> CatalogInspector<'a> {
 
         // Columns. Domains are exposed as their base type; array element types are resolved
         // the same way. Composite types are recognised by `typtype = 'c'`.
+        // The privilege functions are null for a column or table dropped while this runs
+        // (concurrent DDL): read as no privilege.
         let col_query = format!(
                 "SELECT a.attrelid, a.attname,
                         {TYPE_COLUMNS},
@@ -784,8 +786,8 @@ impl<'a> CatalogInspector<'a> {
                         col_description(a.attrelid, a.attnum),
                         CASE WHEN t.typtype = 'd' THEN format('%I.%I', dn.nspname, t.typname) END,
                         CASE WHEN a.atttypmod < 0 AND t.typtype = 'd' THEN t.typtypmod ELSE a.atttypmod END,
-                        has_column_privilege(a.attrelid, a.attnum, 'SELECT') AS col_can_select,
-                        (has_column_privilege(a.attrelid, a.attnum, 'INSERT') OR has_column_privilege(a.attrelid, a.attnum, 'UPDATE')) AS col_can_write
+                        coalesce(has_column_privilege(a.attrelid, a.attnum, 'SELECT'), false) AS col_can_select,
+                        coalesce(has_column_privilege(a.attrelid, a.attnum, 'INSERT') OR has_column_privilege(a.attrelid, a.attnum, 'UPDATE'), false) AS col_can_write
                  FROM pg_attribute a
                  JOIN pg_class c ON c.oid = a.attrelid
                  JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -849,6 +851,7 @@ impl<'a> CatalogInspector<'a> {
                 domain: row
                     .get::<_, Option<String>>(13)
                     .filter(|_| pg_type.is_scalar_base()),
+                node_types: Vec::new(),
                 pg_type,
             });
         }
@@ -1960,7 +1963,43 @@ pub fn finalize(
     crate::schema::SchemaBuilder::prune_incompatible_cti_children(&mut catalog);
     catalog.invalidate_index();
     catalog.assign_error_codes();
+    assign_node_types(&mut catalog);
     Ok(catalog)
+}
+
+/// Records which types' global IDs each key column takes (see `ColumnMetadata::node_types`),
+/// once type names are final.
+fn assign_node_types(catalog: &mut DatabaseCatalog) {
+    let node_type = |schema: &str, table: &str, column: &str| {
+        catalog
+            .find_table(schema, table)
+            .filter(|t| t.implements_node() && t.primary_key[0] == column)
+            .map(|t| t.type_name.clone())
+    };
+    let mut found: Vec<(usize, String, String)> = Vec::new();
+    for (i, table) in catalog.tables.iter().enumerate() {
+        if let Some(own) = node_type(&table.schema, &table.name, &table.primary_key.join(",")) {
+            found.push((i, table.primary_key[0].clone(), own));
+        }
+        for fk in &table.foreign_keys {
+            if let Some((column, target)) = fk.single() {
+                if let Some(target) = node_type(&fk.foreign_schema, &fk.foreign_table, target) {
+                    found.push((i, column.to_string(), target));
+                }
+            }
+        }
+    }
+    for (i, column, type_name) in found {
+        if let Some(col) = catalog.tables[i]
+            .columns
+            .iter_mut()
+            .find(|c| c.name == column)
+        {
+            if !col.node_types.contains(&type_name) {
+                col.node_types.push(type_name);
+            }
+        }
+    }
 }
 
 /// Row lookups, updates and deletes target one row by its key: without a primary key a

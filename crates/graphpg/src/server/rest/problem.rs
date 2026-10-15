@@ -278,6 +278,24 @@ impl ProblemDetails {
             return Self::new(StatusCode::BAD_REQUEST, message).with_code("BAD_USER_INPUT");
         }
 
+        if err.is_connection_lost() {
+            tracing::warn!(error = %err, "the database connection was lost during a request");
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The database connection was lost while the request ran: retry it",
+            )
+            .with_code("DATABASE_UNAVAILABLE");
+        }
+
+        if err.is_schema_changed() {
+            tracing::warn!(error = %err, "the database schema changed under a request");
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The database schema changed while the request ran: retry it",
+            )
+            .with_code("SCHEMA_CHANGED");
+        }
+
         if err.is_timeout() {
             return Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,

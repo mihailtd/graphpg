@@ -241,6 +241,30 @@ pub(crate) fn execution_error(
                 },
             )
         }
+        None if err.is_connection_lost() => {
+            tracing::warn!(error = %err, "the database connection was lost during a request");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                GraphQLError {
+                    message: "the database connection was lost while the request ran: retry it"
+                        .to_string(),
+                    path,
+                    extensions: Some(serde_json::json!({ "code": "DATABASE_UNAVAILABLE" })),
+                },
+            )
+        }
+        None if err.is_schema_changed() => {
+            tracing::warn!(error = %err, "the database schema changed under a request");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                GraphQLError {
+                    message: "the database schema changed while the request ran: retry it"
+                        .to_string(),
+                    path,
+                    extensions: Some(serde_json::json!({ "code": "SCHEMA_CHANGED" })),
+                },
+            )
+        }
         None if err.is_timeout() => (
             StatusCode::SERVICE_UNAVAILABLE,
             GraphQLError {
@@ -365,6 +389,11 @@ pub struct ServerState {
     /// Live queries (`subscriptions.enabled`); `None` when off. Its re-runs start with
     /// [`Hub::start`](super::subscriptions::Hub::start).
     pub subscriptions: Option<Arc<super::subscriptions::Hub>>,
+    /// Where requests that find the schema out of date ask for a reload (set by the reload
+    /// listener; see [`ServerState::schema_out_of_date`]).
+    pub reload_requests: std::sync::OnceLock<tokio::sync::mpsc::Sender<&'static str>>,
+    /// Schemas swapped in since startup ([`ServerState::reload`]).
+    pub reloads: std::sync::atomic::AtomicU64,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -414,10 +443,21 @@ impl ServerState {
             rate_limiter: None,
             persisted: None,
             subscriptions: None,
+            reload_requests: std::sync::OnceLock::new(),
+            reloads: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
     /// Sets the safety limits (the defaults of [`LimitsConfig`](crate::config::models::LimitsConfig) otherwise).
+    /// A request failed on a column, table, function or type the database no longer has (see
+    /// `ExecutionError::is_schema_changed`): read the database again, as `NOTIFY` does, so a
+    /// server that does not watch DDL (prod) stops compiling requests from the old schema.
+    pub fn schema_out_of_date(&self) {
+        if let Some(tx) = self.reload_requests.get() {
+            let _ = tx.try_send(super::reload::OUT_OF_DATE);
+        }
+    }
+
     pub fn with_limits(mut self, limits: crate::config::models::LimitsConfig) -> Self {
         self.rate_limiter = super::RateLimiter::new(&limits.rate_limit);
         self.limits = limits;
@@ -678,6 +718,8 @@ impl ServerState {
         }
         *self.schema.write().unwrap() = Arc::new(schema);
         *self.catalog.write().unwrap() = Arc::new(catalog);
+        self.reloads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *self.openapi_document.lock().unwrap() = None;
         // Statements prepared, documents validated and operations compiled for the previous
         // schema will not be reused
@@ -828,8 +870,18 @@ pub(crate) async fn ready_handler(State(state): State<Arc<ServerState>>) -> Resp
 }
 
 /// `GET /rest`: what the REST API serves, as links: its resources (tables and views), its
-/// functions, and the OpenAPI document describing them when it is served.
-pub(crate) async fn rest_handler(State(state): State<Arc<ServerState>>) -> Response {
+/// functions, and the OpenAPI document describing them when it is served. Authenticated like
+/// every REST route: an invalid token, or none without an anonymous role, is refused.
+pub(crate) async fn rest_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Response {
+    if !state.openapi_enabled {
+        return super::rest::ProblemDetails::not_found("The REST API is disabled").into_response();
+    }
+    if let Err(err) = state.authenticate(&headers).await {
+        return super::rest::ProblemDetails::from_auth_error(err).into_response();
+    }
     let catalog = state.current_catalog();
     let path_of = |schema: &str, name: &str| {
         if schema == state.default_schema {
@@ -1491,13 +1543,18 @@ async fn run_authenticated(
             Ok(acquired) => acquired,
             Err(message) => {
                 tracing::error!(error = %message, "failed to acquire database connection");
-                return error_response(
+                return errors_response(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    message,
+                    vec![GraphQLError {
+                        message,
+                        path: None,
+                        extensions: Some(serde_json::json!({ "code": "DATABASE_UNAVAILABLE" })),
+                    }],
                     extensions_value(&extensions),
                 );
             }
         };
+        let client = crate::execution::engine::PanicSafe::new(client);
         if state.debug.sql || state.debug.explain {
             extensions.insert("database".to_string(), serde_json::json!(database));
         }
@@ -1554,6 +1611,9 @@ async fn run_authenticated(
             Ok(serde_json::Value::Object(map)) => sql_data = map,
             Ok(_) => {}
             Err(err) => {
+                if err.is_schema_changed() {
+                    state.schema_out_of_date();
+                }
                 // A query failing because of its data: which root fields fail, and the
                 // others' data. The request as a whole fails otherwise
                 let roots: Vec<&apollo_compiler::executable::Field> = {
@@ -1708,6 +1768,7 @@ async fn run_roots_apart(
         })
         .collect();
     let (client, _) = state.read_pool(min_lsn).await.ok()?;
+    let client = crate::execution::engine::PanicSafe::new(client);
     let span = tracing::info_span!("graphql.execute_apart", graphql.operation = %operation_label);
     // Run to the end even when the client goes away (see `run_graphql`)
     let task =
@@ -1715,6 +1776,9 @@ async fn run_roots_apart(
     match tokio::spawn(task.instrument(span)).await {
         Ok(Ok(results)) => Some(results),
         Ok(Err(err)) => {
+            if err.is_schema_changed() {
+                state.schema_out_of_date();
+            }
             tracing::warn!(error = %err, "running the root fields apart failed");
             None
         }

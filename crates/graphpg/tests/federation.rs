@@ -408,11 +408,16 @@ async fn test_query_entities_missing_or_invalid_id_returns_null() {
         }
     "#;
 
+    // The user's key in a forum's ID: names no user
+    let (_, raw) = graphpg::schema::SchemaBuilder::decode_global_id(&valid_user_id).unwrap();
+    let forum_id = graphpg::schema::SchemaBuilder::encode_global_id("Forum", &raw);
+
     let reps = json!([
         { "__typename": "User", "id": valid_user_id },
         { "__typename": "User", "id": "00000000-0000-0000-0000-000000000000" }, // Non-existent ID
         { "__typename": "UnknownType", "id": valid_user_id },                   // Unknown type
-        { "__typename": "User", "id": "invalid-uuid-string" }                   // Malformed UUID
+        { "__typename": "User", "id": "invalid-uuid-string" },                  // Malformed UUID
+        { "__typename": "User", "id": forum_id }                                // Another type's ID
     ]);
 
     let request_body = json!({
@@ -446,7 +451,7 @@ async fn test_query_entities_missing_or_invalid_id_returns_null() {
     let entities = res["data"]["_entities"]
         .as_array()
         .expect("_entities array");
-    assert_eq!(entities.len(), 4);
+    assert_eq!(entities.len(), 5);
 
     // 1st is valid
     assert_eq!(entities[0]["__typename"], "User");
@@ -459,6 +464,10 @@ async fn test_query_entities_missing_or_invalid_id_returns_null() {
     );
     assert!(entities[2].is_null(), "Unknown type should return null");
     assert!(entities[3].is_null(), "Malformed ID should return null");
+    assert!(
+        entities[4].is_null(),
+        "Another type's ID should return null"
+    );
 }
 
 #[tokio::test]

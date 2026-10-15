@@ -251,4 +251,25 @@ async fn test_mutations_by_key_and_by_node_id() {
     let err =
         plan(r#"mutation { deleteForumByNodeId(nodeId: "nope") { forum { id } } }"#).unwrap_err();
     assert!(err.contains("not a global ID"), "{err}");
+
+    // Key arguments, lookups and foreign keys take a global ID of their own type only
+    for query in [
+        format!(r#"mutation {{ deleteForum(id: "{user_id}") {{ forum {{ id }} }} }}"#),
+        format!(r#"{{ forum(id: "{user_id}") {{ name }} }}"#),
+        format!(
+            r#"mutation {{ createMessage(input: {{ forumId: "{user_id}", authorId: "{user_id}", body: "x" }}) {{ message {{ id }} }} }}"#
+        ),
+        format!(
+            r#"{{ messagesConnection(condition: {{ forumId: "{user_id}" }}) {{ totalCount }} }}"#
+        ),
+    ] {
+        let err = plan(&query).unwrap_err();
+        assert!(
+            err.contains("is not the ID of `Forum` (it is the ID of a `User`)"),
+            "{query}: {err}"
+        );
+    }
+    let read = plan(&format!(r#"{{ forum(id: "{node_id}") {{ name }} }}"#)).expect("own type");
+    let result = ExecutionEngine::execute(&client, &read).await.unwrap();
+    assert_eq!(result["data"]["forum"]["name"], "Postgres");
 }
