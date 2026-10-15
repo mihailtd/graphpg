@@ -1,1 +1,0 @@
-- **Fix: no `database.schemas` configured.** CLI commands (`export-*`, `advise`, `events sql`) panicked, and a dev-mode reload inspected no schema at all (the API lost every table on the first file change). They now use the documented default, `app_public`, as the server does at startup.

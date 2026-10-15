@@ -1,1 +1,0 @@
-- **PGroonga integration** (#176): PGroonga full-text indexes (on `text`, `varchar`, `text[]` or `ARRAY[col, ...]`) give full-text search in any language, CJK included: `<list>FullTextSearch`, REST `search/full-text` and `globalSearch`, with Groonga's query syntax, `pgroonga_score` ranking and highlights. `extensions.integrations.pgroonga: off` ignores them.

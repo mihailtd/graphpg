@@ -1,1 +1,0 @@
-- **pgvectorscale and VectorChord integrations** (#173): `diskann`, `vchordrq` and `vchordg` indexes on `vector` columns give semantic search fields (GraphQL `<list>SemanticSearch`, REST `search/semantic`) like pgvector's `hnsw` / `ivfflat`, using the index's distance. `extensions.integrations.pgvectorscale` / `vectorchord: off` ignores them.

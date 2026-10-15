@@ -1,1 +1,0 @@
-- **Faster distinct counts**: a root connection's `distinctCount` (GraphQL `aggregates`, REST `/aggregate?distinctCount=`) counts the distinct values with a parallel hash aggregate instead of `count(DISTINCT ...)`, which PostgreSQL sorts in one process: 4x faster with `totalCount` over 10M rows. Grouped and nested distinct counts are unchanged.

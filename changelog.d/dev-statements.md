@@ -1,1 +1,0 @@
-- **`GET /debug/statements` in dev mode**: the `graphpg advise --statements` report (the most expensive operations so far, from pg_stat_statements, with the indexes they lack, checked with hypopg) as JSON while you develop. `dev.debug.statements`, on in dev mode; rejected outside the `dev:` block, so production never serves it.

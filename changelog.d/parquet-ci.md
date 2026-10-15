@@ -1,1 +1,0 @@
-- **CI tests Parquet through pg_duckdb** (#156): a materialized view over `read_parquet` served, joined to a local table and aggregated, and a plain view over it failing as the guide says, against the `pgduckdb/pgduckdb:18` image (a second service of the test job).
