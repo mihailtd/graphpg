@@ -1,0 +1,12 @@
+# CodeQL (.github/workflows/codeql.yml) scans the code that ships and the code that builds it.
+# Tests and benchmarks print generated data in assertion messages and take developer-supplied
+# arguments, which the cleartext-logging and regex-injection queries report as findings.
+name: graphpg CodeQL config
+
+paths-ignore:
+  - crates/*/tests/**
+  - e2e/**
+  - benchmarks/**
+  - examples/**
+  - packages/website/src/.vitepress/cache/**
+  - packages/website/src/.vitepress/dist/**
