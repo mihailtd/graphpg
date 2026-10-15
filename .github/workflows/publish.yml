@@ -213,31 +213,43 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Through the API with the runner's Node: self-hosted runners have no `gh`
       - name: Create the GitHub Release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
           DIGEST: ${{ needs.merge.outputs.digest }}
-        run: |
-          version="${TAG#v}"
-          prerelease=""
-          case "$version" in *-*) prerelease="--prerelease" ;; esac
-          cat > notes.md <<EOF
-          ## Container image
-
-          \`\`\`bash
-          docker pull ${IMAGE}:${version}
-          \`\`\`
-
-          Digest: \`${DIGEST}\`. The image is signed with Sigstore:
-
-          \`\`\`bash
-          cosign verify ${IMAGE}@${DIGEST} \\
-            --certificate-identity-regexp '^https://github.com/${GITHUB_REPOSITORY}/' \\
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com
-          \`\`\`
-
-          ## What's changed
-          EOF
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "graphpg ${version}" --notes-file notes.md --generate-notes $prerelease
+        with:
+          script: |
+            const { TAG: tag, DIGEST: digest, IMAGE: image } = process.env;
+            const version = tag.replace(/^v/, "");
+            const fence = "```";
+            const body = [
+              "## Container image",
+              "",
+              `${fence}bash`,
+              `docker pull ${image}:${version}`,
+              fence,
+              "",
+              `Digest: \`${digest}\`. The image is signed with Sigstore:`,
+              "",
+              `${fence}bash`,
+              `cosign verify ${image}@${digest} \\`,
+              `  --certificate-identity-regexp '^https://github.com/${context.repo.owner}/${context.repo.repo}/' \\`,
+              "  --certificate-oidc-issuer https://token.actions.githubusercontent.com",
+              fence,
+              "",
+              "",
+            ].join("\n");
+            // GitHub's generated notes ("What's Changed", contributors, the full changelog link)
+            const { data: notes } = await github.rest.repos.generateReleaseNotes({
+              ...context.repo,
+              tag_name: tag,
+            });
+            await github.rest.repos.createRelease({
+              ...context.repo,
+              tag_name: tag,
+              name: `graphpg ${version}`,
+              body: body + notes.body,
+              prerelease: version.includes("-"),
+            });
