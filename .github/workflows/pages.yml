@@ -1,7 +1,7 @@
 name: Pages
 
 # Builds the documentation site (packages/website: VitePress over docs/, README.md and
-# CHANGELOG.md) and deploys it to GitHub Pages. Pull requests that touch it build it only.
+# CHANGELOG.md) and deploys it to GitHub Pages. Pull requests build it without deploying.
 on:
   push:
     branches: [main]
@@ -13,13 +13,8 @@ on:
       - packages/website/**
       - pnpm-lock.yaml
       - .github/workflows/pages.yml
+  # Every pull request: `build` is a required check, so it must report on all of them
   pull_request:
-    paths:
-      - docs/**
-      - README.md
-      - CHANGELOG.md
-      - packages/website/**
-      - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:
