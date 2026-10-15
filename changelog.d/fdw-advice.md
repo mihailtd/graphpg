@@ -1,1 +1,0 @@
-- **Startup advice for foreign tables** (#150): missing keys, `postgres_fdw` without `use_remote_estimate`, never-analyzed foreign tables, to-many relations into them (one remote query or file read per parent row), root fields while authenticated (no Row-Level Security), and roles without a user mapping. Also in `graphpg advise`.

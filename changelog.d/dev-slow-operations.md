@@ -1,1 +1,0 @@
-- **Slow operations logged in dev mode**: with pg_stat_statements installed, graphpg warns once per operation that averages 100 ms or more (checked every 30 seconds from pg_stat_statements alone), pointing to `/debug/statements` for the index it lacks. Part of `dev.debug.statements`.

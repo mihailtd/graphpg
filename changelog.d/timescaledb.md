@@ -1,1 +1,0 @@
-- **TimescaleDB integration** (#170): estimated totals on hypertables use `approximate_row_count()` (they were an exact `count(*)` over every chunk, since a hypertable's own statistics are empty); hypertables and continuous aggregates are described as such; advice for a hypertable without a key names the time column its key must include.

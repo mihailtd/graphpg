@@ -4,7 +4,7 @@ A GraphQL **and REST** server for PostgreSQL. Point it at a database and it serv
 
 graphpg is a single Rust binary. It reads PostgreSQL's catalogs at startup, builds the APIs, and compiles each request into one SQL statement (lateral joins and JSON aggregation, so nested selections don't cause N+1 queries). Both APIs are planned onto the same engine, so they share filters, pagination, nested writes, typed errors, authorization and safety limits.
 
-> **Status:** 1.0. Versions follow [semantic versioning](https://semver.org); the behaviour documented here is covered by an integration test suite that runs against PostgreSQL 18. See the [changelog](CHANGELOG.md).
+> **Status:** 1.1, the API is stable. Versions follow [semantic versioning](docs/versioning.md): the GraphQL and REST APIs derived from a database, error codes, configuration and CLI change incompatibly only in a major version. The behaviour documented here is covered by an integration test suite that runs against PostgreSQL 18. See the [changelog](CHANGELOG.md).
 
 ## Quick start
 
@@ -20,7 +20,7 @@ Run the published container image against your own database:
 ```bash
 docker run --rm -p 4000:4000 \
   -e DATABASE_URL=postgres://user:pass@host.docker.internal/mydb \
-  ghcr.io/mihailtd/graphpg:1.0.1 --mode dev
+  ghcr.io/mihailtd/graphpg:1.1.0 --mode dev
 ```
 
 The image is a static binary on `distroless/static` (about 27 MB with the embedded GraphiQL and Scalar UIs, no shell, non-root, signed with Sigstore). See [running in a container](docs/configuration.md#running-in-a-container).
@@ -85,6 +85,7 @@ Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) 
 | [Other databases and files](docs/foreign-data.md) | Foreign data wrappers (`postgres_fdw`, `file_fdw`, Parquet, S3): keys, relations, authorization, performance and caveats |
 | [Extending graphpg](docs/extending.md) | Where computed fields, custom operations, side effects, jobs and external logic go, and why there are no plugins |
 | [Comparison](docs/comparison.md) | How graphpg differs from PostGraphile and Hasura (GraphQL) and from PostgREST (REST) |
+| [Versioning](docs/versioning.md) | What semantic versioning covers (the derived APIs, error codes, configuration, CLI), deprecation, supported PostgreSQL |
 | [GraphQL and OpenAPI parity](docs/graphql-openapi-parity.md) | What each API knows about the database that the other does not, and whether it could be ported |
 
 ## Security notes

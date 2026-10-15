@@ -1,1 +1,0 @@
-- **Docs:** the foreign data guide's `pg_duckdb` advice is corrected: files read with `read_parquet` must be loaded into a materialized view (a plain view over them fails, since DuckDB cannot parse graphpg's SQL/JSON statements), and a crash seen with pgrx extensions preloaded alongside is noted.

@@ -1,1 +1,0 @@
-- **Test image with extensions** (#169): `docker/test-pg` builds PostgreSQL 18 with TimescaleDB (full edition), pgmq, pg_jsonschema, pgvector, pgvectorscale, VectorChord, PGroonga, PostGIS, pg_cron, hypopg and pg_partman, published as `ghcr.io/mihailtd/graphpg-test-pg:18`; `docker compose up` uses it, so extension integrations are tested against the real thing.
