@@ -41,9 +41,6 @@ export default defineConfig({
       },
     ],
   ],
-  // pnpm-workspace.yaml overrides esbuild to a version that no longer lowers syntax for the
-  // browser list Vite 5 defaults to; every browser the site needs supports ES2022
-  vite: { build: { target: "es2022" } },
   markdown: {
     // heading ids as GitHub makes them, which is what the docs' #anchors were written against
     anchor: { slugify: githubSlug },
