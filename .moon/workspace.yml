@@ -3,6 +3,7 @@ projects:
   graphpg: crates/graphpg
   graphpg-ui: crates/graphpg-ui
   graphiql-ui: packages/graphiql-ui
+  website: packages/website
   e2e: e2e
 
 vcs:

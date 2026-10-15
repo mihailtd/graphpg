@@ -1,0 +1,7 @@
+# copied from the repository by sync.mjs
+src/docs/
+src/changelog.md
+src/.vitepress/release.json
+# vitepress
+src/.vitepress/cache/
+src/.vitepress/dist/

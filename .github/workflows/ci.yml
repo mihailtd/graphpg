@@ -18,6 +18,10 @@ env:
   # fit the runner's disk (full debug info made the linker die with SIGBUS, out of space)
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
+# Runners: `vars.CI_RUNS_ON` (the self-hosted runners when set), except for pull requests from
+# forks, which always run on GitHub-hosted runners: a fork's code must never run on a machine of
+# ours. Same-repository branches, main and the Publish workflow use CI_RUNS_ON.
+#
 # Caches: only runs on main write them (`save-if`), and pull requests read main's. A cache is
 # readable from the branch that wrote it and from main only, so a PR that saved its own copies
 # duplicated hundreds of MB per push that no other run could use, and the repository's 10 GB
@@ -26,7 +30,7 @@ jobs:
   # Cheap static checks first: typecheck, lint and formatting for both the Rust and TypeScript
   # parts. Everything below waits for them. Locally: `pnpm verify` (and `pnpm fix` to apply fixes).
   check:
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.pull_request.head.repo.fork != true && vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     outputs:
       docker: ${{ steps.docker.outputs.changed }}
     steps:
@@ -65,7 +69,7 @@ jobs:
       - run: moon run :typecheck :lint :format
 
   test:
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.pull_request.head.repo.fork != true && vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     needs: check
     permissions:
       contents: read
@@ -134,7 +138,7 @@ jobs:
           GRAPHPG_REQUIRE_UI: "1"
 
   example:
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.pull_request.head.repo.fork != true && vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     needs: check
     services:
       postgres:
@@ -186,7 +190,7 @@ jobs:
   # End-to-end: Drizzle migrates and seeds PostgreSQL, then the built graphpg binary is queried.
   # moon installs the pinned Rust and Node toolchains (.moon/toolchains.yml) and orders the tasks.
   e2e:
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.pull_request.head.repo.fork != true && vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     needs: check
     services:
       postgres:
@@ -230,7 +234,7 @@ jobs:
   image:
     needs: check
     if: github.event_name == 'pull_request' && needs.check.outputs.docker == 'true'
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.pull_request.head.repo.fork != true && vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     services:
       postgres:
         image: postgres:18

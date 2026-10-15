@@ -70,6 +70,8 @@ Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) 
 
 ## Documentation
 
+The guides are also published as a website at <https://mihailtd.github.io/graphpg/>.
+
 | | |
 | :--- | :--- |
 | [Configuration](docs/configuration.md) | Running graphpg, environment variables, `graphpg.yaml`, safety limits, pinned schemas, multiple schemas, dev mode |

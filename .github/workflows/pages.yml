@@ -1,0 +1,69 @@
+name: Pages
+
+# Builds the documentation site (packages/website: VitePress over docs/, README.md and
+# CHANGELOG.md) and deploys it to GitHub Pages. Pull requests that touch it build it only.
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+      - README.md
+      - CHANGELOG.md
+      - Cargo.toml
+      - packages/website/**
+      - pnpm-lock.yaml
+      - .github/workflows/pages.yml
+  pull_request:
+    paths:
+      - docs/**
+      - README.md
+      - CHANGELOG.md
+      - packages/website/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push replaces a queued one, a running deployment finishes
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ${{ fromJSON(github.event.pull_request.head.repo.fork != true && vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # the "last updated" date of each page comes from git history
+          fetch-depth: 0
+      - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
+        with:
+          auto-install: true
+      - run: pnpm install --frozen-lockfile
+      - name: Build the site
+        run: moon run website:build
+        env:
+          # the project site lives under /<repository>/; set the PAGES_BASE variable to "/" for a custom domain
+          SITE_BASE: ${{ vars.PAGES_BASE || format('/{0}/', github.event.repository.name) }}
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: packages/website/src/.vitepress/dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

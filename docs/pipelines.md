@@ -7,9 +7,12 @@ How code gets checked, built and released. The workflows live in [`.github/workf
 | Pull request (any branch) | CI | static checks, tests, example, container build | no |
 | Push to `main` | Publish (runs CI first) | everything above, then build, scan, tag, sign | image `:edge`, `:sha-…` |
 | Tag `vX.Y.Z` | Publish (runs CI first) | as for `main`, plus tag verification and a GitHub Release | image `:X.Y.Z`, `:X.Y`, `:X`, `:latest` |
+| Push to `main` touching the docs | Pages | build the documentation website, deploy it | the site on GitHub Pages |
 | Weekly | Dependabot | opens PRs for Cargo, npm, GitHub Actions and Docker updates | no |
 
 Branches never publish an image: a pull request only builds and tests.
+
+Jobs run on the runners named by the repository variable `CI_RUNS_ON` (GitHub-hosted when it is unset). Pull requests from forks always run on GitHub-hosted runners, whatever it says, so code from outside the repository never runs on self-hosted machines.
 
 ## CI (`ci.yml`)
 
@@ -55,6 +58,15 @@ Tags: `main` gets `:edge` and `:sha-<short hash>`. A release tag `vX.Y.Z` gets `
 ### Container build caching
 
 The Dockerfile compiles dependencies in their own layer, against stand-in sources, before copying the real source. That layer changes only when `Cargo.toml` or `Cargo.lock` does, and the GitHub Actions layer cache (`cache-from`/`cache-to type=gha`) keeps it between runs, so a source-only change recompiles just the `graphpg` crate instead of every dependency.
+
+## Pages (`pages.yml`)
+
+Builds the documentation website in `packages/website` and deploys it to GitHub Pages. The site is [VitePress](https://vitepress.dev): a features page of its own, and the guides, introduction and changelog copied from `docs/`, `README.md` and `CHANGELOG.md` at build time (`packages/website/sync.mjs`), so they have one source. Links between those pages stay on the site; links to the rest of the repository go to GitHub.
+
+- It runs on pushes to `main` that change the docs, the README, the changelog, the version in `Cargo.toml` or the site, and manually. Pull requests that touch them build the site without deploying, which catches a dead link or a page VitePress cannot compile.
+- The site is served under `/<repository>/`. For a custom domain, set the repository variable `PAGES_BASE` to `/`.
+- Once, in the repository settings: **Pages → Source: GitHub Actions**.
+- Locally: `moon run website:dev` serves it with reload; `moon run website:build` builds it into `packages/website/src/.vitepress/dist`.
 
 ## Dependabot (`dependabot.yml`)
 

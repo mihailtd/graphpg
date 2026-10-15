@@ -1,0 +1,19 @@
+{
+  "name": "@graphpg/website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "node sync.mjs",
+    "dev": "node sync.mjs && vitepress dev src",
+    "build": "node sync.mjs && vitepress build src",
+    "preview": "vitepress preview src",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "format:check": "biome format ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "mermaid": "^12.2.0",
+    "vitepress": "1.6.4"
+  }
+}
