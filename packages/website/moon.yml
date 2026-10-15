@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://moonrepo.dev/schemas/project.json
+language: typescript
+layer: application
+
+fileGroups:
+  sources:
+    - src/**/*
+    - "!src/docs/**/*"
+    - "!src/changelog.md"
+    - "!src/.vitepress/release.json"
+    - "!src/.vitepress/cache/**/*"
+    - "!src/.vitepress/dist/**/*"
+    - sync.mjs
+    - package.json
+
+tasks:
+  # the documentation site, deployed to GitHub Pages by .github/workflows/pages.yml
+  build:
+    command: pnpm run build
+    inputs:
+      - "@globs(sources)"
+      # the pages are copied from these (sync.mjs)
+      - /docs/**/*
+      - /README.md
+      - /CHANGELOG.md
+      - /Cargo.toml
+      - /pnpm-lock.yaml
+    outputs:
+      - src/.vitepress/dist
+  dev:
+    command: pnpm run dev
+    preset: server
+  lint:
+    command: pnpm exec biome lint
+    inputs:
+      - "@globs(sources)"
+      - /biome.json
+    options:
+      affectedFiles: true
+  format:
+    command: pnpm exec biome format
+    inputs:
+      - "@globs(sources)"
+      - /biome.json
+    options:
+      affectedFiles: true
+  fix:
+    command: pnpm exec biome check --write .
+    options:
+      cache: false

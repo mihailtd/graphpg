@@ -15,7 +15,7 @@ To use another database, set `TEST_DATABASE_URL`. The tests create their own sch
 
 ## Monorepo commands
 
-The repository is a [moon](https://moonrepo.dev) workspace: Rust in `crates/graphpg`, the embedded web UIs (`crates/graphpg-ui`, built from the JS packages in `packages/`, GraphiQL in `packages/graphiql-ui`), and the end-to-end suite in `e2e/` (TypeScript, with [Drizzle](https://orm.drizzle.team) owning the test schema and migrations). moon installs the pinned Rust and Node/pnpm toolchains (`.moon/toolchains.yml`) itself. Install moon, then from the repository root:
+The repository is a [moon](https://moonrepo.dev) workspace: Rust in `crates/graphpg`, the embedded web UIs (`crates/graphpg-ui`, built from the JS packages in `packages/`, GraphiQL in `packages/graphiql-ui`), the end-to-end suite in `e2e/` (TypeScript, with [Drizzle](https://orm.drizzle.team) owning the test schema and migrations), and the documentation website in `packages/website`. moon installs the pinned Rust and Node/pnpm toolchains (`.moon/toolchains.yml`) itself. Install moon, then from the repository root:
 
 ```bash
 pnpm install               # once: Node dependencies (git hooks are installed on the first moon run)
@@ -31,6 +31,7 @@ pnpm db:generate           # after editing e2e/src/schema.ts: writes the next SQ
 pnpm verify                # typecheck, lint and format check (Rust and TypeScript), as CI runs first
 pnpm fix                   # apply rustfmt and Biome fixes
 pnpm check                 # verify + all tests
+moon run website:dev       # the documentation website at localhost:5173, from docs/, README.md and CHANGELOG.md
 ```
 
 Two git hooks are installed by moon (defined in `.moon/workspace.yml`, no setup needed):
@@ -51,7 +52,7 @@ Skip either in an emergency with `git commit --no-verify` / `git push --no-verif
 ## Pull requests
 
 - Keep changes focused, add or update tests, and run `cargo test --workspace` before pushing.
-- Describe behaviour in `docs/` when you add or change a feature.
+- Describe behaviour in `docs/` when you add or change a feature. The website copies `docs/`, `README.md` and `CHANGELOG.md` as they are: a new page in `docs/` also needs a sidebar entry in `packages/website/src/.vitepress/config.mts`.
 - By contributing you agree that your work is licensed under the project's licenses (MIT OR Apache-2.0).
 
 ## Releasing
