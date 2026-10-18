@@ -4,7 +4,7 @@
 
 A GraphQL **and REST** server for PostgreSQL. Point it at a database and it serves a GraphQL API and a REST API (described by an OpenAPI 3.1 document) generated from the schema: tables, relations, constraints, types, functions and privileges. There is no resolver code to write and no schema to maintain in two places.
 
-For AI work it covers two jobs. **Agents that use your data** get typed tools over it: vector, BM25 and hybrid search from your indexes, and [MCP](docs/ai-agents.md#mcp-tools-through-apollo-mcp-server) through Apollo's MCP Server, limited to the operations you list and to what Row-Level Security lets the agent's token see. **Agents that build applications** get a typed contract to code against: the GraphQL SDL and the OpenAPI document are generated from the database, pinned in CI, and errors carry typed codes. See [AI agents](docs/ai-agents.md).
+For AI work it covers two jobs. **Agents that use your data** get typed tools over it: vector, BM25 and hybrid search from your indexes, and [MCP](docs/ai-agents.md#mcp-tools-through-apollo-mcp-server) through Apollo's MCP Server, limited to the operations you list and to what Row-Level Security lets the agent's token see. **Agents that build applications** get a typed contract to code against: the GraphQL SDL and the OpenAPI document are generated from the database, pinned in CI, and errors carry typed codes. See [AI agents](docs/ai-agents.md) and [end-to-end type safety](docs/type-safety.md).
 
 graphpg is a single Rust binary. It reads PostgreSQL's catalogs at startup, builds the APIs, and compiles each request into one SQL statement (lateral joins and JSON aggregation, so nested selections don't cause N+1 queries). Both APIs are planned onto the same engine, so they share filters, pagination, nested writes, typed errors, authorization and safety limits.
 
@@ -79,6 +79,7 @@ The guides are also published as a website at <https://mihailtd.github.io/graphp
 | | |
 | :--- | :--- |
 | [AI agents](docs/ai-agents.md) | MCP tools for agents through Apollo's MCP Server, vector and hybrid search for retrieval, typed contracts for agents that write code, and the guardrails |
+| [End-to-end type safety](docs/type-safety.md) | From a migration to TypeScript errors in the app: exporting the SDL and OpenAPI document, GraphQL Code Generator and openapi-typescript, what a column rename looks like, where the chain stops |
 | [Configuration](docs/configuration.md) | Running graphpg, environment variables, `graphpg.yaml`, safety limits, pinned schemas, multiple schemas, dev mode |
 | [Schema mapping](docs/schema-mapping.md) | How tables, types, functions and constraints become GraphQL and REST |
 | [GraphQL API](docs/graphql-api.md) | Pagination, filtering, aggregates, mutations, nested writes, errors, search, limits |
@@ -114,3 +115,5 @@ Each test file creates the schema it needs. See [CONTRIBUTING.md](CONTRIBUTING.m
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Third-party test material is credited in [NOTICE](NOTICE).
+
+graphpg is built by [Mihai Farcas](https://mihai.ltd) ([@mihailtd](https://github.com/mihailtd)). For consulting on PostgreSQL APIs and AI agents in production, see [innovi.pro](https://innovi.pro).

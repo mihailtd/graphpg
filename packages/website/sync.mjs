@@ -59,6 +59,24 @@ function rewriteLinks(markdown, from) {
     .join("\n");
 }
 
+// The page's first paragraph as plain text, cut at a word near 160 characters: its search and
+// social card description.
+function firstParagraph(markdown) {
+  const paragraph = markdown
+    .replace(/^---\n[\s\S]*?\n---\n/, "")
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .find((block) => block && !/^(#|>|\||```|~~~|!\[|<|-|\*|\d+\.)/.test(block));
+  if (!paragraph) return undefined;
+  const text = paragraph
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[`*_]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length <= 160) return text;
+  return `${text.slice(0, text.lastIndexOf(" ", 157))}…`;
+}
+
 function frontmatter(fields) {
   const lines = Object.entries(fields).map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
   return `---\n${lines.join("\n")}\n---\n\n`;
@@ -70,6 +88,8 @@ mkdirSync(join(src, "docs"), { recursive: true });
 for (const [from, to] of pages) {
   let markdown = readFileSync(join(root, from), "utf8");
   const fields = { source: from };
+  const description = firstParagraph(from === "README.md" ? markdown.replace(/^[\s\S]*?^# graphpg\n/m, "") : markdown);
+  if (description) fields.description = description;
   if (from === "README.md") {
     // The introduction: the README without its title and cover image, which the site's home
     // page already shows.

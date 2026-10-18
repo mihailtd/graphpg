@@ -1,5 +1,6 @@
 import { defineConfig } from "vitepress";
 import release from "./release.json" with { type: "json" };
+import { author } from "./theme/site";
 
 // GitHub's heading slugs: lower case, punctuation dropped (dots included), each space a hyphen
 function githubSlug(heading: string): string {
@@ -13,11 +14,36 @@ function githubSlug(heading: string): string {
 
 // GitHub Pages serves a project site under /<repository>/; SITE_BASE overrides it (a custom domain: "/")
 const base = process.env.SITE_BASE ?? "/graphpg/";
+// the public address of the site, for canonical links, the sitemap and social cards (absolute URLs)
+const siteUrl = (process.env.SITE_URL ?? `https://mihailtd.github.io${base}`).replace(/\/?$/, "/");
+
+const description =
+  "graphpg turns a PostgreSQL schema into type-safe GraphQL and REST APIs, with the GraphQL SDL and OpenAPI 3.1 files your TypeScript types are generated from.";
+
+// structured data: what graphpg is and who builds it, linking the project to its author's sites
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  name: "graphpg",
+  description,
+  url: siteUrl,
+  codeRepository: release.repo,
+  programmingLanguage: ["Rust", "SQL"],
+  runtimePlatform: "PostgreSQL",
+  license: ["https://opensource.org/licenses/MIT", "https://www.apache.org/licenses/LICENSE-2.0"],
+  version: release.version,
+  author: {
+    "@type": "Person",
+    name: author.name,
+    url: author.site,
+    sameAs: [author.site, author.github, author.company.url],
+    worksFor: { "@type": "Organization", name: author.company.name, url: author.company.url },
+  },
+};
 
 export default defineConfig({
   title: "graphpg",
-  description:
-    "A GraphQL and REST server for PostgreSQL: point it at a database and it serves both APIs, generated from the schema.",
+  description,
   base,
   cleanUrls: true,
   lastUpdated: true,
@@ -27,20 +53,30 @@ export default defineConfig({
   head: [
     ["link", { rel: "icon", type: "image/svg+xml", href: `${base}logo.svg` }],
     ["meta", { name: "theme-color", content: "#336791" }],
+    ["meta", { name: "author", content: author.name }],
+    ["link", { rel: "author", href: author.site }],
     ["meta", { property: "og:type", content: "website" }],
-    ["meta", { property: "og:title", content: "graphpg: GraphQL and REST for PostgreSQL" }],
-    ["meta", { property: "og:image", content: `${base}og.png` }],
+    ["meta", { property: "og:site_name", content: "graphpg" }],
+    ["meta", { property: "og:image", content: `${siteUrl}og.png` }],
+    ["meta", { property: "og:image:alt", content: "graphpg: GraphQL and REST, generated from PostgreSQL" }],
     ["meta", { name: "twitter:card", content: "summary_large_image" }],
-    ["meta", { name: "twitter:image", content: `${base}og.png` }],
-
-    [
-      "meta",
-      {
-        property: "og:description",
-        content: "One Rust binary reads your PostgreSQL schema and serves a GraphQL API and a REST API from it.",
-      },
-    ],
+    ["meta", { name: "twitter:image", content: `${siteUrl}og.png` }],
+    ["script", { type: "application/ld+json" }, JSON.stringify(structuredData)],
   ],
+  sitemap: { hostname: siteUrl },
+  // per page: the canonical address, and a social card titled and described like the page
+  transformHead({ pageData, title, description: pageDescription }) {
+    const path = pageData.relativePath.replace(/(^|\/)index\.md$/, "$1").replace(/\.md$/, "");
+    const url = `${siteUrl}${path}`;
+    return [
+      ["link", { rel: "canonical", href: url }],
+      ["meta", { property: "og:url", content: url }],
+      ["meta", { property: "og:title", content: title }],
+      ["meta", { property: "og:description", content: pageDescription }],
+      ["meta", { name: "twitter:title", content: title }],
+      ["meta", { name: "twitter:description", content: pageDescription }],
+    ];
+  },
   markdown: {
     // heading ids as GitHub makes them, which is what the docs' #anchors were written against
     anchor: { slugify: githubSlug },
@@ -81,6 +117,7 @@ export default defineConfig({
           items: [
             { text: "Introduction", link: "/docs/" },
             { text: "AI agents", link: "/docs/ai-agents" },
+            { text: "End-to-end type safety", link: "/docs/type-safety" },
             { text: "Configuration", link: "/docs/configuration" },
             { text: "Schema mapping", link: "/docs/schema-mapping" },
           ],
@@ -137,10 +174,6 @@ export default defineConfig({
       pattern: ({ frontmatter, filePath }) =>
         `https://github.com/mihailtd/graphpg/edit/main/${frontmatter.source ?? `packages/website/src/${filePath}`}`,
       text: "Edit this page on GitHub",
-    },
-    footer: {
-      message: "Dual-licensed under MIT or Apache-2.0.",
-      copyright: `graphpg ${release.version}`,
     },
   },
 });

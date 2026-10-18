@@ -1,27 +1,32 @@
 ---
 layout: home
 title: graphpg
-titleTemplate: GraphQL and REST for PostgreSQL, ready for AI agents
+titleTemplate: Type-safe GraphQL and REST from PostgreSQL
+description: graphpg turns a PostgreSQL schema into type-safe GraphQL and REST APIs, with the SDL and OpenAPI 3.1 files your TypeScript types come from. Built for developers and their coding agents.
 
 hero:
   name: graphpg
-  text: Your PostgreSQL, as typed APIs for AI agents and the apps they build
-  tagline: One Rust binary turns your schema into GraphQL and REST, with vector and hybrid search from your indexes, MCP tools through Apollo's MCP Server, and Row-Level Security on every call.
+  text: Type-safe GraphQL and REST, generated from PostgreSQL
+  tagline: Write the schema in SQL. One Rust binary serves both APIs and keeps the GraphQL SDL and OpenAPI 3.1 files current as migrations land. Rename a column and the type checker lists every place that broke, for you or your coding agent.
   image:
     src: /logo.svg
     alt: graphpg
   actions:
     - theme: brand
-      text: Get started
-      link: /docs/
+      text: Run the quick start
+      link: /docs/#quick-start
     - theme: alt
-      text: graphpg for AI agents
-      link: /docs/ai-agents
+      text: End-to-end type safety
+      link: /docs/type-safety
     - theme: alt
       text: GitHub
       link: https://github.com/mihailtd/graphpg
 
 features:
+  - title: Types from the database to the UI
+    details: The GraphQL SDL and the OpenAPI 3.1 document are generated from the schema, rewritten on every migration and pinned in CI. Generated TypeScript catches a renamed column before anything runs.
+    link: /docs/type-safety
+    linkText: End-to-end types
   - title: Retrieval from your indexes
     details: A vector index and a lexical one give semantic, BM25 and hybrid search fields, fused by reciprocal rank in one SQL statement, scoped by filters and Row-Level Security.
     link: /docs/ai-agents#retrieval-vector-bm25-and-hybrid-search
@@ -30,10 +35,6 @@ features:
     details: Put Apollo's MCP Server in front of graphpg and each GraphQL operation you list becomes a typed tool, run with the agent's own token.
     link: /docs/ai-agents#mcp-tools-through-apollo-mcp-server
     linkText: Set up MCP
-  - title: A contract coding agents can trust
-    details: The GraphQL SDL and the OpenAPI 3.1 document are generated from the database and pinned in CI; errors carry typed codes. Agents code against real types, not guesses.
-    link: /docs/ai-agents#agents-that-build-applications
-    linkText: Agentic development
   - title: Guardrails in the database
     details: Each agent gets a role, its rows and nothing else. Page size, depth, cost and timeouts are checked before any SQL runs; an allow-list can limit it to known operations.
     link: /docs/ai-agents#guardrails
@@ -49,6 +50,53 @@ features:
 ---
 
 <div class="home-sections">
+
+<section class="home-section">
+
+<p class="eyebrow">End-to-end types</p>
+
+## Change the database, and the type checker finds every place that broke
+
+How often have you asked an agent to "change this everywhere" and found, a day later, the one place it missed? In a large codebase, search finds most uses of a column, not all of them. When the types come from the database, the missed places stop compiling, and the agent reads the errors and fixes them in the same session.
+
+<TypeFlow />
+
+</section>
+
+<section class="home-section">
+
+<p class="eyebrow">Schema in SQL</p>
+
+## SQL is the schema language agents already write well
+
+<div class="capabilities why-sql">
+  <div class="capability">
+    <h3>Declarative and compact</h3>
+    <p>A table states its columns, keys, relations and rules in a few lines. Constraints, policies and grants say what is allowed, not how to check it, and PostgreSQL enforces them on every write, from any client.</p>
+  </div>
+  <div class="capability">
+    <h3>Familiar to models</h3>
+    <p>SQL has decades of public examples and documentation, and models write it fluently. The API that follows from it needs no resolver code, so most of an agent's backend work is one migration.</p>
+  </div>
+  <div class="capability">
+    <h3>Auditable</h3>
+    <p>Every change is a migration a person can review: a SQL file, or a Drizzle schema diff that generates one. The database rejects what breaks its own rules, such as dropping a column a function still reads.</p>
+  </div>
+  <div class="capability">
+    <h3>One contract, two APIs</h3>
+    <p>The same schema becomes the GraphQL SDL and the OpenAPI 3.1 document, so typed GraphQL clients and typed REST clients both follow it. Neither is maintained by hand.</p>
+  </div>
+  <div class="capability">
+    <h3>Typed errors</h3>
+    <p>A violated constraint comes back as a code derived from it, such as <code>EMAIL_TAKEN</code> or <code>AUTHOR_NOT_FOUND</code>, listed per type in both documents, so generated code can handle each one.</p>
+  </div>
+  <div class="capability">
+    <h3>Drift fails CI</h3>
+    <p><code>graphpg schema export --check</code> fails when the committed files are out of date, and production refuses to start on a schema it was not built for.</p>
+  </div>
+</div>
+
+</section>
 
 <section class="home-section">
 
@@ -179,38 +227,6 @@ query SearchPosts($query: String!) {
 :::
 
 </section>
-
-<section class="home-section">
-
-<p class="eyebrow">Agentic development</p>
-
-## A contract coding agents can't drift from
-
-<div class="pipeline pipeline-4">
-  <div class="pipeline-step">
-    <span class="pipeline-num">1</span>
-    <h3>The agent writes SQL</h3>
-    <p>Tables, constraints, policies and functions in a migration. That is the whole backend.</p>
-  </div>
-  <div class="pipeline-step">
-    <span class="pipeline-num">2</span>
-    <h3>The API follows</h3>
-    <p>Dev mode reloads the schema and rewrites <code>schema.graphql</code> and <code>openapi.json</code> as it changes.</p>
-  </div>
-  <div class="pipeline-step">
-    <span class="pipeline-num">3</span>
-    <h3>Types catch mistakes</h3>
-    <p>Generated clients stop compiling where a change broke them; typed error codes say which constraint a write violated.</p>
-  </div>
-  <div class="pipeline-step">
-    <span class="pipeline-num">4</span>
-    <h3>CI holds the line</h3>
-    <p><code>graphpg schema export --check</code> fails on drift, and production refuses to start with a schema it was not built for.</p>
-  </div>
-</div>
-
-</section>
-
 
 <section class="home-section">
 
@@ -383,6 +399,16 @@ graphpg covers the ground of PostGraphile and Hasura on the GraphQL side and Pos
 | REST | Yes, described by OpenAPI 3.1 | No | From saved queries | Yes, described by OpenAPI 2.0 |
 | Schema from | Catalogs, optional YAML | Catalogs, smart comments, plugins | Metadata | Catalogs |
 | Authorization | RLS with token claims; schema pruned by `GRANT` | RLS through `pgSettings` | Role permissions in metadata | RLS with JWT claims |
+
+</section>
+
+<section class="home-section">
+
+<p class="eyebrow">From the blog</p>
+
+## Why it works this way
+
+<WritingCards />
 
 </section>
 
