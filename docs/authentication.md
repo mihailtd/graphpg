@@ -76,6 +76,14 @@ Claims are data, never SQL: they are bound as parameters of `set_config`. A clai
 
 Each request runs in a transaction that starts with one statement setting `role` and the claim settings with `set_config(..., true)`. PostgreSQL discards them when the transaction ends, so a pooled connection never carries one request's identity into the next: a request whose client goes away still runs to its commit or rollback, and a connection whose request failed unexpectedly mid-transaction is closed rather than returned to the pool. This covers `/graphql`, `@defer`/`@stream` responses, `/export` and `/import`.
 
+## Why RLS is essential for AI-built applications
+
+When AI coding agents author application code, imperative authorization checks scattered across resolvers, controllers, and background workers become the primary source of cross-tenant data leaks. An agent asked to add a new query or export endpoint easily forgets to append a tenant filter, and its accompanying happy-path test passes without detecting the leak.
+
+With PostgreSQL Row-Level Security, the database kernel evaluates security predicates on every table scan. Even if an agent generates an entirely unfiltered query (`SELECT * FROM documents` or `query { documents { nodes { id title } } }`), PostgreSQL transparently appends the policy condition. Reviewers audit a single declarative SQL policy rather than auditing dozens of application-layer handlers across pull requests.
+
+For an architectural breakdown and test walkthrough, read [Why Row-Level Security Is the Only Reliable Auth for AI-Built Apps](https://mihai.ltd/blog/row-level-security-ai-coding-agents).
+
 ## GraphiQL
 
 The GraphiQL IDE at `/graphiql` is for development and pre-production. It is on in dev mode (`--mode dev`) and off in prod. Set `graphql.ui: true` (or `false`) in the config to choose otherwise. When it is off, `/graphiql` returns 404. Its assets are embedded in the binary, so it works offline and needs no external hosts in a Content-Security-Policy.
