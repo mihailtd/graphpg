@@ -22,6 +22,18 @@ pub struct ConstraintViolation {
     /// Input paths of the offending values (`input.email`); just the field names when the
     /// statement wrote several rows and the database did not say which one failed.
     pub fields: Vec<String>,
+    /// Why the value fails the JSON Schema of a pg_jsonschema check: one entry per failed
+    /// keyword, where it is in the value.
+    #[serde(rename = "validationErrors", skip_serializing_if = "Vec::is_empty")]
+    pub validation_errors: Vec<SchemaViolation>,
+}
+
+/// A part of a JSON value its JSON Schema rejects.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SchemaViolation {
+    /// JSON Pointer into the value (`/telecom/0/system`; empty for the value itself).
+    pub path: String,
+    pub message: String,
 }
 
 impl ExecutionError {
@@ -44,6 +56,7 @@ impl ExecutionError {
                     type_name: error_enum(t),
                     constraint: None,
                     fields: vec!["expectedVersion".to_string()],
+                    validation_errors: Vec::new(),
                 })
             }
             _ => None,
@@ -84,7 +97,14 @@ pub fn violation(
             type_name: error_enum(t),
             constraint: None,
             fields: vec![field],
+            validation_errors: Vec::new(),
         });
+    }
+    // A check of a domain: PostgreSQL names the type, not the table nor the column
+    if *code == SqlState::CHECK_VIOLATION {
+        if let Some(datatype) = db.datatype() {
+            return domain_violation(catalog, t, db, datatype, context);
+        }
     }
     let kinds: &[ConstraintKind] = match code {
         c if *c == SqlState::UNIQUE_VIOLATION => {
@@ -124,10 +144,29 @@ pub fn violation(
             type_name: error_enum(parent),
             constraint: Some(con.name.clone()),
             fields: Vec::new(),
+            validation_errors: Vec::new(),
         });
     }
 
-    let row = pick_row(context, t, &con.columns, db.detail());
+    let mut row = pick_row(context, t, &con.columns, db.detail());
+    // A pg_jsonschema check: why the value fails it, from the row whose value does
+    let mut validation_errors = Vec::new();
+    if let (ConstraintKind::Check, [column]) = (con.kind, con.columns.as_slice()) {
+        if let Some(schema) = crate::openapi::constraints::json_schema_of(&con.definition, column) {
+            let candidates: Vec<&InputRow> = match row {
+                Some(r) => vec![r],
+                None => context.map(|c| c.rows.iter().collect()).unwrap_or_default(),
+            };
+            for candidate in candidates {
+                let errors = schema_violations(&schema, candidate, column);
+                if !errors.is_empty() {
+                    row = Some(candidate);
+                    validation_errors = errors;
+                    break;
+                }
+            }
+        }
+    }
     let fields: Vec<String> = con
         .columns
         .iter()
@@ -180,7 +219,120 @@ pub fn violation(
         type_name: error_enum(t),
         constraint: Some(con.name.clone()),
         fields,
+        validation_errors,
     })
+}
+
+/// A value a check of domain `datatype` rejected, in a write of `t`: the column of that
+/// domain, in the row whose value fails a pg_jsonschema check of the domain (when it is one),
+/// else the first row setting such a column.
+fn domain_violation(
+    catalog: &DatabaseCatalog,
+    t: &TableMetadata,
+    db: &DbError,
+    datatype: &str,
+    context: Option<&WriteContext>,
+) -> Option<ConstraintViolation> {
+    let domain = catalog.domains.iter().find(|d| {
+        d.config_name == datatype
+            && db
+                .schema()
+                .is_none_or(|s| d.key.starts_with(&format!("{}.", quote(s))))
+    })?;
+    let columns: Vec<_> = t
+        .writable_columns()
+        .filter(|c| c.domain.as_deref() == Some(domain.key.as_str()))
+        .collect();
+    let schema = domain
+        .checks
+        .iter()
+        .find_map(|check| crate::openapi::constraints::json_schema_of(check, "VALUE"));
+    let rows: Vec<&InputRow> = context.map(|c| c.rows.iter().collect()).unwrap_or_default();
+    let sets =
+        |row: &InputRow, column: &str| row.values.iter().any(|(c, v)| c == column && v.is_some());
+    let mut found = None;
+    if let Some(schema) = &schema {
+        'rows: for row in &rows {
+            for col in &columns {
+                let errors = schema_violations(schema, row, &col.name);
+                if !errors.is_empty() {
+                    found = Some((Some(*row), *col, errors));
+                    break 'rows;
+                }
+            }
+        }
+    }
+    let (row, col, validation_errors) = match found {
+        Some(found) => found,
+        None => {
+            let (row, col) = rows
+                .iter()
+                .find_map(|r| {
+                    columns
+                        .iter()
+                        .find(|c| sets(r, &c.name))
+                        .map(|c| (Some(*r), *c))
+                })
+                .or_else(|| columns.first().map(|c| (None, *c)))?;
+            (row, col, Vec::new())
+        }
+    };
+    let field = field_path(row, &col.field_name);
+    let constraint = db.constraint().unwrap_or_default();
+    Some(ConstraintViolation {
+        message: format!(
+            "`{field}`: the value fails check `{constraint}` of its type `{}`",
+            domain.config_name
+        ),
+        code: DatabaseCatalog::column_error_code(col, "INVALID"),
+        type_name: error_enum(t),
+        constraint: Some(constraint.to_string()),
+        fields: vec![field],
+        validation_errors,
+    })
+}
+
+/// `name` as PostgreSQL quotes an identifier (`format('%I')`): as it is when it is a plain
+/// lower-case name.
+fn quote(name: &str) -> String {
+    let plain = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if plain {
+        name.to_string()
+    } else {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    }
+}
+
+/// The parts of `row`'s value of `column` that `schema` rejects, as pg_jsonschema's own
+/// validator (the `jsonschema` crate) reports them. Empty when the row does not set the
+/// column, or the value passes (the database is the judge: this only explains its refusal).
+fn schema_violations(
+    schema: &serde_json::Value,
+    row: &InputRow,
+    column: &str,
+) -> Vec<SchemaViolation> {
+    let Some(Some(text)) = row.values.iter().find(|(c, _)| c == column).map(|(_, v)| v) else {
+        return Vec::new();
+    };
+    let (Ok(value), Ok(validator)) = (
+        serde_json::from_str::<serde_json::Value>(text),
+        jsonschema::validator_for(schema),
+    ) else {
+        return Vec::new();
+    };
+    validator
+        .iter_errors(&value)
+        .map(|e| SchemaViolation {
+            path: e.instance_path().to_string(),
+            message: e.to_string(),
+        })
+        .collect()
 }
 
 fn error_enum(t: &TableMetadata) -> String {

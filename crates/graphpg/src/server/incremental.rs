@@ -754,8 +754,8 @@ impl Payloads<'_> {
                     execution_error(
                         &err,
                         self.catalog,
-                        self.state.mask_errors,
-                        &self.state.errors,
+                        self.state.settings().mask_errors,
+                        &self.state.settings().errors,
                     )
                     .1,
                 ]
@@ -903,7 +903,7 @@ pub async fn execute_incremental_stream(
                 Some(&**doc),
                 variables.as_ref(),
             )
-            .with_limits(state.limits.plan_limits()),
+            .with_limits(state.settings().limits.plan_limits()),
             catalog: &catalog,
             operation_label: &operation_label,
             auth_ctx: auth_ctx.as_ref(),

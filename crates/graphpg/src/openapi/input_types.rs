@@ -11,21 +11,27 @@ use apollo_compiler::ast::Type;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::Schema;
 use serde_json::{json, Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Prefix of the components made from GraphQL input types.
 const PREFIX: &str = "Input.";
 
+/// The schemas of the column fields of input types, by input type and field: the catalog's,
+/// with what the column's `CHECK` constraints state (GraphQL types cannot say it).
+pub(super) type ColumnSchemas = HashMap<String, HashMap<String, Value>>;
+
 /// Collects the components the input types a document refers to need.
 pub(super) struct InputTypes<'a> {
     schema: &'a Schema,
+    columns: ColumnSchemas,
     components: BTreeMap<String, Value>,
 }
 
 impl<'a> InputTypes<'a> {
-    pub(super) fn new(schema: &'a Schema) -> Self {
+    pub(super) fn new(schema: &'a Schema, columns: ColumnSchemas) -> Self {
         Self {
             schema,
+            columns,
             components: BTreeMap::new(),
         }
     }
@@ -65,8 +71,14 @@ impl<'a> InputTypes<'a> {
         let mut properties = Map::new();
         let mut required = Vec::new();
         for (field, definition) in &input.fields {
-            let mut schema = self.type_schema(&definition.ty);
-            if let Some(description) = &definition.description {
+            let column = self
+                .columns
+                .get(name)
+                .and_then(|fields| fields.get(field.as_str()))
+                .cloned();
+            let mut schema = column.unwrap_or_else(|| self.type_schema(&definition.ty));
+            if let (None, Some(description)) = (schema.get("description"), &definition.description)
+            {
                 // a `$ref` has no siblings in OpenAPI 3.0, but in 3.1 it may
                 schema["description"] = json!(description.as_str());
             }

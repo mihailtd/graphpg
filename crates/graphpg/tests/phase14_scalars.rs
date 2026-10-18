@@ -178,8 +178,9 @@ async fn test_every_type_has_a_graphql_type() {
         "amounts: DecimalRange",
         "ips: [InternetAddress]",
         "ivs: [Interval]",
-        "email: Email",
-        "qty: PositiveInt",
+        // The domains' checks are stated like a column's own
+        "email: Email @constraint(pattern: \"@\")",
+        "qty: PositiveInt @constraint(exclusiveMinimum: 0)",
     ] {
         assert!(
             sample.contains(&format!("  {field}\n")),
@@ -214,7 +215,7 @@ async fn test_every_type_has_a_graphql_type() {
     assert!(
         create.contains("  period: DatetimeRangeInput\n")
             && create.contains("  b: Base64\n")
-            && create.contains("  email: Email\n"),
+            && create.contains("  email: Email @constraint(pattern: \"@\")\n"),
         "{create}"
     );
     assert!(env
@@ -384,7 +385,7 @@ async fn test_config_names_domain_scalars() {
             .await;
     assert!(env
         .block("type", "Sample")
-        .contains("  email: EmailAddress\n"));
+        .contains("  email: EmailAddress @constraint(pattern: \"@\")\n"));
     assert!(env.sdl.contains("\"\"\"Where mail goes\n\nValues of domain `email`, as `String` values.\"\"\"\nscalar EmailAddress"));
     assert!(!env.sdl.contains("scalar Email\n"));
 }

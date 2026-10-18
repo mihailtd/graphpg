@@ -1,1 +1,0 @@
-- **Ready for a public repository**: pull requests from forks always run CI on GitHub-hosted runners, never on the self-hosted ones `CI_RUNS_ON` names ([pipelines](docs/pipelines.md)), and `NOTICE` carries the full MIT licence of the Graphile test material it adapts.

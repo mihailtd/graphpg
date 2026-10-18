@@ -131,7 +131,7 @@ impl SchemaBuilder {
                         let mut field = SdlField::new(name, format!("{args}: {}{}", catalog.column_type(col, false), non_null))
                             .with_doc(Self::format_docstring(catalog.column_description(table, col).as_deref(), "  "))
                             .deprecated(col.deprecation.as_deref());
-                        field.directives.push_str(&Self::constraint_directive(table, col));
+                        field.directives.push_str(&Self::constraint_directive(catalog, table, col));
                         field
                     }
                     FieldKind::Relation(rel) => {
@@ -602,7 +602,11 @@ impl SchemaBuilder {
     /// ` @constraint(minimum: 0, maxLength: 20, …)`: what the table's `CHECK` constraints and the
     /// column's `varchar(n)` say of its values, as the same keywords the OpenAPI document uses
     /// (JSON Schema). Empty when there are none.
-    fn constraint_directive(table: &TableMetadata, col: &ColumnMetadata) -> String {
+    fn constraint_directive(
+        catalog: &DatabaseCatalog,
+        table: &TableMetadata,
+        col: &ColumnMetadata,
+    ) -> String {
         const KEYWORDS: [&str; 10] = [
             "minimum",
             "maximum",
@@ -615,7 +619,7 @@ impl SchemaBuilder {
             "minItems",
             "maxItems",
         ];
-        let mut keywords = crate::openapi::constraints::keywords(table, col);
+        let mut keywords = crate::openapi::constraints::keywords(table, col, catalog);
         if let Some(limit) = col.limits.max_length {
             // A `varchar(20)` limit and a `CHECK` on the length: the stricter one holds
             let tighter = keywords
@@ -1655,7 +1659,7 @@ impl SchemaBuilder {
                         col.field_name,
                         catalog.column_type(col, true),
                         non_null,
-                        Self::constraint_directive(table, col)
+                        Self::constraint_directive(catalog, table, col)
                     ));
                 }
                 for (name, rel) in &nested {
@@ -1724,7 +1728,7 @@ impl SchemaBuilder {
                         "  {}: {}{}\n",
                         col.field_name,
                         catalog.column_type(col, true),
-                        Self::constraint_directive(table, col)
+                        Self::constraint_directive(catalog, table, col)
                     ));
                 }
                 // Nested writes of single-row updates, which read the row back by key

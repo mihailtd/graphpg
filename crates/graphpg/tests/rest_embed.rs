@@ -42,10 +42,11 @@ async fn env_with_threshold(threshold: Option<u64>) -> Env {
         "rest_extras".to_string(),
         DebugOptions::default(),
     );
-    let mut state = state;
+    let mut limits = graphpg::config::models::LimitsConfig::default();
     if threshold.is_some() {
-        state.limits.count_threshold = threshold;
+        limits.count_threshold = threshold;
     }
+    let state = state.with_limits(limits);
     Env {
         app: create_router(Arc::new(state)),
         client,

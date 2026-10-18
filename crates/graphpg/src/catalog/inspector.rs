@@ -1103,7 +1103,9 @@ impl<'a> CatalogInspector<'a> {
             let rows = self
                 .client
                 .query(
-                    "SELECT format('%I.%I', n.nspname, t.typname), t.typname::text, obj_description(t.oid, 'pg_type')
+                    "SELECT format('%I.%I', n.nspname, t.typname), t.typname::text, obj_description(t.oid, 'pg_type'),
+                            ARRAY(SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c
+                                  WHERE c.contypid = t.oid AND c.contype = 'c' ORDER BY c.conname)
                      FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
                      WHERE t.typtype = 'd' AND format('%I.%I', n.nspname, t.typname) = ANY($1)
                      ORDER BY 1",
@@ -1123,6 +1125,7 @@ impl<'a> CatalogInspector<'a> {
                     type_name: String::new(),
                     description: row.get(2),
                     base,
+                    checks: row.get(3),
                 });
             }
         }

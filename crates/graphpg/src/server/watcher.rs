@@ -187,7 +187,8 @@ async fn run_watcher_loop(
 }
 
 /// A fingerprint of what the API is built from in `schemas`, compared between polls: a change
-/// to a relation, column, constraint, index, function, type or comment changes it. Empty when
+/// to a relation, column, default, constraint, index, function (its argument defaults and
+/// SQL-standard body too), type or comment changes it. Empty when
 /// the database cannot be read.
 async fn query_catalog_fingerprint(state: &ServerState, schemas: &[String]) -> String {
     let client = match state.pool.get().await {
@@ -216,10 +217,13 @@ SELECT md5(concat_ws('|',
        FROM pg_attribute WHERE attrelid IN (SELECT oid FROM rel) AND attnum > 0),
     (SELECT string_agg(concat_ws(',', oid, conname, contype, pg_get_constraintdef(oid)), ';' ORDER BY oid)
        FROM pg_constraint WHERE connamespace IN (SELECT oid FROM ns)),
+    (SELECT string_agg(concat_ws(',', adrelid, adnum, md5(pg_get_expr(adbin, adrelid))), ';' ORDER BY adrelid, adnum)
+       FROM pg_attrdef WHERE adrelid IN (SELECT oid FROM rel)),
     (SELECT string_agg(concat_ws(',', indexrelid, indisunique), ';' ORDER BY indexrelid)
        FROM pg_index WHERE indrelid IN (SELECT oid FROM rel)),
     (SELECT string_agg(concat_ws(',', oid, proname, md5(prosrc), provolatile,
-                                 pg_get_function_identity_arguments(oid), prorettype), ';' ORDER BY oid)
+                                 pg_get_function_identity_arguments(oid), prorettype, pronargdefaults,
+                                 md5(pg_get_expr(proargdefaults, 0)), md5(prosqlbody::text)), ';' ORDER BY oid)
        FROM pg_proc WHERE pronamespace IN (SELECT oid FROM ns)),
     (SELECT string_agg(concat_ws(',', oid, typname, typtype), ';' ORDER BY oid)
        FROM pg_type WHERE typnamespace IN (SELECT oid FROM ns)),
@@ -294,8 +298,14 @@ async fn reload_and_regenerate(
     let new_schema = SchemaBuilder::build(&new_catalog)?;
     let sdl = SchemaBuilder::generate_sdl(&new_catalog);
 
-    // 3. Update in-memory ServerState atomically
-    state.reload(new_schema, new_catalog.clone());
+    // 3. Update in-memory ServerState atomically, with the settings of the new config
+    let fixed = state.reload_with_config(new_schema, new_catalog.clone(), config.clone());
+    if !fixed.is_empty() {
+        tracing::warn!(
+            settings = %fixed.join(", "),
+            "dev mode: these settings changed in the config but take effect on restart"
+        );
+    }
 
     // 4. Write export files to disk
     if config.watch.export {

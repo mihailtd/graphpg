@@ -662,7 +662,8 @@ fn is_retryable(err: &ExecutionError) -> bool {
 /// hash is the error's, so the same failure is sent once.
 fn failure(state: &ServerState, err: &ExecutionError, row: &Row) -> Outcome {
     let catalog = state.current_catalog();
-    let (_, error) = execution_error(err, &catalog, state.mask_errors, &state.errors);
+    let settings = state.settings();
+    let (_, error) = execution_error(err, &catalog, settings.mask_errors, &settings.errors);
     let response = serde_json::json!({ "data": null, "errors": [error] });
     // A masked message names a new request id each time: the database's error is hashed
     let hash = hash_of(&serde_json::json!({ "error": err.to_string() }));
@@ -705,7 +706,7 @@ pub fn compile(
                 Some(&**doc),
                 variables,
             )
-            .with_limits(state.limits.plan_limits());
+            .with_limits(state.settings().limits.plan_limits());
             let plan = planner.plan_operation(operation).map_err(|err| Rejection {
                 status: StatusCode::OK,
                 errors: planner_errors(&err),

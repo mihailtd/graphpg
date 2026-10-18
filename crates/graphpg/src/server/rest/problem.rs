@@ -251,6 +251,12 @@ impl ProblemDetails {
             let mut problem = Self::new(status, v.message)
                 .with_code(v.code)
                 .with_fields(v.fields);
+            if !v.validation_errors.is_empty() {
+                problem.extensions.insert(
+                    "validationErrors".into(),
+                    serde_json::json!(v.validation_errors),
+                );
+            }
             if is_prod {
                 let request_id = uuid::Uuid::new_v4().to_string();
                 tracing::debug!(%request_id, code = ?problem.code, "REST request rejected by a constraint");

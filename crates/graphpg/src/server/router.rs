@@ -53,7 +53,8 @@ pub fn graphql_routes_with(subscriptions: bool) -> Router<Arc<ServerState>> {
 /// Mounts the GraphQL SDL routes: `graphql.sdl_path`, and `graphql.subgraph_path` with federation.
 pub fn sdl_routes(state: &ServerState) -> Router<Arc<ServerState>> {
     let mut router = Router::new();
-    let Some(config) = state.config.as_ref().filter(|c| c.graphql.sdl) else {
+    let settings = state.settings();
+    let Some(config) = settings.config.as_ref().filter(|c| c.graphql.sdl) else {
         return router;
     };
     router = router.route(&config.graphql.sdl_path, get(graphql_sdl_handler));
@@ -256,7 +257,11 @@ pub fn health_routes() -> Router<Arc<ServerState>> {
 pub fn debug_routes(state: &ServerState) -> Router<Arc<ServerState>> {
     let mut router = Router::new();
     let on = state.mode == crate::config::Mode::Dev
-        && state.config.as_ref().is_some_and(|c| c.debug.statements);
+        && state
+            .settings()
+            .config
+            .as_ref()
+            .is_some_and(|c| c.debug.statements);
     if on {
         router = router.route("/debug/statements", get(super::debug::statements_handler));
     }
@@ -271,7 +276,8 @@ pub fn debug_routes(state: &ServerState) -> Router<Arc<ServerState>> {
 /// listener of its own (`telemetry.metrics.listen`).
 pub fn metrics_routes(state: &ServerState) -> Router<Arc<ServerState>> {
     let mut router = Router::new();
-    if let Some(metrics) = state
+    let settings = state.settings();
+    if let Some(metrics) = settings
         .config
         .as_ref()
         .map(|c| &c.telemetry.metrics)
@@ -441,7 +447,7 @@ fn is_ui_path(path: &str) -> bool {
 pub fn create_router(state: Arc<ServerState>) -> Router {
     let mut router = Router::new();
     // `limits.request_body_bytes` for every request body
-    let body_limit = match state.limits.request_body_bytes {
+    let body_limit = match state.settings().limits.request_body_bytes {
         Some(bytes) => DefaultBodyLimit::max(bytes),
         None => DefaultBodyLimit::disable(),
     };
@@ -478,7 +484,7 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
     router = router.merge(metrics_routes(&state));
     router = router.merge(debug_routes(&state));
 
-    let config = state.config.as_ref().cloned().unwrap_or_default();
+    let config = state.settings().config.clone().unwrap_or_default();
     let is_dev = state.mode == crate::config::Mode::Dev;
     let router = router.with_state(state);
     apply_layers_with_mode(router, &config, is_dev)

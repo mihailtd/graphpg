@@ -78,11 +78,12 @@ async fn env_with(bulk_rows: Option<usize>, require_filter: bool) -> Env {
         DebugOptions::default(),
     )
     .with_mode(graphpg::config::Mode::Dev);
-    let mut state = state;
+    let mut limits = graphpg::config::models::LimitsConfig::default();
     if bulk_rows.is_some() {
-        state.limits.bulk_rows = bulk_rows;
+        limits.bulk_rows = bulk_rows;
     }
-    state.limits.require_filter = require_filter;
+    limits.require_filter = require_filter;
+    let state = state.with_limits(limits);
     Env {
         app: create_router(Arc::new(state)),
         client,

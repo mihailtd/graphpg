@@ -26,14 +26,14 @@ graphpg export-config-schema --out graphpg.schema.json
 docker run -p 4000:4000 \
   -e DATABASE_URL=postgres://user:pass@db/mydb \
   -v "$PWD/graphpg.yaml:/app/graphpg.yaml:ro" \
-  ghcr.io/mihailtd/graphpg:1.1.0
+  ghcr.io/mihailtd/graphpg:1.2.0
 ```
 
 The image is a statically linked binary on `gcr.io/distroless/static`: no shell, no package manager, CA certificates, and a non-root user (UID 65532). graphpg reads `graphpg.yaml` from the working directory, `/app`. Because there is no shell or `curl` in the image, probe `GET /health` from outside (a Kubernetes `httpGet` probe, or your load balancer) rather than with a `HEALTHCHECK` command. The container stops cleanly on `SIGTERM`.
 
 | Tag | Moves | Use for |
 | :--- | :--- | :--- |
-| `1.1.0` | never | Pinning a release |
+| `1.2.0` | never | Pinning a release |
 | `1.1`, `1` | with each patch / minor release | Following a release line |
 | `latest` | with each (non-prerelease) release | Trying it out |
 | `sha-<short hash>` | never | One exact commit of `main` |
@@ -313,6 +313,16 @@ watch:
   enabled: true   # re-introspect on DDL changes; default: true in dev, false in prod
   export: true    # auto-export schemas on DDL changes; default: true
 ```
+
+### Editing the config in dev mode
+
+With `watch.enabled`, a change to the config file is read within a few seconds: the schema is built again with it, the served OpenAPI document and the exported files follow, and so do the settings a request reads when it starts:
+
+- entities, functions, types, naming, `rbac`, `extensions` and `search` (they shape the schema);
+- `limits` (page size, depth, cost, bulk rows, groups, `count_threshold`, `require_filter`);
+- `errors` (`map`, `detail`), `debug.statements`, `export` and `database.schemas` beyond the first.
+
+The others are fixed when the server starts: `server`, `database.pool_size` / `statement_cache` / `sql_comments` and the first of `database.schemas`, `auth`, `debug.sql` / `explain`, `headers`, `graphql.enabled` / `ui` / `introspection` / `sdl` / `sdl_path` / `subgraph_path` / `federation` / `persisted_queries`, `openapi.enabled` / `spec` / `path` / `ui`, `limits.request_body_bytes`, `limits.rate_limit` and `limits.statement_timeout`, `subscriptions`, `events`, `telemetry`, `reload` and `watch`. A change to one of them is logged as a warning naming it (`these settings changed in the config but take effect on restart`); restart to apply it.
 
 ### Reloading the schema without a restart
 
