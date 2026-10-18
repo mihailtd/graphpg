@@ -231,8 +231,8 @@ pub(crate) fn convert(pg_type: &PgType, value: Value, label: &str) -> Value {
             Some(t) if local_datetime(t) => ok(value),
             _ => report(label, &value, "a LocalDatetime (ISO 8601 without an offset, e.g. `2024-05-01T12:30:00`)"),
         },
-        PgType::Date => match text {
-            Some(t) if chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").is_ok() => ok(value),
+        PgType::Date => match text.and_then(calendar_date) {
+            Some(t) => Value::String(t),
             _ => report(label, &value, "a Date (ISO 8601, e.g. `2024-05-01`)"),
         },
         PgType::Time => match text {
@@ -355,6 +355,26 @@ fn is_decimal(t: &str) -> bool {
     mantissa_ok && exponent.is_none_or(digits)
 }
 
+/// A calendar date: missing month/day components of `YYYY` or `YYYY-MM` become `01`.
+fn calendar_date(text: &str) -> Option<String> {
+    let normalized = if text.len() == 4 && text.bytes().all(|b| b.is_ascii_digit()) {
+        format!("{text}-01-01")
+    } else if text.len() == 7
+        && text.as_bytes()[4] == b'-'
+        && text
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| i == 4 || b.is_ascii_digit())
+    {
+        format!("{text}-01")
+    } else {
+        text.to_string()
+    };
+    chrono::NaiveDate::parse_from_str(&normalized, "%Y-%m-%d")
+        .ok()
+        .map(|_| normalized)
+}
+
 /// ISO 8601 date and time without an offset (`T` or a space between them).
 fn local_datetime(t: &str) -> bool {
     [
@@ -467,6 +487,78 @@ fn mac_address(t: &str, eight: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates_fill_missing_components_and_keep_complete_dates() {
+        for (input, expected) in [
+            ("1980", "1980-01-01"),
+            ("1980-05", "1980-05-01"),
+            ("2024-02", "2024-02-01"),
+            ("2024-02-29", "2024-02-29"),
+            ("2000-02-29", "2000-02-29"),
+            ("2023-12-31", "2023-12-31"),
+        ] {
+            start();
+            assert_eq!(
+                convert(
+                    &PgType::Date,
+                    Value::String(input.to_string()),
+                    "input.date"
+                ),
+                Value::String(expected.to_string()),
+                "{input}"
+            );
+            assert!(finish().is_empty(), "{input}");
+        }
+    }
+
+    #[test]
+    fn dates_reject_invalid_calendar_values_and_partial_syntax() {
+        for input in [
+            "2024-00",
+            "2024-13",
+            "2023-02-29",
+            "1900-02-29",
+            "2024-02-30",
+            "2024-04-31",
+            "2024-01-00",
+            "202",
+            "2024-2",
+            "2024-",
+            "2024-02-",
+            "2024/02",
+            " 2024",
+            "2024 ",
+            "２０２４",
+            "nope",
+            "",
+        ] {
+            start();
+            let value = Value::String(input.to_string());
+            assert_eq!(convert(&PgType::Date, value.clone(), "input.date"), value);
+            let errors = finish();
+            assert_eq!(errors.len(), 1, "{input}: {errors:?}");
+            assert_eq!(errors[0].code, "BAD_USER_INPUT");
+            assert_eq!(errors[0].path.as_deref(), Some("input.date"));
+        }
+    }
+
+    #[test]
+    fn dates_require_strings() {
+        for value in [
+            serde_json::json!(2024),
+            serde_json::json!(true),
+            serde_json::json!({ "year": 2024 }),
+            serde_json::json!([2024, 2]),
+        ] {
+            start();
+            convert(&PgType::Date, value.clone(), "input.date");
+            let errors = finish();
+            assert_eq!(errors.len(), 1, "{value}: {errors:?}");
+            assert_eq!(errors[0].code, "BAD_USER_INPUT");
+            assert_eq!(errors[0].path.as_deref(), Some("input.date"));
+        }
+    }
 
     #[test]
     fn numeric_limits() {

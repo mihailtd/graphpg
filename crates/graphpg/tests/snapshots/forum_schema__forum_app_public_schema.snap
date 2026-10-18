@@ -17,7 +17,7 @@ scalar Datetime
 """A date and time of day without a time zone, in ISO 8601 format, e.g. `2024-05-01T12:30:00`."""
 scalar LocalDatetime
 
-"""A calendar date in ISO 8601 format, e.g. `2024-05-01`."""
+"""A calendar date in ISO 8601 format, e.g. `2024-05-01`. Input also accepts `YYYY` or `YYYY-MM`, with missing month/day set to `01`."""
 scalar Date
 
 """A time of day in ISO 8601 format, e.g. `12:30:00`."""

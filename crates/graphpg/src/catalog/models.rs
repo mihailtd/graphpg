@@ -9,7 +9,7 @@ pub const CUSTOM_SCALARS: &[(&str, &str)] = &[
     ("Decimal", "An arbitrary-precision decimal number, as a string, e.g. `12.50`. Input also takes a number."),
     ("Datetime", "A point in time in ISO 8601 format with a UTC offset, e.g. `2024-05-01T12:30:00+00:00`. Input without an offset is in the server's time zone."),
     ("LocalDatetime", "A date and time of day without a time zone, in ISO 8601 format, e.g. `2024-05-01T12:30:00`."),
-    ("Date", "A calendar date in ISO 8601 format, e.g. `2024-05-01`."),
+    ("Date", "A calendar date in ISO 8601 format, e.g. `2024-05-01`. Input also accepts `YYYY` or `YYYY-MM`, with missing month/day set to `01`."),
     ("Time", "A time of day in ISO 8601 format, e.g. `12:30:00`."),
     ("TimeTz", "A time of day with a UTC offset, e.g. `12:30:00+02`."),
     ("Interval", "A duration in ISO 8601 format, e.g. `P1DT2H30M` (1 day, 2 hours and 30 minutes)."),
