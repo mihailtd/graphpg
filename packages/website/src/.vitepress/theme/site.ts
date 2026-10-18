@@ -25,4 +25,10 @@ export const articles = [
       "What PostGraphile, Hasura and PostgREST taught me, what graphpg does differently, and why GraphQL and REST should share one engine.",
     url: "https://mihai.ltd/blog/building-graphpg-graphql-and-rest-from-postgres",
   },
+  {
+    title: "Why Row-Level Security Is the Only Reliable Auth for AI-Built Apps",
+    description:
+      "Why AI coding agents routinely introduce data leaks in application-layer authorization, and how PostgreSQL RLS turns authorization into an auditable data-layer barrier.",
+    url: "https://mihai.ltd/blog/row-level-security-ai-coding-agents",
+  },
 ];
