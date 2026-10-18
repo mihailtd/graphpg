@@ -159,13 +159,25 @@ fn keywords_of(constraints: &[ConstraintMetadata], column: &ColumnMetadata) -> M
         r"^(?:cardinality|array_length)\({ident}(?:, 1)?\) (>=|>|<=|<|=) (\d+)$"
     ))
     .unwrap();
-    let pattern = Regex::new(&format!(r"^\(?{ident}\)? ~ '((?:[^']|'')*)'(?:::\w+)?$")).unwrap();
+    let pattern = Regex::new(&format!(r"^\(?{ident}\)? ~ '((?:[^']|'')*)'(?:::[\w ]+)?$")).unwrap();
+    // PostgreSQL casts a `varchar` or domain operand to the operator's type, `(code)::text`
+    let column_cast = Regex::new(&format!(
+        r"\(({ident})\)::(?:text|character varying|varchar|character|bpchar|citext)(?:\(\d+\))?"
+    ))
+    .unwrap();
 
     for constraint in checks {
         let Some(definition) = constraint.definition.trim().strip_prefix("CHECK ") else {
             continue;
         };
-        let definition = cast.replace_all(definition, "$1");
+        let mut definition = cast.replace_all(definition, "$1").into_owned();
+        // Nested casts, `((code)::character varying)::text`, come off one at a time
+        while let std::borrow::Cow::Owned(next) = column_cast.replace_all(&definition, "$1") {
+            if next == definition {
+                break;
+            }
+            definition = next;
+        }
         for atom in conjuncts(unwrap(&definition)) {
             let atom = unwrap(&atom);
             if let (true, Some(c)) = (numeric, bound.captures(atom)) {
@@ -305,6 +317,43 @@ mod tests {
         assert_eq!(
             of("code", PgType::Text, "CHECK ((code ~ '^[A-Z]{3}$'::text))"),
             json!({ "pattern": "^[A-Z]{3}$" })
+        );
+    }
+
+    #[test]
+    fn varchar_and_domain_operands_cast_to_text() {
+        // As PostgreSQL 16 and 18 deparse checks on a domain over text and on varchar (#216)
+        assert_eq!(
+            of(
+                "birth_date",
+                PgType::Text,
+                "CHECK (((birth_date)::text ~ '^[0-9]{4}$'::text))"
+            ),
+            json!({ "pattern": "^[0-9]{4}$" })
+        );
+        assert_eq!(
+            of(
+                "Code",
+                PgType::Varchar,
+                "CHECK (((\"Code\")::text ~ '^[A-Z]+$'::text))"
+            ),
+            json!({ "pattern": "^[A-Z]+$" })
+        );
+        assert_eq!(
+            of(
+                "name",
+                PgType::Varchar,
+                "CHECK (((char_length((name)::text) >= 2) AND (char_length((name)::text) <= 20)))"
+            ),
+            json!({ "minLength": 2, "maxLength": 20 })
+        );
+        assert_eq!(
+            of(
+                "code",
+                PgType::Varchar,
+                "CHECK ((((code)::character varying)::text ~ '^x$'::text))"
+            ),
+            json!({ "pattern": "^x$" })
         );
     }
 

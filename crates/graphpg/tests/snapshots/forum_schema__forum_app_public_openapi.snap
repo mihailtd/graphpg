@@ -733,8 +733,7 @@ expression: openapi
                   },
                   "id": {
                     "type": "string",
-                    "format": "uuid",
-                    "default": "uuid_generate_v1mc()"
+                    "format": "uuid"
                   },
                   "name": {
                     "type": "string"
@@ -2481,8 +2480,7 @@ expression: openapi
                   },
                   "id": {
                     "type": "string",
-                    "format": "uuid",
-                    "default": "uuid_generate_v1mc()"
+                    "format": "uuid"
                   },
                   "name": {
                     "type": "string"
@@ -4151,12 +4149,11 @@ expression: openapi
                   },
                   "createdAt": {
                     "type": "string",
-                    "format": "date-time",
-                    "default": "now()"
+                    "format": "date-time"
                   },
                   "featured": {
                     "type": "boolean",
-                    "default": "false"
+                    "default": false
                   },
                   "forumId": {
                     "type": "string",
@@ -4164,8 +4161,7 @@ expression: openapi
                   },
                   "id": {
                     "type": "string",
-                    "format": "uuid",
-                    "default": "uuid_generate_v1mc()"
+                    "format": "uuid"
                   }
                 },
                 "additionalProperties": false,
@@ -5759,12 +5755,11 @@ expression: openapi
                   },
                   "createdAt": {
                     "type": "string",
-                    "format": "date-time",
-                    "default": "now()"
+                    "format": "date-time"
                   },
                   "featured": {
                     "type": "boolean",
-                    "default": "false"
+                    "default": false
                   },
                   "forumId": {
                     "type": "string",
@@ -5772,8 +5767,7 @@ expression: openapi
                   },
                   "id": {
                     "type": "string",
-                    "format": "uuid",
-                    "default": "uuid_generate_v1mc()"
+                    "format": "uuid"
                   }
                 },
                 "additionalProperties": false,
@@ -7375,8 +7369,7 @@ expression: openapi
                 "properties": {
                   "createdAt": {
                     "type": "string",
-                    "format": "date-time",
-                    "default": "now()"
+                    "format": "date-time"
                   },
                   "gravatarUrl": {
                     "type": [
@@ -7386,8 +7379,7 @@ expression: openapi
                   },
                   "id": {
                     "type": "string",
-                    "format": "uuid",
-                    "default": "uuid_generate_v1mc()"
+                    "format": "uuid"
                   },
                   "username": {
                     "type": "string"
@@ -9022,8 +9014,7 @@ expression: openapi
                 "properties": {
                   "createdAt": {
                     "type": "string",
-                    "format": "date-time",
-                    "default": "now()"
+                    "format": "date-time"
                   },
                   "gravatarUrl": {
                     "type": [
@@ -9033,8 +9024,7 @@ expression: openapi
                   },
                   "id": {
                     "type": "string",
-                    "format": "uuid",
-                    "default": "uuid_generate_v1mc()"
+                    "format": "uuid"
                   },
                   "username": {
                     "type": "string"
@@ -12671,8 +12661,7 @@ expression: openapi
           },
           "id": {
             "type": "string",
-            "format": "uuid",
-            "default": "uuid_generate_v1mc()"
+            "format": "uuid"
           },
           "messages": {
             "type": "array",
@@ -13593,12 +13582,11 @@ expression: openapi
           },
           "createdAt": {
             "type": "string",
-            "format": "date-time",
-            "default": "now()"
+            "format": "date-time"
           },
           "featured": {
             "type": "boolean",
-            "default": "false"
+            "default": false
           },
           "forum": {
             "anyOf": [
@@ -13617,8 +13605,7 @@ expression: openapi
           },
           "id": {
             "type": "string",
-            "format": "uuid",
-            "default": "uuid_generate_v1mc()"
+            "format": "uuid"
           },
           "user": {
             "anyOf": [
@@ -14785,8 +14772,7 @@ expression: openapi
         "properties": {
           "createdAt": {
             "type": "string",
-            "format": "date-time",
-            "default": "now()"
+            "format": "date-time"
           },
           "gravatarUrl": {
             "type": [
@@ -14796,8 +14782,7 @@ expression: openapi
           },
           "id": {
             "type": "string",
-            "format": "uuid",
-            "default": "uuid_generate_v1mc()"
+            "format": "uuid"
           },
           "messages": {
             "type": "array",
@@ -15829,10 +15814,7 @@ expression: openapi
         "type": "object",
         "properties": {
           "id": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "name": {
@@ -15866,40 +15848,26 @@ expression: openapi
         "type": "object",
         "properties": {
           "id": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "forumId": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "authorId": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "body": {
             "type": "string"
           },
           "featured": {
-            "type": [
-              "boolean",
-              "null"
-            ]
+            "type": "boolean",
+            "default": false
           },
           "createdAt": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "date-time"
           },
           "archivedAt": {
@@ -15941,10 +15909,7 @@ expression: openapi
         "type": "object",
         "properties": {
           "id": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "username": {
@@ -15957,10 +15922,7 @@ expression: openapi
             ]
           },
           "createdAt": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "date-time"
           },
           "messages": {
@@ -16283,17 +16245,11 @@ expression: openapi
         "type": "object",
         "properties": {
           "id": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "name": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "archivedAt": {
             "type": [
@@ -16320,43 +16276,25 @@ expression: openapi
         "type": "object",
         "properties": {
           "id": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "forumId": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "authorId": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "body": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "featured": {
-            "type": [
-              "boolean",
-              "null"
-            ]
+            "type": "boolean"
           },
           "createdAt": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "date-time"
           },
           "archivedAt": {
@@ -16395,17 +16333,11 @@ expression: openapi
         "type": "object",
         "properties": {
           "id": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "uuid"
           },
           "username": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "gravatarUrl": {
             "type": [
@@ -16414,10 +16346,7 @@ expression: openapi
             ]
           },
           "createdAt": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "format": "date-time"
           },
           "messages": {

@@ -458,7 +458,8 @@ impl OpenApiGenerator {
             );
         }
 
-        let mut inputs = graphql.map(super::input_types::InputTypes::new);
+        let mut inputs =
+            graphql.map(|g| super::input_types::InputTypes::new(g, Self::input_columns(catalog)));
         for table in &tables {
             let name = &table.name;
             let row_schema = Self::generate_table_schema(table, catalog);
@@ -2069,6 +2070,45 @@ impl OpenApiGenerator {
         )
     }
 
+    /// The schemas of the column fields of each table's create and update input types, with
+    /// what the columns' `CHECK` constraints state: nested inputs of other tables included.
+    fn input_columns(catalog: &DatabaseCatalog) -> super::input_types::ColumnSchemas {
+        let mut out = super::input_types::ColumnSchemas::new();
+        for table in &catalog.tables {
+            let fields: std::collections::HashMap<String, Value> = Self::writable(table)
+                .map(|c| {
+                    (
+                        c.field_name.clone(),
+                        Self::constrained_schema(table, c, catalog),
+                    )
+                })
+                .collect();
+            if fields.is_empty() {
+                continue;
+            }
+            let ty = &table.type_name;
+            out.insert(format!("Update{ty}Input"), Self::without_defaults(&fields));
+            out.insert(format!("Create{ty}Input"), fields);
+        }
+        out
+    }
+
+    /// Column schemas for an update, where a field left out keeps its value: no `default`.
+    fn without_defaults(
+        fields: &std::collections::HashMap<String, Value>,
+    ) -> std::collections::HashMap<String, Value> {
+        fields
+            .iter()
+            .map(|(name, schema)| {
+                let mut schema = schema.clone();
+                if let Some(object) = schema.as_object_mut() {
+                    object.remove("default");
+                }
+                (name.clone(), schema)
+            })
+            .collect()
+    }
+
     /// Input schema for row creation.
     fn generate_create_input_schema(table: &TableMetadata, catalog: &DatabaseCatalog) -> Value {
         let mut properties = BTreeMap::new();
@@ -2099,10 +2139,11 @@ impl OpenApiGenerator {
         let properties: BTreeMap<String, Value> = Self::writable(table)
             .filter(|c| !c.is_primary_key)
             .map(|c| {
-                (
-                    c.field_name.clone(),
-                    Self::constrained_schema(table, c, catalog),
-                )
+                let mut schema = Self::constrained_schema(table, c, catalog);
+                if let Some(object) = schema.as_object_mut() {
+                    object.remove("default");
+                }
+                (c.field_name.clone(), schema)
             })
             .collect();
         json!({
@@ -2686,8 +2727,12 @@ impl OpenApiGenerator {
             }
         }
 
-        if let Some(def) = &col.default_value {
-            schema["default"] = json!(def);
+        if let Some(def) = col
+            .default_value
+            .as_deref()
+            .and_then(|d| Self::literal_default(d, &col.pg_type, catalog))
+        {
+            schema["default"] = def;
         }
 
         if let Some(max_len) = col.limits.max_length {
@@ -2702,6 +2747,98 @@ impl OpenApiGenerator {
     }
 
     /// Converts a [`PgType`] into its corresponding JSON Schema type and format.
+    /// The JSON value of a column default that is a constant (`false`, `5`, `'active'::text`,
+    /// `'{}'::jsonb`), as the API represents the column's values. `None` for an expression
+    /// PostgreSQL evaluates (`now()`, `uuidv7()`, `nextval(...)`), which is never run here.
+    fn literal_default(
+        default: &str,
+        pg_type: &PgType,
+        catalog: &DatabaseCatalog,
+    ) -> Option<Value> {
+        let default = default.trim();
+        // A quoted literal with a cast (`'x'::text`, `'-5'::integer`), or a bare constant
+        let text = match default.strip_prefix('\'') {
+            Some(rest) => {
+                let end = rest.rfind("'::")?;
+                let (literal, cast) = (&rest[..end], &rest[end + 3..]);
+                // The cast is a type name, not a further expression
+                if !cast
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || " _.\"[]()".contains(c))
+                {
+                    return None;
+                }
+                // An unescaped quote would mean the literal ended earlier
+                if literal.replace("''", "").contains('\'') {
+                    return None;
+                }
+                literal.replace("''", "'")
+            }
+            None => default.to_string(),
+        };
+        let quoted = default.starts_with('\'');
+        // A decimal literal: digits, a sign, a point, an exponent (not `NaN` nor `Infinity`)
+        let number = || {
+            Some(text.clone()).filter(|t| {
+                t.chars().all(|c| c.is_ascii_digit() || "-+.eE".contains(c))
+                    && t.parse::<f64>().is_ok_and(f64::is_finite)
+            })
+        };
+        match pg_type {
+            PgType::Bool if !quoted => match text.as_str() {
+                "true" => Some(json!(true)),
+                "false" => Some(json!(false)),
+                _ => None,
+            },
+            PgType::Int2 | PgType::Int4 => number()?.parse::<i64>().ok().map(|n| json!(n)),
+            PgType::Float4 | PgType::Float8 => number()?
+                .parse::<f64>()
+                .ok()
+                .and_then(|n| serde_json::Number::from_f64(n).map(Value::Number)),
+            // Strings in this API (JSON numbers are doubles)
+            PgType::Int8 => number()?.parse::<i64>().ok().map(|n| json!(n.to_string())),
+            PgType::Numeric | PgType::Money => number()
+                .filter(|n| !n.contains(['e', 'E']))
+                .map(|n| json!(n)),
+            PgType::Json | PgType::Jsonb if quoted => serde_json::from_str(&text).ok(),
+            // Values are the enum's API names, not its labels
+            PgType::Enum(name) if quoted => Self::find_enum(catalog, name)?
+                .values
+                .iter()
+                .find(|v| v.label == text)
+                .map(|v| json!(v.name)),
+            PgType::Text
+            | PgType::Varchar
+            | PgType::Char
+            | PgType::Citext
+            | PgType::Uuid
+            | PgType::Date
+            | PgType::Ltree
+            | PgType::Inet
+            | PgType::Cidr
+            | PgType::MacAddr
+            | PgType::MacAddr8
+                if quoted =>
+            {
+                Some(json!(text))
+            }
+            _ => None,
+        }
+    }
+
+    /// The enum a column's `PgType::Enum` names.
+    fn find_enum<'c>(
+        catalog: &'c DatabaseCatalog,
+        name: &str,
+    ) -> Option<&'c crate::catalog::models::EnumTypeMetadata> {
+        catalog.enums.iter().find(|e| {
+            e.config_name == name
+                || e.key == name
+                || e.type_name == name
+                || name.ends_with(&e.config_name)
+        })
+    }
+
     pub(super) fn pg_type_to_json_schema(
         pg_type: &PgType,
         catalog: &DatabaseCatalog,
@@ -2798,12 +2935,7 @@ impl OpenApiGenerator {
                 None => json!({ "type": "object" }),
             },
             PgType::Enum(name) => {
-                if let Some(enum_meta) = catalog.enums.iter().find(|e| {
-                    &e.config_name == name
-                        || &e.key == name
-                        || &e.type_name == name
-                        || name.ends_with(&e.config_name)
-                }) {
+                if let Some(enum_meta) = Self::find_enum(catalog, name) {
                     let vals: Vec<&str> =
                         enum_meta.values.iter().map(|v| v.name.as_str()).collect();
                     json!({ "type": "string", "enum": vals })
@@ -2873,6 +3005,69 @@ mod tests {
     }
 
     /// One `public.users` table: `id` (primary key) and `email`.
+    #[test]
+    fn constant_defaults_are_json_values_and_expressions_are_left_out() {
+        let mut catalog = DatabaseCatalog::default();
+        catalog
+            .enums
+            .push(crate::catalog::models::EnumTypeMetadata {
+                key: "\"public\".\"status\"".to_string(),
+                config_name: "status".to_string(),
+                type_name: "Status".to_string(),
+                description: None,
+                values: vec![crate::catalog::models::EnumValue {
+                    label: "in progress".to_string(),
+                    name: "IN_PROGRESS".to_string(),
+                }],
+            });
+        let enum_type = PgType::Enum("\"public\".\"status\"".to_string());
+        // As `pg_get_expr` gives them (#213)
+        let cases = [
+            ("false", PgType::Bool, Some(json!(false))),
+            ("true", PgType::Bool, Some(json!(true))),
+            ("5", PgType::Int4, Some(json!(5))),
+            ("'-5'::integer", PgType::Int4, Some(json!(-5))),
+            ("1.25", PgType::Float8, Some(json!(1.25))),
+            ("'NaN'::real", PgType::Float4, None),
+            ("9", PgType::Int8, Some(json!("9"))),
+            ("'-0.5'::numeric", PgType::Numeric, Some(json!("-0.5"))),
+            ("'active'::text", PgType::Text, Some(json!("active"))),
+            ("'it''s'::text", PgType::Text, Some(json!("it's"))),
+            ("'x'::character varying", PgType::Varchar, Some(json!("x"))),
+            (
+                "'2020-01-01'::date",
+                PgType::Date,
+                Some(json!("2020-01-01")),
+            ),
+            (
+                "'in progress'::status",
+                enum_type.clone(),
+                Some(json!("IN_PROGRESS")),
+            ),
+            ("'other'::status", enum_type, None),
+            (
+                "'{\"a\": 1}'::jsonb",
+                PgType::Jsonb,
+                Some(json!({ "a": 1 })),
+            ),
+            ("uuidv7()", PgType::Uuid, None),
+            ("gen_random_uuid()", PgType::Uuid, None),
+            ("now()", PgType::TimestampTz, None),
+            ("nextval('t_id_seq'::regclass)", PgType::Int4, None),
+            ("(1 + 1)", PgType::Int4, None),
+            ("'{}'::text[]", PgType::Array(Box::new(PgType::Text)), None),
+            ("('a'::text || 'b'::text)", PgType::Text, None),
+            ("'a'::text || 'b'::text", PgType::Text, None),
+        ];
+        for (default, pg_type, expected) in cases {
+            assert_eq!(
+                OpenApiGenerator::literal_default(default, &pg_type, &catalog),
+                expected,
+                "{default}"
+            );
+        }
+    }
+
     fn users_catalog() -> DatabaseCatalog {
         let mut catalog = DatabaseCatalog::default();
         catalog.tables.push(TableMetadata {

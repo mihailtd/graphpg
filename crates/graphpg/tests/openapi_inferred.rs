@@ -133,3 +133,139 @@ async fn foreign_keys_become_links() {
             .is_none()
     );
 }
+
+/// The document as served and exported: with the GraphQL schema, whose input types are the
+/// create and update bodies.
+async fn served_document(setup: &str, schema: &str) -> Value {
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client
+        .batch_execute("SELECT pg_advisory_lock(7461023)")
+        .await
+        .unwrap();
+    client.batch_execute(setup).await.unwrap();
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema(schema)
+        .await
+        .unwrap();
+    client
+        .batch_execute("SELECT pg_advisory_unlock(7461023)")
+        .await
+        .unwrap();
+    let graphql = graphpg::schema::SchemaBuilder::build(&catalog).unwrap();
+    OpenApiGenerator::generate_with_schema(&catalog, &Config::default(), schema, Some(&graphql))
+}
+
+const CONTRACT_FIXTURE: &str = "
+DROP SCHEMA IF EXISTS openapi_contract CASCADE; CREATE SCHEMA openapi_contract;
+CREATE DOMAIN openapi_contract.fhir_date AS text;
+CREATE TYPE openapi_contract.state AS ENUM ('in progress', 'done');
+CREATE TABLE openapi_contract.patients (
+    id integer PRIMARY KEY,
+    birth_date openapi_contract.fhir_date CHECK (birth_date ~ '^[0-9]{4}(-[0-9]{2})?$'),
+    code varchar(10) CHECK (code ~ '^[A-Z]+$'),
+    nickname varchar(20) CHECK (char_length(nickname) >= 2),
+    score integer CHECK (score BETWEEN 0 AND 100),
+    enabled boolean NOT NULL DEFAULT false,
+    rank integer DEFAULT 5,
+    status text DEFAULT 'active',
+    state openapi_contract.state NOT NULL DEFAULT 'in progress',
+    big bigint DEFAULT 9,
+    token uuid DEFAULT gen_random_uuid(),
+    created timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE openapi_contract.visits (
+    id integer PRIMARY KEY,
+    patient_id integer REFERENCES openapi_contract.patients,
+    reason varchar(40) CHECK (char_length(reason) >= 3)
+);";
+
+#[tokio::test]
+async fn checks_on_varchar_and_domain_columns_are_keywords() {
+    // #216: PostgreSQL deparses these operands with a cast to text
+    let doc = served_document(CONTRACT_FIXTURE, "openapi_contract").await;
+    let row = &doc["components"]["schemas"]["patients"]["properties"];
+    assert_eq!(
+        row["birthDate"]["pattern"], "^[0-9]{4}(-[0-9]{2})?$",
+        "{}",
+        row["birthDate"]
+    );
+    assert_eq!(row["code"]["pattern"], "^[A-Z]+$", "{}", row["code"]);
+    assert_eq!(row["nickname"]["minLength"], 2, "{}", row["nickname"]);
+    assert_eq!(row["nickname"]["maxLength"], 20);
+}
+
+#[tokio::test]
+async fn defaults_are_values_of_the_property_type() {
+    // #213: constants as JSON values, expressions left to the database
+    let doc = served_document(CONTRACT_FIXTURE, "openapi_contract").await;
+    let schemas = &doc["components"]["schemas"];
+    let row = &schemas["patients"]["properties"];
+    assert_eq!(row["enabled"]["default"], json!(false));
+    assert_eq!(row["rank"]["default"], json!(5));
+    assert_eq!(row["status"]["default"], json!("active"));
+    assert_eq!(row["state"]["default"], json!("IN_PROGRESS"));
+    assert_eq!(row["big"]["default"], json!("9"));
+    assert!(row["token"].get("default").is_none(), "{}", row["token"]);
+    assert!(
+        row["created"].get("default").is_none(),
+        "{}",
+        row["created"]
+    );
+    // and in what a client sends
+    let multipart = &doc["paths"]["/rest/patients"]["post"]["requestBody"]["content"]
+        ["multipart/form-data"]["schema"]["properties"];
+    if let Some(enabled) = multipart.get("enabled") {
+        assert_eq!(enabled["default"], json!(false), "{enabled}");
+    }
+    let create = &schemas["Input.CreatePatientInput"]["properties"];
+    assert_eq!(create["rank"]["default"], json!(5), "{}", create["rank"]);
+    // a field an update leaves out keeps its value: no default there
+    let update = &schemas["Input.UpdatePatientInput"]["properties"];
+    assert!(
+        update["rank"].get("default").is_none(),
+        "{}",
+        update["rank"]
+    );
+}
+
+#[tokio::test]
+async fn write_bodies_keep_what_checks_state() {
+    // #215: the GraphQL input types are the bodies; their column fields keep the keywords
+    let doc = served_document(CONTRACT_FIXTURE, "openapi_contract").await;
+    let schemas = &doc["components"]["schemas"];
+    let body = &doc["paths"]["/rest/patients"]["post"]["requestBody"]["content"]
+        ["application/json"]["schema"];
+    let body = serde_json::to_string(body).unwrap();
+    assert!(body.contains("patientsCreateInput"), "{body}");
+    assert_eq!(
+        schemas["patientsCreateInput"]["$ref"],
+        "#/components/schemas/Input.CreatePatientInput"
+    );
+    for input in ["Input.CreatePatientInput", "Input.UpdatePatientInput"] {
+        let props = &schemas[input]["properties"];
+        assert_eq!(props["score"]["minimum"], 0, "{input}: {}", props["score"]);
+        assert_eq!(props["score"]["maximum"], 100, "{input}");
+        assert_eq!(props["code"]["pattern"], "^[A-Z]+$", "{input}");
+        assert_eq!(props["nickname"]["minLength"], 2, "{input}");
+    }
+    // a relation member keeps its shape, and the nested input its keywords
+    let create = &schemas["Input.CreatePatientInput"]["properties"];
+    assert!(
+        create["visits"]
+            .to_string()
+            .contains("Input.VisitToManyInput"),
+        "{}",
+        create["visits"]
+    );
+    let visit = &schemas["Input.CreateVisitInput"]["properties"];
+    assert_eq!(visit["reason"]["minLength"], 3, "{}", visit["reason"]);
+    assert_eq!(visit["reason"]["maxLength"], 40);
+    // required as GraphQL says: `enabled` has a default
+    let required = schemas["Input.CreatePatientInput"]["required"].clone();
+    assert!(!required.to_string().contains("enabled"), "{required}");
+}

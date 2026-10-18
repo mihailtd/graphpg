@@ -1,0 +1,1 @@
+- Fixed: `CHECK` constraints on `varchar` and on domain columns gave no `pattern` / `minLength` / `maxLength` (OpenAPI) nor `@constraint` (GraphQL), because PostgreSQL writes their operand with a cast (`(code)::text ~ '…'`, `char_length((name)::text) >= 2`) (#216). The cast is now read through. Re-export pinned schemas: such columns gain their keywords.

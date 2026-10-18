@@ -40,7 +40,11 @@ async fn setup(config: &str) -> Option<(Config, graphpg::DatabaseCatalog, axum::
          CREATE TABLE jsonschema_test.profiles (
              id int PRIMARY KEY,
              settings jsonb NOT NULL CHECK (jsonb_matches_schema('{SETTINGS_SCHEMA}', settings)),
-             extra jsonb CHECK (jsonb_matches_schema('{{\"type\": \"array\"}}', extra)));"
+             extra jsonb CHECK (jsonb_matches_schema('{{\"type\": \"array\"}}', extra)));
+         CREATE TABLE jsonschema_test.notes (
+             id int PRIMARY KEY,
+             profile_id int REFERENCES jsonschema_test.profiles,
+             tags jsonb NOT NULL CHECK (jsonb_matches_schema('{{\"type\": \"array\", \"items\": {{\"type\": \"string\"}}}}', tags)));"
     ))
     .await
     .unwrap();
@@ -140,4 +144,41 @@ async fn off_leaves_json_untyped() {
     let doc = OpenApiGenerator::generate_for(&catalog, &config, "jsonschema_test");
     let settings = &doc["components"]["schemas"]["profiles"]["properties"]["settings"];
     assert!(settings.get("properties").is_none(), "{settings}");
+}
+
+#[tokio::test]
+async fn write_bodies_of_the_served_document_keep_the_json_schema() {
+    // #215: the served document (and the exported one) describes bodies by the GraphQL input
+    // types; their JSON columns keep the schema, nested inputs included
+    let Some((_, _, app)) = setup("openapi:\n  spec: true\n").await else {
+        return;
+    };
+    let res = app
+        .oneshot(Request::get("/openapi.json").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let doc: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let schemas = &doc["components"]["schemas"];
+    let expected: Value = serde_json::from_str(SETTINGS_SCHEMA).unwrap();
+    for input in ["Input.CreateProfileInput", "Input.UpdateProfileInput"] {
+        let settings = &schemas[input]["properties"]["settings"];
+        assert_eq!(
+            settings["properties"], expected["properties"],
+            "{input}: {settings}"
+        );
+        let extra = &schemas[input]["properties"]["extra"];
+        assert_eq!(
+            extra["anyOf"],
+            json!([{ "type": "array" }, { "type": "null" }]),
+            "{input}: {extra}"
+        );
+    }
+    let tags = &schemas["Input.CreateNoteInput"]["properties"]["tags"];
+    assert_eq!(tags["items"], json!({ "type": "string" }), "{tags}");
+    assert_eq!(
+        schemas["profilesCreateInput"]["$ref"],
+        "#/components/schemas/Input.CreateProfileInput"
+    );
 }
