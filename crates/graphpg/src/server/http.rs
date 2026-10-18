@@ -369,19 +369,12 @@ pub struct ServerState {
     /// The OpenAPI 3.1 document, built when first asked for (on a large schema it takes
     /// seconds and tens of megabytes, which a server that does not serve it never pays).
     openapi_document: std::sync::Mutex<Option<Arc<serde_json::Value>>>,
-    /// The engine configuration, if passed to the state.
-    pub config: Option<crate::config::Config>,
+    /// The settings a reload can change while serving ([`ServerState::settings`]).
+    settings: std::sync::RwLock<Arc<Settings>>,
     /// Runtime mode (dev or prod).
     pub mode: crate::config::Mode,
     /// Answer `__schema` and `__type` (`graphql.introspection`).
     pub introspection: bool,
-    /// Hide the database's own message of unexpected failures (`errors.detail: masked`).
-    pub mask_errors: bool,
-    /// Safety limits (page size, depth, cost, bulk rows, body size, groups): enforced on every
-    /// plan, whichever API made it.
-    pub limits: crate::config::models::LimitsConfig,
-    /// Custom error configurations and detail level.
-    pub errors: crate::config::models::ErrorsConfig,
     /// Request rates per client (`limits.rate_limit`); `None` when off.
     pub rate_limiter: Option<Arc<super::RateLimiter>>,
     /// Persisted queries and the allow-list (`graphql.persisted_queries`); `None` when off.
@@ -394,6 +387,22 @@ pub struct ServerState {
     pub reload_requests: std::sync::OnceLock<tokio::sync::mpsc::Sender<&'static str>>,
     /// Schemas swapped in since startup ([`ServerState::reload`]).
     pub reloads: std::sync::atomic::AtomicU64,
+}
+
+/// The settings of a [`ServerState`] that a reload with a changed configuration swaps in, with
+/// the schema (dev mode's watcher, see [`ServerState::reload_with_config`]): requests read
+/// them as they start. The others are fixed when the server starts.
+#[derive(Debug, Clone, Default)]
+pub struct Settings {
+    /// The engine configuration, if passed to the state.
+    pub config: Option<crate::config::Config>,
+    /// Safety limits (page size, depth, cost, bulk rows, groups): enforced on every plan,
+    /// whichever API made it. `request_body_bytes` and `rate_limit` are read at startup.
+    pub limits: crate::config::models::LimitsConfig,
+    /// Custom error configurations and detail level.
+    pub errors: crate::config::models::ErrorsConfig,
+    /// Hide the database's own message of unexpected failures (`errors.detail: masked`).
+    pub mask_errors: bool,
 }
 
 /// A read replica: used for queries while it is a standby (`pg_is_in_recovery()`).
@@ -434,12 +443,12 @@ impl ServerState {
             openapi_spec: false,
             openapi_path: "/openapi.json".to_string(),
             openapi_document: std::sync::Mutex::new(None),
-            config: None,
+            settings: std::sync::RwLock::new(Arc::new(Settings {
+                mask_errors: true,
+                ..Settings::default()
+            })),
             mode: crate::config::Mode::Prod,
             introspection: false,
-            mask_errors: true,
-            limits: crate::config::models::LimitsConfig::default(),
-            errors: crate::config::models::ErrorsConfig::default(),
             rate_limiter: None,
             persisted: None,
             subscriptions: None,
@@ -460,8 +469,18 @@ impl ServerState {
 
     pub fn with_limits(mut self, limits: crate::config::models::LimitsConfig) -> Self {
         self.rate_limiter = super::RateLimiter::new(&limits.rate_limit);
-        self.limits = limits;
+        self.settings_mut().limits = limits;
         self
+    }
+
+    /// The settings to change while building the state.
+    fn settings_mut(&mut self) -> &mut Settings {
+        Arc::make_mut(self.settings.get_mut().unwrap())
+    }
+
+    /// The current settings: those of the configuration last loaded.
+    pub fn settings(&self) -> Arc<Settings> {
+        self.settings.read().unwrap().clone()
     }
 
     /// Accepts persisted queries (see [`PersistedQueries`](super::PersistedQueries)), or not
@@ -476,14 +495,14 @@ impl ServerState {
 
     /// Sets custom error configurations.
     pub fn with_errors(mut self, errors: crate::config::models::ErrorsConfig) -> Self {
-        self.errors = errors;
+        self.settings_mut().errors = errors;
         self
     }
 
     /// Sets the runtime mode.
     pub fn with_mode(mut self, mode: crate::config::Mode) -> Self {
         self.mode = mode;
-        self.mask_errors = mode == crate::config::Mode::Prod;
+        self.settings_mut().mask_errors = mode == crate::config::Mode::Prod;
         self
     }
 
@@ -495,7 +514,7 @@ impl ServerState {
 
     /// Sets how much of an unexpected failure clients see, overriding the mode's default.
     pub fn with_error_detail(mut self, detail: crate::config::models::ErrorDetail) -> Self {
-        self.mask_errors = detail == crate::config::models::ErrorDetail::Masked;
+        self.settings_mut().mask_errors = detail == crate::config::models::ErrorDetail::Masked;
         self
     }
 
@@ -655,14 +674,15 @@ impl ServerState {
         self.scalar = config.openapi.ui;
         self.sql_comments = config.database.sql_comments;
         self.rate_limiter = super::RateLimiter::new(&config.limits.rate_limit);
-        self.limits = config.limits.clone();
-        self.errors = config.errors.clone();
         self.subscriptions = config
             .subscriptions
             .enabled
             .then(|| super::subscriptions::Hub::new(config.subscriptions.clone()));
         *self.openapi_document.lock().unwrap() = None;
-        self.config = Some(config);
+        let settings = self.settings_mut();
+        settings.limits = config.limits.clone();
+        settings.errors = config.errors.clone();
+        settings.config = Some(config);
         self
     }
 
@@ -699,7 +719,7 @@ impl ServerState {
         if let Some(doc) = &*doc {
             return doc.clone();
         }
-        let config = self.config.clone().unwrap_or_default();
+        let config = self.settings().config.clone().unwrap_or_default();
         let generated = Arc::new(OpenApiGenerator::generate_with_schema(
             &self.current_catalog(),
             &config,
@@ -708,6 +728,41 @@ impl ServerState {
         ));
         *doc = Some(generated.clone());
         generated
+    }
+
+    /// Swaps in a schema read with a changed configuration, and the settings of that
+    /// configuration a running server can change ([`Settings`]). Returns the settings that
+    /// changed but are fixed until a restart, by their path in the configuration
+    /// (`server.port`, `limits.rate_limit`).
+    pub fn reload_with_config(
+        &self,
+        schema: Valid<Schema>,
+        catalog: DatabaseCatalog,
+        config: crate::config::Config,
+    ) -> Vec<String> {
+        let previous = self.settings();
+        let fixed = previous
+            .config
+            .as_ref()
+            .map(|before| fixed_settings_changed(before, &config))
+            .unwrap_or_default();
+        let detail_changed = previous
+            .config
+            .as_ref()
+            .is_some_and(|before| before.errors.detail != config.errors.detail);
+        let settings = Settings {
+            mask_errors: if detail_changed {
+                config.errors.detail == crate::config::models::ErrorDetail::Masked
+            } else {
+                previous.mask_errors
+            },
+            limits: config.limits.clone(),
+            errors: config.errors.clone(),
+            config: Some(config),
+        };
+        *self.settings.write().unwrap() = Arc::new(settings);
+        self.reload(schema, catalog);
+        fixed
     }
 
     pub fn reload(&self, schema: Valid<Schema>, catalog: DatabaseCatalog) {
@@ -729,6 +784,55 @@ impl ServerState {
             hub.schema_changed();
         }
     }
+}
+
+/// The settings a running server cannot change (the listener, connections, authentication,
+/// layers and background tasks built at startup), as paths in the configuration.
+const FIXED_SETTINGS: &[&str] = &[
+    "/server",
+    "/database/pool_size",
+    "/database/statement_cache",
+    "/database/sql_comments",
+    "/auth",
+    "/debug/sql",
+    "/debug/explain",
+    "/graphql/enabled",
+    "/graphql/ui",
+    "/graphql/introspection",
+    "/graphql/sdl",
+    "/graphql/sdl_path",
+    "/graphql/subgraph_path",
+    "/graphql/federation",
+    "/graphql/persisted_queries",
+    "/openapi/enabled",
+    "/openapi/spec",
+    "/openapi/path",
+    "/openapi/ui",
+    "/headers",
+    "/limits/request_body_bytes",
+    "/limits/rate_limit",
+    "/limits/statement_timeout",
+    "/subscriptions",
+    "/events",
+    "/telemetry",
+    "/reload",
+    "/watch",
+];
+
+/// The [`FIXED_SETTINGS`] that differ between two configurations, as dotted paths.
+fn fixed_settings_changed(
+    before: &crate::config::Config,
+    after: &crate::config::Config,
+) -> Vec<String> {
+    let (Ok(before), Ok(after)) = (serde_json::to_value(before), serde_json::to_value(after))
+    else {
+        return Vec::new();
+    };
+    FIXED_SETTINGS
+        .iter()
+        .filter(|path| before.pointer(path) != after.pointer(path))
+        .map(|path| path[1..].replace('/', "."))
+        .collect()
 }
 
 /// Creates a PostgreSQL connection pool. Connections are opened lazily on first use.
@@ -852,7 +956,7 @@ pub(crate) async fn ready_handler(State(state): State<Arc<ServerState>>) -> Resp
         )
             .into_response(),
         Err(err) => {
-            let error = if state.mask_errors {
+            let error = if state.settings().mask_errors {
                 "Database unavailable".to_string()
             } else {
                 format!("Database unavailable: {err}")
@@ -1444,7 +1548,7 @@ async fn run_authenticated(
         Some(&**doc),
         req.variables.as_ref(),
     )
-    .with_limits(state.limits.plan_limits());
+    .with_limits(state.settings().limits.plan_limits());
     let target_type = match operation.operation_type {
         apollo_compiler::ast::OperationType::Query => "Query",
         apollo_compiler::ast::OperationType::Mutation => "Mutation",
@@ -1652,8 +1756,9 @@ async fn run_authenticated(
                 let results = match apart {
                     Ok(results) => results,
                     Err(err) => {
+                        let settings = state.settings();
                         let (status, error) =
-                            execution_error(&err, &catalog, state.mask_errors, &state.errors);
+                            execution_error(&err, &catalog, settings.mask_errors, &settings.errors);
                         return errors_response(status, vec![error], extensions_value(&extensions));
                     }
                 };
@@ -1667,8 +1772,13 @@ async fn run_authenticated(
                         }
                         Ok(_) => {}
                         Err(err) => {
-                            let (status, mut error) =
-                                execution_error(&err, &catalog, state.mask_errors, &state.errors);
+                            let settings = state.settings();
+                            let (status, mut error) = execution_error(
+                                &err,
+                                &catalog,
+                                settings.mask_errors,
+                                &settings.errors,
+                            );
                             error.path = Some(vec![serde_json::json!(key)]);
                             sql_data.insert(key.to_string(), serde_json::Value::Null);
                             data_null |= super::partial::nulls_data(

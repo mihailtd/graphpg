@@ -298,8 +298,14 @@ async fn reload_and_regenerate(
     let new_schema = SchemaBuilder::build(&new_catalog)?;
     let sdl = SchemaBuilder::generate_sdl(&new_catalog);
 
-    // 3. Update in-memory ServerState atomically
-    state.reload(new_schema, new_catalog.clone());
+    // 3. Update in-memory ServerState atomically, with the settings of the new config
+    let fixed = state.reload_with_config(new_schema, new_catalog.clone(), config.clone());
+    if !fixed.is_empty() {
+        tracing::warn!(
+            settings = %fixed.join(", "),
+            "dev mode: these settings changed in the config but take effect on restart"
+        );
+    }
 
     // 4. Write export files to disk
     if config.watch.export {

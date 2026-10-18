@@ -504,7 +504,13 @@ async fn aggregate_sets(
         let mut value = connection.get(name).cloned().unwrap_or_default();
         if let (Some(groups), serde_json::Value::Array(rows)) = (grouped_sets.get(name), &mut value)
         {
-            if let Some(max) = ctx.state.limits.groups.filter(|max| rows.len() > *max) {
+            if let Some(max) = ctx
+                .state
+                .settings()
+                .limits
+                .groups
+                .filter(|max| rows.len() > *max)
+            {
                 return Err(ProblemDetails::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     format!("The set `{name}` has more than {max} groups; narrow the filter or group by fewer or coarser values"),
@@ -687,7 +693,13 @@ async fn aggregate(
         .and_then(|g| g.as_array())
         .cloned()
         .unwrap_or_default();
-    if let Some(max) = ctx.state.limits.groups.filter(|max| rows.len() > *max) {
+    if let Some(max) = ctx
+        .state
+        .settings()
+        .limits
+        .groups
+        .filter(|max| rows.len() > *max)
+    {
         return Err(ProblemDetails::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             format!(

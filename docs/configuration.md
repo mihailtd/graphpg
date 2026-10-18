@@ -314,6 +314,16 @@ watch:
   export: true    # auto-export schemas on DDL changes; default: true
 ```
 
+### Editing the config in dev mode
+
+With `watch.enabled`, a change to the config file is read within a few seconds: the schema is built again with it, the served OpenAPI document and the exported files follow, and so do the settings a request reads when it starts:
+
+- entities, functions, types, naming, `rbac`, `extensions` and `search` (they shape the schema);
+- `limits` (page size, depth, cost, bulk rows, groups, `count_threshold`, `require_filter`);
+- `errors` (`map`, `detail`), `debug.statements`, `export` and `database.schemas` beyond the first.
+
+The others are fixed when the server starts: `server`, `database.pool_size` / `statement_cache` / `sql_comments` and the first of `database.schemas`, `auth`, `debug.sql` / `explain`, `headers`, `graphql.enabled` / `ui` / `introspection` / `sdl` / `sdl_path` / `subgraph_path` / `federation` / `persisted_queries`, `openapi.enabled` / `spec` / `path` / `ui`, `limits.request_body_bytes`, `limits.rate_limit` and `limits.statement_timeout`, `subscriptions`, `events`, `telemetry`, `reload` and `watch`. A change to one of them is logged as a warning naming it (`these settings changed in the config but take effect on restart`); restart to apply it.
+
 ### Reloading the schema without a restart
 
 In any mode, graphpg reads the database again when asked, and swaps the new schema in at once. Requests in flight finish on the schema they started with. End a migration with:

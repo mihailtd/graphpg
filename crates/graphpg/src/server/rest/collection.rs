@@ -298,7 +298,7 @@ pub(super) fn bulk_rows(
             "A bulk write needs at least one row",
         ));
     }
-    if let Some(max) = ctx.state.limits.bulk_rows {
+    if let Some(max) = ctx.state.settings().limits.bulk_rows {
         if rows.len() > max {
             return Err(ProblemDetails::from_limit(
                 &crate::plan::LimitError::BulkRows {

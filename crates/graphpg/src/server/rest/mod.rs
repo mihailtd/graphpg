@@ -1159,7 +1159,7 @@ impl Ctx {
             catalog: state.current_catalog(),
             auth,
             prefs: parse_prefer_header(headers),
-            is_prod: state.mask_errors,
+            is_prod: state.settings().mask_errors,
             state: state.clone(),
             schema,
             resource,
@@ -1177,7 +1177,7 @@ impl Ctx {
     }
 
     fn allow(&self, table: &TableMetadata, operation: Operation) -> Result<(), ProblemDetails> {
-        check_table_permissions(table, self.state.config.as_ref(), operation)
+        check_table_permissions(table, self.state.settings().config.as_ref(), operation)
     }
 
     /// Checks `value` (the argument `arg` of root field `field`) against the schema.
@@ -1217,7 +1217,7 @@ impl Ctx {
     ) -> Result<serde_json::Value, ProblemDetails> {
         let planning = std::time::Instant::now();
         let plan = QueryPlanner::new(&self.catalog, schema)
-            .with_limits(self.state.limits.plan_limits())
+            .with_limits(self.state.settings().limits.plan_limits())
             .plan_request(&op)
             .map_err(|err| match err {
                 crate::planner::PlannerError::Limit(limit) => ProblemDetails::from_limit(&limit),
@@ -1312,7 +1312,7 @@ impl Ctx {
                 &err,
                 &self.catalog,
                 self.is_prod,
-                &self.state.errors,
+                &self.state.settings().errors,
             )
         })
     }
@@ -1977,7 +1977,12 @@ async fn list_rows(
                     is_estimate = false;
                 } else {
                     let est = total.unwrap_or(0);
-                    let threshold = ctx.state.limits.count_threshold.unwrap_or(10_000) as i64;
+                    let threshold = ctx
+                        .state
+                        .settings()
+                        .limits
+                        .count_threshold
+                        .unwrap_or(10_000) as i64;
                     if est <= threshold {
                         let mut count_args = initial_args;
                         if let Some(filter) = &query.filter {
@@ -2224,7 +2229,7 @@ pub async fn rest_list_handler(
                 // A page larger than the server allows is cut short: the `Content-Range` of the
                 // answer says which rows came
                 let size = last - range.first + 1;
-                query.first = Some(match ctx.state.limits.page_size.max {
+                query.first = Some(match ctx.state.settings().limits.page_size.max {
                     Some(max) => size.min(max),
                     None => size,
                 });

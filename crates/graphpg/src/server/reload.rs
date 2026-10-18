@@ -41,7 +41,7 @@ impl std::error::Error for ReloadError {}
 pub async fn reload_schema(state: &ServerState) -> Result<(), ReloadError> {
     let start = std::time::Instant::now();
     let err = |e: &dyn std::fmt::Display| ReloadError(e.to_string());
-    let config = state.config.clone().unwrap_or_default();
+    let config = state.settings().config.clone().unwrap_or_default();
     let client = state.pool.get().await.map_err(|e| err(&e))?;
     let resolved = config.database.resolved_schemas();
     let schemas: Vec<&str> = resolved.iter().map(String::as_str).collect();
