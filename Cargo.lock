@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "graphpg"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "apollo-compiler",
  "axum",
@@ -1107,7 +1107,7 @@ dependencies = [
 
 [[package]]
 name = "graphpg-ui"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "axum",
  "flate2",
