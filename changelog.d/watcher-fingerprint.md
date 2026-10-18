@@ -1,0 +1,1 @@
+- Fixed: in dev mode without event triggers (a role that cannot create them, as on managed databases), the polled catalog fingerprint missed a changed column default, a changed function argument default and a changed SQL-standard function body (`RETURN …`, `BEGIN ATOMIC`), so the schema and the exported contracts stayed stale (#212).

@@ -23,7 +23,8 @@ async fn every_kind_of_ddl_changes_the_catalog_fingerprint() {
          CREATE SCHEMA watch_fixture;
          CREATE TABLE watch_fixture.things (id int PRIMARY KEY, name text);
          CREATE TYPE watch_fixture.mood AS ENUM ('happy');
-         CREATE FUNCTION watch_fixture.answer() RETURNS int LANGUAGE sql STABLE AS 'SELECT 42';",
+         CREATE FUNCTION watch_fixture.answer() RETURNS int LANGUAGE sql STABLE AS 'SELECT 42';
+         CREATE FUNCTION watch_fixture.greet(name text) RETURNS text LANGUAGE sql STABLE RETURN name;",
     )
     .await
     .unwrap();
@@ -47,6 +48,13 @@ async fn every_kind_of_ddl_changes_the_catalog_fingerprint() {
         "COMMENT ON TABLE watch_fixture.things IS '@name Item'",
         "ALTER TYPE watch_fixture.mood ADD VALUE 'sad'",
         "CREATE OR REPLACE FUNCTION watch_fixture.answer() RETURNS int LANGUAGE sql STABLE AS 'SELECT 43'",
+        // A default, then another one (#212)
+        "ALTER TABLE watch_fixture.things ALTER COLUMN weight SET DEFAULT 1",
+        "ALTER TABLE watch_fixture.things ALTER COLUMN weight SET DEFAULT 2",
+        // An argument default, another one, and a SQL-standard body (no `prosrc`)
+        "CREATE OR REPLACE FUNCTION watch_fixture.greet(name text DEFAULT 'world') RETURNS text LANGUAGE sql STABLE RETURN name",
+        "CREATE OR REPLACE FUNCTION watch_fixture.greet(name text DEFAULT 'earth') RETURNS text LANGUAGE sql STABLE RETURN name",
+        "CREATE OR REPLACE FUNCTION watch_fixture.greet(name text DEFAULT 'earth') RETURNS text LANGUAGE sql STABLE RETURN upper(name)",
         "ALTER TABLE watch_fixture.things ENABLE ROW LEVEL SECURITY",
         "CREATE POLICY everyone ON watch_fixture.things USING (true)",
         "GRANT SELECT ON watch_fixture.things TO PUBLIC",
