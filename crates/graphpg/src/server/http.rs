@@ -198,12 +198,15 @@ pub(crate) fn execution_error(
 
     match err.violation(catalog) {
         Some(v) => {
-            let extensions = serde_json::json!({
+            let mut extensions = serde_json::json!({
                 "code": v.code,
                 "type": v.type_name,
                 "constraint": v.constraint,
                 "fields": v.fields,
             });
+            if !v.validation_errors.is_empty() {
+                extensions["validationErrors"] = serde_json::json!(v.validation_errors);
+            }
             let message = match err {
                 ExecutionError::Mutation { field, .. } => {
                     format!(

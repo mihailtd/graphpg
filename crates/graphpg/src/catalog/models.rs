@@ -433,6 +433,10 @@ pub struct DomainMetadata {
     pub type_name: String,
     pub description: Option<String>,
     pub base: PgType,
+    /// Definitions of the domain's `CHECK` constraints (`CHECK ((VALUE ~ '^\d+$'::text))`),
+    /// which the API documents like a column's.
+    #[serde(default)]
+    pub checks: Vec<String>,
 }
 
 impl PgType {
@@ -2509,8 +2513,16 @@ impl DatabaseCatalog {
         Some((t, t.constraints.iter().find(|c| c.name == name)?))
     }
 
+    /// The domain a column is declared with, when it has `CHECK` constraints: a value it
+    /// rejects is `<FIELD>_INVALID`.
+    pub fn checked_domain(&self, col: &ColumnMetadata) -> Option<&DomainMetadata> {
+        self.find_domain(col.domain.as_deref()?)
+            .filter(|d| !d.checks.is_empty())
+    }
+
     /// Error code of a column-level violation: `<FIELD>_REQUIRED` (NOT NULL),
-    /// `<FIELD>_TOO_LONG` (`varchar(n)`), `<FIELD>_OUT_OF_RANGE` (`numeric(p, s)`).
+    /// `<FIELD>_TOO_LONG` (`varchar(n)`), `<FIELD>_OUT_OF_RANGE` (`numeric(p, s)`),
+    /// `<FIELD>_INVALID` (a check of its domain).
     pub fn column_error_code(col: &ColumnMetadata, suffix: &str) -> String {
         format!("{}_{suffix}", col.order_by_name())
     }
@@ -2542,6 +2554,15 @@ impl DatabaseCatalog {
                 push(
                     Self::column_error_code(col, "OUT_OF_RANGE"),
                     format!("`{field}` does not fit `numeric({p}, {s})`."),
+                );
+            }
+            if let Some(domain) = self.checked_domain(col) {
+                push(
+                    Self::column_error_code(col, "INVALID"),
+                    format!(
+                        "`{field}` fails a check of its type `{}`.",
+                        domain.config_name
+                    ),
                 );
             }
         }

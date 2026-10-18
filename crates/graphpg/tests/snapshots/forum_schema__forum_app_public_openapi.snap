@@ -12630,6 +12630,26 @@ expression: openapi
             },
             "description": "Offending fields or parameters"
           },
+          "validationErrors": {
+            "type": "array",
+            "description": "Why a value fails the JSON Schema of a pg_jsonschema check: one entry per failed keyword",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "JSON Pointer into the value (empty: the value itself)"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "message"
+              ]
+            }
+          },
           "requestId": {
             "type": "string",
             "description": "Correlates a masked error with the server log"

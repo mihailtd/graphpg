@@ -65,10 +65,17 @@ impl Integration {
             Self::TimescaleDb => {
                 "SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_schema = ANY($1)"
             }
+            // Checks of the schemas' tables and domains, and of the domains their columns use
             Self::PgJsonschema => {
-                "SELECT count(*) FROM pg_constraint con JOIN pg_namespace n ON n.oid = con.connamespace
-                 WHERE n.nspname = ANY($1) AND con.contype = 'c'
-                   AND pg_get_constraintdef(con.oid) ~ '\\mjsonb?_matches_schema\\('"
+                "SELECT count(*) FROM pg_constraint con
+                 WHERE con.contype = 'c'
+                   AND pg_get_constraintdef(con.oid) ~ '\\mjsonb?_matches_schema\\('
+                   AND (con.connamespace IN (SELECT oid FROM pg_namespace WHERE nspname = ANY($1))
+                        OR con.contypid IN (
+                            SELECT a.atttypid FROM pg_attribute a
+                            JOIN pg_class c ON c.oid = a.attrelid
+                            JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE n.nspname = ANY($1) AND a.attnum > 0 AND NOT a.attisdropped))"
             }
             Self::Pgvectorscale => INDEXES_USING_DISKANN,
             Self::VectorChord => INDEXES_USING_VCHORD,

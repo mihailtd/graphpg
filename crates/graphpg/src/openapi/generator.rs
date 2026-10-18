@@ -204,6 +204,8 @@ fn fix_dangling_refs(
                     .and_then(Value::as_str)
                     .and_then(|r| r.strip_prefix("#/components/schemas/"))
                 {
+                    // A reference into a component (`Json.x/$defs/Line`) needs the component
+                    let name = name.split('/').next().unwrap_or(name);
                     if !names.contains(name) {
                         *value = json!({ "type": "object" });
                         return;
@@ -498,6 +500,7 @@ impl OpenApiGenerator {
             Self::generate_search_method_paths(table, catalog, config, graphql, &mut paths);
         }
         Self::generate_global_search_paths(catalog, config, &tables, &mut schemas, &mut paths);
+        schemas.extend(Self::json_schema_components(catalog));
         if let Some(inputs) = inputs {
             schemas.extend(inputs.into_components());
         }
@@ -2026,6 +2029,18 @@ impl OpenApiGenerator {
                 "instance": { "type": "string", "format": "uri-reference", "description": "The request URL" },
                 "code": { "type": "string", "description": "Stable machine-readable code, such as `EMAIL_TAKEN` or `STALE_VERSION`" },
                 "fields": { "type": "array", "items": { "type": "string" }, "description": "Offending fields or parameters" },
+                "validationErrors": {
+                    "type": "array",
+                    "description": "Why a value fails the JSON Schema of a pg_jsonschema check: one entry per failed keyword",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string", "description": "JSON Pointer into the value (empty: the value itself)" },
+                            "message": { "type": "string" }
+                        },
+                        "required": ["path", "message"]
+                    }
+                },
                 "requestId": { "type": "string", "description": "Correlates a masked error with the server log" }
             },
             "required": ["type", "title", "status", "detail"]
@@ -2068,6 +2083,25 @@ impl OpenApiGenerator {
             create.map_or(flat.0, |name| inputs.reference(&name)),
             update.map_or(flat.1, |name| inputs.reference(&name)),
         )
+    }
+
+    /// The components the pg_jsonschema schemas of columns are referred to by: a domain's
+    /// (`Json.<Domain>`), and those referring to themselves (`Json.<table>.<column>`).
+    fn json_schema_components(catalog: &DatabaseCatalog) -> BTreeMap<String, Value> {
+        if catalog
+            .integration(crate::catalog::integrations::Integration::PgJsonschema)
+            .is_none()
+        {
+            return BTreeMap::new();
+        }
+        catalog
+            .tables
+            .iter()
+            .flat_map(|t| t.visible_columns().map(move |c| (t, c)))
+            .filter(|(_, c)| matches!(c.pg_type, PgType::Json | PgType::Jsonb))
+            .filter_map(|(t, c)| super::constraints::json_schema(t, c, catalog))
+            .filter_map(|stated| Some((stated.component?, stated.schema)))
+            .collect()
     }
 
     /// The schemas of the column fields of each table's create and update input types, with
@@ -2659,10 +2693,12 @@ impl OpenApiGenerator {
                 .integration(crate::catalog::integrations::Integration::PgJsonschema)
                 .is_some()
         {
-            if let Some(mut stated) = super::constraints::json_schema(table, col) {
-                if let Some(object) = stated.as_object_mut() {
-                    object.remove("$schema");
-                }
+            if let Some(stated) = super::constraints::json_schema(table, col, catalog) {
+                // A schema of its own (a domain's, or one referring to itself) is referred to
+                let stated = match &stated.component {
+                    Some(name) => schema_ref(name),
+                    None => stated.schema,
+                };
                 let mut typed = if col.is_nullable {
                     // NULL passes the check
                     json!({ "anyOf": [stated, { "type": "null" }] })
@@ -2677,7 +2713,7 @@ impl OpenApiGenerator {
                 return typed;
             }
         }
-        for (keyword, value) in super::constraints::keywords(table, col) {
+        for (keyword, value) in super::constraints::keywords(table, col, catalog) {
             // A `varchar(20)` limit and a `CHECK` on the length: the stricter one holds
             let tighter = match (schema.get(&keyword).and_then(Value::as_i64), value.as_i64()) {
                 (Some(old), Some(new)) if keyword == "maxLength" || keyword == "maxItems" => {

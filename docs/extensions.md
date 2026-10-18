@@ -51,17 +51,30 @@ Bucketing and gap filling need nothing TimescaleDB-specific: grouped aggregates 
 
 ## pg_jsonschema
 
-A `json` / `jsonb` column constrained by a JSON Schema has that schema as its type:
+A `json` / `jsonb` column constrained by a JSON Schema has that schema as its type, whether the check is the column's or its domain's:
 
 ```sql
 settings jsonb NOT NULL CHECK (jsonb_matches_schema('{"type": "object", "required": ["theme"], ...}', settings))
+
+CREATE DOMAIN contact_point AS jsonb CHECK (jsonb_matches_schema('{"type": "object", ...}', VALUE));
+telecom contact_point
 ```
 
-- **OpenAPI:** the column's property is the JSON Schema (without `$schema`), in rows and in create and update bodies, so typed clients get real types. A nullable column allows `null` too, which passes the check.
+- **OpenAPI:** the column's property is the JSON Schema, in rows and in create and update bodies (nested writes included), so typed clients and form generators get real types. A nullable column allows `null` too, which passes the check.
+  - A **domain's** schema is a component of its own, `Json.<Domain>` (`Json.ContactPoint`), which every column of the domain refers to.
+  - A schema that **refers to itself** (`"$ref": "#/$defs/Coding"`, or `#/definitions/…`) is a component too, `Json.<table>.<column>`, with its references pointing into it, so they resolve in the document. Its root `$id` is dropped; references to other documents are left as they are.
+  - The document is OpenAPI 3.1, whose schemas are JSON Schema 2020-12. A schema declaring an older draft in `$schema` is rewritten where the meaning changed: an array `items` is `prefixItems` (and `additionalItems` is `items`), `dependencies` is `dependentRequired` / `dependentSchemas`, draft-04's boolean `exclusiveMinimum` / `exclusiveMaximum` are numbers, and before 2019-09 the keywords beside a `$ref` are dropped (they were ignored). `$schema` itself is removed. A schema without `$schema` is 2020-12, as pg_jsonschema reads it.
 - **GraphQL:** the field stays `JSON` (GraphQL cannot express a JSON Schema), and its description states the check.
-- **Errors:** a value the schema rejects fails the check: `<COLUMN>_INVALID` (REST `422`), like any check.
+- **Errors:** a value the schema rejects fails the check: `<COLUMN>_INVALID` (REST `422`), like any check. The error says why, in `validationErrors` (GraphQL: in `extensions`; REST: in the problem document), one entry per failed keyword with a JSON Pointer into the value:
 
-The constraint must be the call alone, on that column, with the schema as a literal. A check combining it with other conditions is documented, but does not type the column.
+  ```json
+  { "code": "SETTINGS_INVALID", "fields": ["inputs[1].settings"],
+    "validationErrors": [{ "path": "/theme", "message": "\"blue\" is not one of \"light\" or \"dark\"" }] }
+  ```
+
+  The database decides: graphpg validates the rejected value with the validator pg_jsonschema uses (the `jsonschema` crate, as pg_jsonschema 0.3.4) only to explain a refusal, and finds the failing row of a bulk write the same way. A value a **domain's** check rejects (any domain, not only JSON ones) is `<COLUMN>_INVALID` too, listed in `<Type>ErrorCode`.
+
+The forms of check read: the call alone, `column IS NULL OR` the call, and the call `AND` other conditions (the value satisfies the schema, and more; the rest stays to the database). The schema must be a literal. A check of another form (an `OR` with other conditions, a schema computed by a function) is documented, but does not type the column.
 
 ## Message queues (pgmq)
 

@@ -163,6 +163,7 @@ async fn served_document(setup: &str, schema: &str) -> Value {
 const CONTRACT_FIXTURE: &str = "
 DROP SCHEMA IF EXISTS openapi_contract CASCADE; CREATE SCHEMA openapi_contract;
 CREATE DOMAIN openapi_contract.fhir_date AS text;
+CREATE DOMAIN openapi_contract.zip AS text CHECK (VALUE ~ '^[0-9]{5}$');
 CREATE TYPE openapi_contract.state AS ENUM ('in progress', 'done');
 CREATE TABLE openapi_contract.patients (
     id integer PRIMARY KEY,
@@ -176,7 +177,8 @@ CREATE TABLE openapi_contract.patients (
     state openapi_contract.state NOT NULL DEFAULT 'in progress',
     big bigint DEFAULT 9,
     token uuid DEFAULT gen_random_uuid(),
-    created timestamptz NOT NULL DEFAULT now()
+    created timestamptz NOT NULL DEFAULT now(),
+    zip openapi_contract.zip
 );
 CREATE TABLE openapi_contract.visits (
     id integer PRIMARY KEY,
@@ -197,6 +199,59 @@ async fn checks_on_varchar_and_domain_columns_are_keywords() {
     assert_eq!(row["code"]["pattern"], "^[A-Z]+$", "{}", row["code"]);
     assert_eq!(row["nickname"]["minLength"], 2, "{}", row["nickname"]);
     assert_eq!(row["nickname"]["maxLength"], 20);
+    // A check of the column's domain
+    assert_eq!(row["zip"]["pattern"], "^[0-9]{5}$", "{}", row["zip"]);
+}
+
+#[tokio::test]
+async fn a_value_its_domain_rejects_is_a_typed_error() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use graphpg::server::{create_pool, create_router, DebugOptions, ServerState};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    // Answered 500 before: PostgreSQL names the domain, not the table nor the column
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client
+        .batch_execute("SELECT pg_advisory_lock(7461023)")
+        .await
+        .unwrap();
+    client.batch_execute(CONTRACT_FIXTURE).await.unwrap();
+    let catalog = CatalogInspector::new(&client)
+        .inspect_schema("openapi_contract")
+        .await
+        .unwrap();
+    client
+        .batch_execute("SELECT pg_advisory_unlock(7461023)")
+        .await
+        .unwrap();
+    let schema = graphpg::schema::SchemaBuilder::build(&catalog).unwrap();
+    let app = create_router(std::sync::Arc::new(ServerState::new(
+        create_pool(common::db_url(), 2).unwrap(),
+        schema,
+        catalog,
+        "openapi_contract".to_string(),
+        DebugOptions::default(),
+    )));
+    let res = app
+        .oneshot(
+            Request::post("/rest/patients")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "id": 1, "zip": "12" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 422);
+    let problem: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(problem["code"], "ZIP_INVALID", "{problem}");
+    assert_eq!(problem["fields"], json!(["input.zip"]), "{problem}");
 }
 
 #[tokio::test]
