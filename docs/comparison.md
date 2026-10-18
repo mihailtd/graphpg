@@ -51,9 +51,9 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 
 ### When something else fits better
 
-- You need data from **APIs and services** (not databases) in a single query: Hasura or PostGraphile. Other databases and files reach graphpg through [foreign data wrappers](foreign-data.md).
-- You need **streaming subscriptions** (each new row, from a cursor) or an **admin console**: Hasura. graphpg's subscriptions are live queries: the latest result, not each change (each change goes to [event triggers](events.md)).
-- You want to **rewrite how the schema is generated** (naming, field shapes, custom plugins): PostGraphile.
+- You need a **graphical point-and-click admin console** to modify schemas or click-to-track relationships: Hasura Console or Supabase Studio. graphpg is strictly code-first and declarative: schema evolution happens via database migrations, and behavior is configured in version-controlled `graphpg.yaml` (with embedded GraphiQL and Scalar reference UIs for interactive exploration).
+- You want to **rewrite schema generation using in-process custom plugins** (running arbitrary JavaScript or Python inside the engine's query resolver pipeline): PostGraphile. graphpg purposefully enforces strict single-statement safety and transaction boundaries by keeping logic in PostgreSQL functions, constraints, RLS policies, or composing at the gateway with Apollo Federation.
+- You need **cursor-based streaming subscriptions** for firehose event logs rather than live queries: Hasura streaming. graphpg focuses on live query subscriptions (debounced re-evaluation delivering the latest result over WebSocket, SSE, or multipart) and transaction outbox event triggers (guaranteed delivery of row-change webhooks).
 
 ## Compared with PostgREST
 
@@ -89,7 +89,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Spread (`...author(name)`) | No | Yes |
 | Computed relationships | Functions mounted on tables that need no argument: rows through `include`, values through `fields`; with the embedding controls | Yes (set-returning functions) |
 | Pagination | `first` / `after` / `last` / `before` (keyset, stable under writes), `offset`, `Range: items=A-B` (`206`, `Content-Range`, `416`); `Link` headers | `limit` / `offset`, `Range` header; keyset not supported |
-| Total count | `Prefer: count=exact` (`X-Total-Count`, and the total in `Content-Range`); opt-in; no `planned` / `estimated` | `Prefer: count=exact`, `planned`, `estimated` (`Content-Range`) |
+| Total count | `Prefer: count=exact`, `planned`, `estimated` (`X-Total-Count`, `X-Total-Count-Estimate`, and total in `Content-Range`) | `Prefer: count=exact`, `planned`, `estimated` (`Content-Range`) |
 | Server-side maximum | `limits.page_size.max` (rejects), default page size | `db-max-rows` (silently truncates) |
 | Aggregates | `min`, `max`, `sum`, `avg`, `distinctCount`, `stddev*`, `variance*`, `median`, `percentile`; `group` by columns, truncated dates and bins; `having`; time zones; gap filling | `avg`, `count`, `max`, `min`, `sum`; grouping by the other selected columns; **disabled by default**; no `HAVING`; no ordering by an aggregate |
 | JSON column access | The whole value; JSON-key filters; a `path` argument in GraphQL | `->` / `->>` in `select`, filters and `order` |
