@@ -12,7 +12,7 @@ How a PostgreSQL database becomes a GraphQL schema. graphpg reads the system cat
 | **Generated Columns** (`GENERATED ALWAYS AS ... STORED`) | `pg_attribute.attgenerated = 's'` | Read-only output fields | Bare column select (pre-computed on disk) | Automatically excluded from Create & Update inputs |
 | **Functions** (any `LANGUAGE`) | `pg_proc` (`prokind = 'f'`), return and argument types, volatility | Root fields typed by what they return (`User`, a `UserConnection`, scalars, enums, composites, `<Func>Row`); functions of a row are fields of its type | `FROM schema."func"(args)`, inlinable by PostgreSQL | `VOLATILE` functions are mutations |
 | **Exclusive Arcs** (`CHECK num_nonnulls(...) = 1`) | `pg_constraint.conbin` regex parsing | GraphQL `union <TargetUnion>` | `CASE WHEN ... THEN (SELECT JSON_OBJECT(...))` | Validated by PostgreSQL check constraint |
-| **Views & Materialized Views** | `pg_class.relkind IN ('v', 'm')` (also foreign tables; partitions are hidden behind their partitioned table) | Object types with list/connection root fields; keys and relations declared in `graphpg.yaml` | Same as tables | Only for updatable views (`pg_relation_is_updatable`) |
+| **Views & Materialized Views** | `pg_class.relkind IN ('v', 'm')` (also foreign tables; partitions are hidden behind their partitioned table) | Object types with list/connection root fields; keys detected or declared, relations declared in `graphpg.yaml` | Same as tables | Only for updatable views (`pg_relation_is_updatable`) |
 | **Virtual JSON_TABLE Views** | View + key/foreign key declared in `graphpg.yaml` | Relational 1:M child collections | Standard `LEFT JOIN LATERAL` | Managed via parent table JSONB mutations |
 | **Composite Keys** | Multi-column `pg_constraint.conkey`/`confkey` | One relation per foreign key; lookups/updates/deletes take one argument per key column | Multi-column join conditions, row-value cursors | Rows addressed by every key column |
 | **Scalar & Array Types** | `pg_type` (domains as scalars of their own, over their base type) | A scalar per type (`BigInt`, `Decimal`, `Datetime`, `LocalDatetime`, `Interval`, `Base64`, `InternetAddress`, ...); ranges as objects; arrays as lists | Output in each scalar's format (exact numbers as strings, non-finite floats as null, ISO 8601 durations, base64) | Inputs checked against their scalar before any SQL runs |
@@ -123,15 +123,7 @@ The engine recognises `num_nonnulls(...) = 1` in `pg_constraint.conbin`, creates
 
 ## Keys of views
 
-Views are introspected like tables (`relkind = 'v'` or `'m'`), but PostgreSQL cannot attach a primary key to a view. graphpg finds the key itself where the database tells it, in this order:
-
-1. **Declared in the view's comment**: `COMMENT ON VIEW programme_adherence IS '@primaryKey patient_id'` (several columns separated by commas). The hint line is not part of the description.
-2. **A materialized view's unique index** (the one with the fewest columns; not partial, no expressions), such as the one `REFRESH MATERIALIZED VIEW CONCURRENTLY` needs.
-3. **A simple view's base relation's key.** A view PostgreSQL can update automatically (one relation, no grouping, `DISTINCT`, set operation or `LIMIT`) keeps that relation's rows one for one. When it selects every column of the relation's key, under any names, those columns are its key. A view over such a view has the same key.
-
-`entities.<name>.primary_key` in `graphpg.yaml` overrides any of them. With a key, a view implements `Node` and has single-row lookups, cursors on its key, and (when it is updatable) updates and deletes by key.
-
-A key column keeps its own field: a `patient_id` key is `patientId` in the type, in filters, conditions and `orderBy` (`PATIENT_ID_ASC`), and `databaseId` too. A key column named `id` gives that name to the Relay `id` and is read as `databaseId`.
+PostgreSQL cannot attach a primary key to a view, so graphpg detects one where the database tells it: a `@primaryKey` comment hint, a materialized view's unique index, or a simple view's base relation's key. `entities.<name>.primary_key` overrides them. A key column keeps its own field name (`patientId`) beside `databaseId`. See [Views](views.md#keys) for the rules, what a view gets and the cases to watch.
 
 ## Views with declared keys (`JSON_TABLE`)
 

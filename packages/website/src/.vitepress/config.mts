@@ -120,6 +120,7 @@ export default defineConfig({
             { text: "End-to-end type safety", link: "/docs/type-safety" },
             { text: "Configuration", link: "/docs/configuration" },
             { text: "Schema mapping", link: "/docs/schema-mapping" },
+            { text: "Views", link: "/docs/views" },
           ],
         },
         {

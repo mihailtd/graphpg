@@ -132,7 +132,7 @@ SELECT * FROM billing.invoices
 WHERE customer_id = current_setting('request.jwt.claim.customer_id', true)::int;
 ```
 
-`security_barrier` keeps a caller's own functions from seeing rows before the filter runs. The filter is pushed to the remote side like any other condition. Give the view its keys in `graphpg.yaml`.
+`security_barrier` keeps a caller's own functions from seeing rows before the filter runs. The filter is pushed to the remote side like any other condition. Give the view its keys in `graphpg.yaml` or with `@primaryKey`: a view over a foreign table does not take the foreign table's key (see [Views](views.md#gotchas)).
 
 ## Performance
 
@@ -169,7 +169,7 @@ Settings that matter:
 - **`fetch_size`** (rows per round trip, default 100): raise it for large lists and exports.
 - **`limits.cost` does not know about the network.** It estimates rows, not round trips. Lower `limits.page_size.max` or `limits.depth` if remote relations get expensive.
 - **`limits.statement_timeout`** cancels the remote query too, when the local statement is cancelled.
-- **Materialize what is read often.** A materialized view over a foreign table has real indexes and statistics, at the cost of staleness until the next refresh. graphpg serves materialized views with keys from `graphpg.yaml`:
+- **Materialize what is read often.** A materialized view over a foreign table has real indexes and statistics, at the cost of staleness until the next refresh. graphpg takes a materialized view's key from its unique index (or `graphpg.yaml`):
 
   ```sql
   CREATE MATERIALIZED VIEW billing.invoices_cached AS SELECT * FROM billing.invoices;

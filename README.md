@@ -70,7 +70,7 @@ curl -X POST localhost:4000/rest/authors -H 'content-type: application/json' \
 - **Subscriptions (live queries)**, opt-in: any query field as a `subscription`, its result sent again when it changes, under Row-Level Security; over WebSocket (`graphql-transport-ws`), SSE and multipart HTTP; batched re-runs on read replicas, nothing installed in the database ([subscriptions](docs/subscriptions.md)).
 - **Apollo Federation v2** subgraph mode, `@defer` / `@stream`, streaming NDJSON/CSV export and `COPY` import, read replicas, OpenTelemetry spans.
 
-Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) renames and hides things and declares keys for views; it is not required.
+Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) renames and hides things and declares the keys of views it cannot detect; it is not required.
 
 ## Documentation
 
