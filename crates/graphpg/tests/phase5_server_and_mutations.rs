@@ -236,6 +236,11 @@ async fn test_http_health_endpoint() {
 
     assert_eq!(json["status"], "ok");
     assert_eq!(json["engine"], "graphpg");
+    assert_eq!(
+        json["version"],
+        env!("CARGO_PKG_VERSION"),
+        "the running release, as --version reports it"
+    );
 }
 
 #[tokio::test]

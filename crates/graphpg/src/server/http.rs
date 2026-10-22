@@ -933,7 +933,7 @@ pub(crate) async fn health_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "ok",
         "engine": "graphpg",
-        "version": "0.1.0"
+        "version": env!("CARGO_PKG_VERSION")
     }))
 }
 

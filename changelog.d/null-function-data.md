@@ -1,0 +1,1 @@
+- **Fixed: a function returning SQL `NULL` panicked the request** (#232). A query or mutation field backed by a function that answers `NULL` (a refused write, a compare-and-swap that lost) is now `null`, instead of failing with `error deserializing column 0`.

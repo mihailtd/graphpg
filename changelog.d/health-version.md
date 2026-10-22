@@ -1,0 +1,1 @@
+- **Fixed: `/health` reported version `0.1.0`** (#222). It now reports the running release, the same version as `graphpg --version`.
