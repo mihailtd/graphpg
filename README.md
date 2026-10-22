@@ -24,7 +24,7 @@ Run the published container image against your own database:
 ```bash
 docker run --rm -p 4000:4000 \
   -e DATABASE_URL=postgres://user:pass@host.docker.internal/mydb \
-  ghcr.io/mihailtd/graphpg:1.2.0 --mode dev
+  ghcr.io/mihailtd/graphpg:1.3.0 --mode dev
 ```
 
 The image is a static binary on `distroless/static` (about 27 MB with the embedded GraphiQL and Scalar UIs, no shell, non-root, signed with Sigstore). See [running in a container](docs/configuration.md#running-in-a-container).

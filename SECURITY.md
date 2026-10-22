@@ -14,7 +14,7 @@ Only the latest release receives fixes.
 Container images are signed with Sigstore (keyless, by the release workflow) and scanned for known vulnerabilities before they are tagged. Verify one with:
 
 ```bash
-cosign verify ghcr.io/mihailtd/graphpg:1.2.0 \
+cosign verify ghcr.io/mihailtd/graphpg:1.3.0 \
   --certificate-identity-regexp '^https://github.com/mihailtd/graphpg/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
