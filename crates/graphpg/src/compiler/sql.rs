@@ -3276,16 +3276,37 @@ impl SqlCompiler {
 
         if selections.include_page_info {
             let page_cursors = format!("(array_agg(cur{rn_order}) FILTER (WHERE {in_page}))");
-            let page_info = Self::json_object(&[
-                Self::json_pair("hasNextPage", &has_next),
-                Self::json_pair("hasPreviousPage", &has_prev),
-                Self::json_pair("startCursor", &format!("{page_cursors}[1]")),
-                Self::json_pair(
-                    "endCursor",
-                    &format!("{page_cursors}[array_length({page_cursors}, 1)]"),
-                ),
-            ]);
-            outer_pairs.push(Self::json_pair("pageInfo", &page_info));
+            let value = |name: &str| match name {
+                "hasNextPage" => Some(has_next.clone()),
+                "hasPreviousPage" => Some(has_prev.clone()),
+                "startCursor" => Some(format!("{page_cursors}[1]")),
+                "endCursor" => Some(format!("{page_cursors}[array_length({page_cursors}, 1)]")),
+                "__typename" => Some("'PageInfo'".to_string()),
+                _ => None,
+            };
+            let all = [("pageInfo".to_string(), {
+                ["hasNextPage", "hasPreviousPage", "startCursor", "endCursor"]
+                    .map(|f| (f.to_string(), f.to_string()))
+                    .to_vec()
+            })];
+            let page_info = if selections.page_info.is_empty() {
+                &all[..]
+            } else {
+                &selections.page_info[..]
+            };
+            // Only the selected fields, under their response keys
+            for (key, fields) in page_info {
+                let pairs: Vec<String> = fields
+                    .iter()
+                    .filter_map(|(alias, name)| value(name).map(|v| Self::json_pair(alias, &v)))
+                    .collect();
+                let obj = if pairs.is_empty() {
+                    "'{}'::json".to_string()
+                } else {
+                    Self::json_object(&pairs)
+                };
+                outer_pairs.push(Self::json_pair(key, &obj));
+            }
         }
 
         if selections.include_edges {

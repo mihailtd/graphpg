@@ -699,6 +699,10 @@ pub struct ConnectionSelections {
     /// estimate is at most `n` rows.
     #[serde(default)]
     pub exact_below: Vec<(String, u64)>,
+    /// Each selected `pageInfo`, by response key: its fields as (response key, field name).
+    /// Empty with `include_page_info`: all four fields under `pageInfo`.
+    #[serde(default)]
+    pub page_info: Vec<(String, Vec<(String, String)>)>,
 }
 
 /// Fields selected on a `<Type>SearchResults` object.
