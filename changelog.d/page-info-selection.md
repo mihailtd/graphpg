@@ -1,1 +1,0 @@
-- **Fixed: a connection's `pageInfo` ignored its selection and aliases** (#224). `pageInfo { next: hasNextPage }` answered all four fields under their own names; it now answers only the fields selected, under their response keys (`__typename` included), and an aliased `pageInfo` is returned under its alias.
