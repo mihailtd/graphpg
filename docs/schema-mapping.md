@@ -121,9 +121,21 @@ CREATE TABLE likes (
 
 The engine recognises `num_nonnulls(...) = 1` in `pg_constraint.conbin`, creates `union LikesTarget = Post | Comment`, and mounts `target: LikesTarget!` on `Like`. A single `CASE` expression resolves the concrete type and object in the same query.
 
+## Keys of views
+
+Views are introspected like tables (`relkind = 'v'` or `'m'`), but PostgreSQL cannot attach a primary key to a view. graphpg finds the key itself where the database tells it, in this order:
+
+1. **Declared in the view's comment**: `COMMENT ON VIEW programme_adherence IS '@primaryKey patient_id'` (several columns separated by commas). The hint line is not part of the description.
+2. **A materialized view's unique index** (the one with the fewest columns; not partial, no expressions), such as the one `REFRESH MATERIALIZED VIEW CONCURRENTLY` needs.
+3. **A simple view's base relation's key.** A view PostgreSQL can update automatically (one relation, no grouping, `DISTINCT`, set operation or `LIMIT`) keeps that relation's rows one for one. When it selects every column of the relation's key, under any names, those columns are its key. A view over such a view has the same key.
+
+`entities.<name>.primary_key` in `graphpg.yaml` overrides any of them. With a key, a view implements `Node` and has single-row lookups, cursors on its key, and (when it is updatable) updates and deletes by key.
+
+A key column keeps its own field: a `patient_id` key is `patientId` in the type, in filters, conditions and `orderBy` (`PATIENT_ID_ASC`), and `databaseId` too. A key column named `id` gives that name to the Relay `id` and is read as `databaseId`.
+
 ## Views with declared keys (`JSON_TABLE`)
 
-Views are introspected like tables (`relkind = 'v'` or `'m'`), but PostgreSQL cannot attach primary or foreign keys to a view. Declare them in `graphpg.yaml` and the view becomes a relation. This pairs well with PostgreSQL 17's `JSON_TABLE`, which turns a `jsonb` array into virtual rows without a child table:
+A view whose rows PostgreSQL cannot relate to a key, such as one that unnests an array, gets its key and foreign keys from `graphpg.yaml`, and becomes a relation. This pairs well with PostgreSQL 17's `JSON_TABLE`, which turns a `jsonb` array into virtual rows without a child table:
 
 ```sql
 CREATE VIEW customer_phone_view AS

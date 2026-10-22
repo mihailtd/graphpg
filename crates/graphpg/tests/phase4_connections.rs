@@ -851,3 +851,31 @@ async fn test_grouped_aggregates() {
     .unwrap_err();
     assert!(err.contains("BODY_TRUNCATED_TO_DAY"), "{err}");
 }
+
+#[tokio::test]
+async fn test_page_info_follows_its_selection_and_aliases() {
+    let (client, schema, catalog) = setup_test().await;
+    let res = run(
+        &client,
+        &schema,
+        &catalog,
+        r#"query {
+            one: allMessagesConnection(first: 1) { pageInfo { next: hasNextPage } }
+            two: allMessagesConnection(first: 1) {
+                info: pageInfo { hasNextPage ... on PageInfo { prev: hasPreviousPage hasNextPage } __typename }
+                pageInfo { endCursor }
+            }
+        }"#,
+    )
+    .await
+    .unwrap();
+    let data = &res["data"];
+    assert_eq!(data["one"], json!({ "pageInfo": { "next": true } }));
+    assert_eq!(
+        data["two"]["info"],
+        json!({ "hasNextPage": true, "prev": false, "__typename": "PageInfo" })
+    );
+    let page_info = data["two"]["pageInfo"].as_object().unwrap();
+    assert_eq!(page_info.keys().collect::<Vec<_>>(), ["endCursor"]);
+    assert!(page_info["endCursor"].is_string());
+}

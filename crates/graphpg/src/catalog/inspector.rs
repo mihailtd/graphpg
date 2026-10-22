@@ -1,6 +1,6 @@
 use super::models::{
-    table_to_type_name, ColumnMetadata, ConstraintKind, ConstraintMetadata, CtiChild, CtiKind,
-    CtiMetadata, DatabaseCatalog, ForeignKeyMetadata, Operations, PgType, RelationKind,
+    table_to_type_name, ColumnMetadata, CommentHints, ConstraintKind, ConstraintMetadata, CtiChild,
+    CtiKind, CtiMetadata, DatabaseCatalog, ForeignKeyMetadata, Operations, PgType, RelationKind,
     StiMetadata, StiVariant, TableMetadata, TypeLimits, UniqueKey,
 };
 use crate::compiler::quote_ident;
@@ -41,6 +41,19 @@ fn not_extension_owned(class: &str, oid: &str) -> String {
                      WHERE d.classid = '{class}'::regclass AND d.objid = {oid} AND d.deptype = 'e'
                        AND NOT ($2::bool OR e.extname = ANY($3::text[])))"
     )
+}
+
+/// SQL predicate: `check` holds for the current role or for one of `roles` (SQL literals).
+/// `check` names its role argument `{role}`: empty for the current role, `'<role>', ` else.
+fn for_any_role(check: &str, roles: &[String]) -> String {
+    let checks: Vec<String> = std::iter::once(check.replace("{role}", ""))
+        .chain(
+            roles
+                .iter()
+                .map(|r| check.replace("{role}", &format!("{r}, "))),
+        )
+        .collect();
+    format!("({})", checks.join(" OR "))
 }
 
 /// Columns describing the type of a value whose `pg_type` row is aliased `t` (see
@@ -160,23 +173,65 @@ impl<'a> CatalogInspector<'a> {
             .query_one("SELECT current_setting('server_version_num')::int", &[])
             .await?
             .get::<_, i32>(0) as u32;
-        // Pruning inspects as the configured role. The role is reset whatever the outcome: the
-        // client may be pooled, and a later borrower must not run as the restricted role.
-        let pruning_role = config.rbac.role.as_deref().filter(|_| config.rbac.enabled);
+        // Pruning inspects as the configured role, else as the role authenticated requests run
+        // as. The role is reset whatever the outcome: the client may be pooled, and a later
+        // borrower must not run as the restricted role.
+        let request_roles = self.request_roles(config).await?;
+        let pruning_role = config
+            .rbac
+            .role
+            .as_deref()
+            .or(config
+                .auth
+                .roles
+                .authenticated
+                .as_deref()
+                .filter(|_| config.auth.enabled))
+            .filter(|_| config.rbac.enabled);
         if let Some(role) = pruning_role {
             let safe_role = role.replace('"', "\"\"");
             self.client
                 .batch_execute(&format!("SET ROLE \"{safe_role}\";"))
                 .await?;
         }
+        // Without pruning, what any request role has a privilege on is exposed (the database
+        // still refuses what the role of a request may not do).
+        let visible_to: &[String] = if config.rbac.enabled {
+            &[]
+        } else {
+            &request_roles
+        };
         let detected = self
-            .inspect_detected(schema_names, &extensions, config, &mut catalog)
+            .inspect_detected(schema_names, &extensions, config, visible_to, &mut catalog)
             .await;
         if pruning_role.is_some() {
             self.client.batch_execute("RESET ROLE;").await?;
         }
         detected?;
         Ok(catalog)
+    }
+
+    /// The roles requests run as (`auth.roles`) that exist, as SQL literals.
+    async fn request_roles(&self, config: &Config) -> Result<Vec<String>, CatalogError> {
+        if !config.auth.enabled {
+            return Ok(Vec::new());
+        }
+        let roles: Vec<&str> = [
+            &config.auth.roles.authenticated,
+            &config.auth.roles.anonymous,
+        ]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+        let rows = self
+            .client
+            .query(
+                "SELECT quote_literal(rolname) FROM pg_roles WHERE rolname = ANY($1) ORDER BY 1",
+                &[&roles],
+            )
+            .await?;
+        Ok(rows.iter().map(|r| r.get(0)).collect())
     }
 
     /// The detection passes of [`inspect_base`](Self::inspect_base), run as the pruning role
@@ -186,18 +241,26 @@ impl<'a> CatalogInspector<'a> {
         schema_names: &[&str],
         extensions: &ExtensionFilter,
         config: &Config,
+        visible_to: &[String],
         catalog: &mut DatabaseCatalog,
     ) -> Result<(), CatalogError> {
         self.inspect_integrations(schema_names, config, catalog)
             .await?;
         catalog.tables = self
-            .inspect_relations(schema_names, extensions, catalog.server_version, config)
+            .inspect_relations(
+                schema_names,
+                extensions,
+                catalog.server_version,
+                config,
+                visible_to,
+            )
             .await?;
         self.inspect_timescale(schema_names, catalog).await?;
         self.inspect_check_enums(schema_names, catalog).await?;
-        self.inspect_functions(schema_names, extensions, catalog)
+        self.inspect_functions(schema_names, extensions, visible_to, catalog)
             .await?;
         self.inspect_value_types(catalog).await?;
+        self.inspect_relation_keys(schema_names, catalog).await?;
 
         // Keys and relations the database cannot declare (views), and function mounts, feed
         // the detection passes below
@@ -661,8 +724,8 @@ impl<'a> CatalogInspector<'a> {
     /// Tables, partitioned tables, views, materialized views and foreign tables of the schema
     /// with their columns, primary keys and foreign keys, in three catalog-wide queries.
     ///
-    /// Like `information_schema`, only relations and columns the current role has some
-    /// privilege on are included. Partitions are left out (their partitioned table is the
+    /// Like `information_schema`, only relations and columns the current role (or one of
+    /// `visible_to`, SQL literals of roles) has some privilege on are included. Partitions are left out (their partitioned table is the
     /// relation to query), and so are relations owned by extensions that are not exposed.
     async fn inspect_relations(
         &self,
@@ -670,8 +733,14 @@ impl<'a> CatalogInspector<'a> {
         extensions: &ExtensionFilter,
         server_version: u32,
         config: &Config,
+        visible_to: &[String],
     ) -> Result<Vec<TableMetadata>, CatalogError> {
         let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
+        let visible = for_any_role(
+            "has_table_privilege({role}c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                    OR has_any_column_privilege({role}c.oid, 'SELECT, INSERT, UPDATE, REFERENCES')",
+            visible_to,
+        );
         let rel_query = format!(
             "SELECT c.oid, c.relname, c.relkind::text, obj_description(c.oid, 'pg_class'),
                     pg_relation_is_updatable(c.oid, true),
@@ -685,8 +754,7 @@ impl<'a> CatalogInspector<'a> {
              WHERE n.nspname = ANY($1)
                AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
                AND NOT c.relispartition
-               AND (has_table_privilege(c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
-                    OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'))
+               AND {visible}
                AND {}
              ORDER BY n.nspname, c.relname",
             not_extension_owned("pg_class", "c.oid")
@@ -777,6 +845,11 @@ impl<'a> CatalogInspector<'a> {
         // the same way. Composite types are recognised by `typtype = 'c'`.
         // The privilege functions are null for a column or table dropped while this runs
         // (concurrent DDL): read as no privilege.
+        let col_visible = for_any_role(
+            "pg_has_role({role}c.relowner, 'USAGE')
+                        OR has_column_privilege({role}a.attrelid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES')",
+            visible_to,
+        );
         let col_query = format!(
                 "SELECT a.attrelid, a.attname,
                         {TYPE_COLUMNS},
@@ -800,8 +873,7 @@ impl<'a> CatalogInspector<'a> {
                    AND NOT c.relispartition
                    AND a.attnum > 0
                    AND NOT a.attisdropped
-                   AND (pg_has_role(c.relowner, 'USAGE')
-                        OR has_column_privilege(a.attrelid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'))
+                   AND {col_visible}
                  ORDER BY a.attrelid, a.attnum");
         let col_rows = self.client.query(&col_query, &[&schemas_vec]).await?;
         for row in col_rows {
@@ -1250,12 +1322,14 @@ impl<'a> CatalogInspector<'a> {
         &self,
         schema_names: &[&str],
         extensions: &ExtensionFilter,
+        visible_to: &[String],
         catalog: &mut DatabaseCatalog,
     ) -> Result<(), CatalogError> {
         let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
         let filter = format!(
             "n.nspname = ANY($1) AND p.prokind = 'f' AND p.provariadic = 0
-             AND has_function_privilege(p.oid, 'EXECUTE') AND {}",
+             AND {} AND {}",
+            for_any_role("has_function_privilege({role}p.oid, 'EXECUTE')", visible_to),
             not_extension_owned("pg_proc", "p.oid")
         );
         let fn_query = format!(
@@ -1460,6 +1534,177 @@ impl<'a> CatalogInspector<'a> {
                 row_argument: row_table.is_some(),
                 deprecation: None,
             });
+        }
+        Ok(())
+    }
+
+    /// Keys of relations without a primary key: declared with `@primaryKey <columns>` in the
+    /// relation's comment, else a materialized view's unique index (the fewest columns), else
+    /// a simple view's base relation's key when the view selects all of its columns (read
+    /// from the view's stored query). graphpg.yaml's `entities.<name>.primary_key` overrides
+    /// any of them.
+    async fn inspect_relation_keys(
+        &self,
+        schema_names: &[&str],
+        catalog: &mut DatabaseCatalog,
+    ) -> Result<(), CatalogError> {
+        let set_key = |table: &mut TableMetadata, key: Vec<String>| {
+            for c in &mut table.columns {
+                c.is_primary_key = key.contains(&c.name);
+            }
+            table.primary_key = key;
+        };
+        for table in catalog.tables.iter_mut() {
+            if !table.primary_key.is_empty() {
+                continue;
+            }
+            let declared = CommentHints::parse(table.description.as_deref()).primary_key;
+            if !declared.is_empty() && declared.iter().all(|c| table.get_column(c).is_some()) {
+                set_key(table, declared);
+            }
+        }
+
+        let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
+        let unique_rows = self
+            .client
+            .query(
+                "SELECT n.nspname::text, c.relname::text,
+                        ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(num, ord)
+                              JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.num ORDER BY k.ord)
+                 FROM pg_index i
+                 JOIN pg_class c ON c.oid = i.indrelid
+                 JOIN pg_class ic ON ic.oid = i.indexrelid
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = ANY($1) AND c.relkind = 'm'
+                   AND i.indisunique AND i.indisvalid AND i.indpred IS NULL AND i.indexprs IS NULL
+                 ORDER BY i.indnatts, ic.relname",
+                &[&schemas_vec],
+            )
+            .await?;
+        for row in unique_rows {
+            let (schema, name, key): (String, String, Vec<String>) =
+                (row.get(0), row.get(1), row.get(2));
+            if let Some(t) = catalog
+                .tables
+                .iter_mut()
+                .find(|t| t.schema == schema && t.name == name && t.primary_key.is_empty())
+            {
+                set_key(t, key);
+            }
+        }
+
+        // An automatically updatable view has one base relation and keeps its rows one for
+        // one. Each of its updatable columns is a column of that relation, which the stored
+        // query records in its target entries (`resorigtbl`, `resorigcol`); entries of
+        // sub-selects are told apart by being ambiguous or not updatable.
+        let view_rows = self
+            .client
+            .query(
+                r"WITH v AS (
+                     SELECT c.oid, n.nspname::text AS schema, c.relname::text AS name, r.ev_action::text AS tree
+                     FROM pg_class c
+                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                     JOIN pg_rewrite r ON r.ev_class = c.oid AND r.rulename = '_RETURN'
+                     WHERE n.nspname = ANY($1) AND c.relkind = 'v'
+                       AND pg_relation_is_updatable(c.oid, false) & 20 = 20
+                 ), entries AS (
+                     SELECT DISTINCT v.oid, v.schema, v.name, m[1]::int2 AS attnum, m[2]::oid AS base, m[3]::int2 AS basecol
+                     FROM v, regexp_matches(v.tree,
+                         ':resno (\d+) :resname (?:\\.|\S)+ :ressortgroupref \d+ :resorigtbl (\d+) :resorigcol (\d+) :resjunk false', 'g') m
+                 ), mapped AS (
+                     SELECT e.* FROM entries e
+                     WHERE (SELECT count(*) FROM entries o WHERE o.oid = e.oid AND o.attnum = e.attnum) = 1
+                       AND pg_column_is_updatable(e.oid, e.attnum, false)
+                 )
+                 SELECT m.schema, m.name, bn.nspname::text, bc.relname::text,
+                        array_agg(a.attname::text ORDER BY a.attnum), array_agg(ba.attname::text ORDER BY a.attnum)
+                 FROM mapped m
+                 JOIN pg_attribute a ON a.attrelid = m.oid AND a.attnum = m.attnum
+                 JOIN pg_attribute ba ON ba.attrelid = m.base AND ba.attnum = m.basecol
+                 JOIN pg_class bc ON bc.oid = m.base
+                 JOIN pg_namespace bn ON bn.oid = bc.relnamespace
+                 GROUP BY m.oid, m.schema, m.name, bn.nspname, bc.relname
+                 HAVING count(DISTINCT m.base) = 1",
+                &[&schemas_vec],
+            )
+            .await?;
+        // (schema, view, base schema, base relation, [(base column, view column)])
+        type SimpleView = (String, String, String, String, Vec<(String, String)>);
+        let mut views: Vec<SimpleView> = view_rows
+            .iter()
+            .map(|row| {
+                let columns: Vec<String> = row.get(4);
+                let base_columns: Vec<String> = row.get(5);
+                (
+                    row.get(0),
+                    row.get(1),
+                    row.get(2),
+                    row.get(3),
+                    base_columns.into_iter().zip(columns).collect(),
+                )
+            })
+            .collect();
+        // Keys of base tables outside the inspected schemas
+        let bases: Vec<String> = views
+            .iter()
+            .map(|(_, _, schema, name, _)| format!("{schema}.{name}"))
+            .collect();
+        let mut base_keys: HashMap<(String, String), Vec<String>> = HashMap::new();
+        if !bases.is_empty() {
+            for row in self
+                .client
+                .query(
+                    "SELECT n.nspname::text, c.relname::text,
+                            ARRAY(SELECT a.attname::text FROM unnest(con.conkey) WITH ORDINALITY k(num, ord)
+                                  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.num ORDER BY k.ord)
+                     FROM pg_constraint con
+                     JOIN pg_class c ON c.oid = con.conrelid
+                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE con.contype = 'p' AND format('%s.%s', n.nspname, c.relname) = ANY($1)",
+                    &[&bases],
+                )
+                .await?
+            {
+                base_keys.insert((row.get(0), row.get(1)), row.get(2));
+            }
+        }
+        // A view over a view takes the inner view's key once it is known
+        loop {
+            let mut changed = false;
+            views.retain(|(schema, name, base_schema, base_name, columns)| {
+                let key = catalog
+                    .find_table(base_schema, base_name)
+                    .map(|t| t.primary_key.clone())
+                    .filter(|k| !k.is_empty())
+                    .or_else(|| {
+                        base_keys
+                            .get(&(base_schema.clone(), base_name.clone()))
+                            .cloned()
+                    });
+                let Some(key) = key else {
+                    return true;
+                };
+                let view_key: Option<Vec<String>> = key
+                    .iter()
+                    .map(|k| columns.iter().find(|(b, _)| b == k).map(|(_, v)| v.clone()))
+                    .collect();
+                if let (Some(view_key), Some(t)) = (
+                    view_key,
+                    catalog
+                        .tables
+                        .iter_mut()
+                        .find(|t| t.schema == *schema && t.name == *name),
+                ) {
+                    if t.primary_key.is_empty() {
+                        set_key(t, view_key);
+                        changed = true;
+                    }
+                }
+                false
+            });
+            if !changed {
+                break;
+            }
         }
         Ok(())
     }

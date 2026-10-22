@@ -3716,7 +3716,7 @@ impl DatabaseCatalog {
     }
 
     /// Fields of `table`'s object type, in order: Relay `id` and `databaseId` (single-column
-    /// primary key), columns, to-one relations (per foreign key: `<column without _id>` and
+    /// primary key), columns (a key column under its own name too, unless that is `id`), to-one relations (per foreign key: `<column without _id>` and
     /// `<targetType>`, or the configured name), to-many relations and their connections,
     /// many-to-many relations, the exclusive-arc `target`, mounted functions and computed
     /// columns. The first field claiming a name wins.
@@ -3740,10 +3740,9 @@ impl DatabaseCatalog {
                 push("databaseId".to_string(), FieldKind::DatabaseId);
             }
         }
+        // A key column keeps its own field (`patientId`), the name filters, conditions and
+        // orderings use, beside `databaseId`; a column named `id` gives way to the Relay id.
         for col in table.visible_columns() {
-            if node && col.is_primary_key {
-                continue;
-            }
             push(col.field_name.clone(), FieldKind::Column(col.name.clone()));
         }
         if table.has_row_version() {
@@ -3997,7 +3996,8 @@ pub fn graphql_type_name(value: &str) -> String {
 }
 
 /// Hints in an SQL comment, each on a line of its own: `@name <GraphQL name>` names the
-/// object in the schema, `@deprecated [reason]` deprecates its fields. Optional, and an
+/// object in the schema, `@deprecated [reason]` deprecates its fields, `@primaryKey <columns>`
+/// declares the key of a relation without one (a view, a foreign table). Optional, and an
 /// alternative to the config (which wins over them): versioned with the migrations that
 /// create the objects.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -4006,6 +4006,8 @@ pub struct CommentHints {
     pub description: Option<String>,
     pub name: Option<String>,
     pub deprecated: Option<String>,
+    /// `@primaryKey a, b`: column names (empty without the hint).
+    pub primary_key: Vec<String>,
 }
 
 impl CommentHints {
@@ -4033,6 +4035,12 @@ impl CommentHints {
                 .filter(|n| is_graphql_name(n))
             {
                 hints.name = Some(name.to_string());
+            } else if let Some(columns) = trimmed.strip_prefix("@primaryKey ") {
+                hints.primary_key = columns
+                    .split(|c: char| c == ',' || c.is_whitespace())
+                    .filter(|c| !c.is_empty())
+                    .map(str::to_string)
+                    .collect();
             } else {
                 kept.push(line);
             }

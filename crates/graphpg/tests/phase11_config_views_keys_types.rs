@@ -20,7 +20,7 @@ use tokio_postgres::NoTls;
 use tower::ServiceExt;
 
 const SCHEMA: &str = "engine_fixture";
-const FIXTURE_VERSION: &str = "engine_fixture v3";
+const FIXTURE_VERSION: &str = "engine_fixture v4";
 
 const FIXTURE_SQL: &str = r#"
 CREATE SCHEMA engine_fixture;
@@ -69,6 +69,18 @@ CREATE TABLE "Odd ""Names""" ("Key" int PRIMARY KEY, "Mixed Case" text, "quote""
 CREATE VIEW book_tags AS SELECT b.id AS book_id, t.tag FROM books b, unnest(b.tags) AS t(tag);
 CREATE VIEW cheap_books AS SELECT id, author_id, title, price FROM books WHERE price < 10;
 CREATE MATERIALIZED VIEW author_stats AS SELECT author_id, count(*)::int AS book_count FROM books GROUP BY author_id;
+
+-- Keys of relations without a primary key, and a key column not named `id`
+CREATE TABLE clients (client_id int PRIMARY KEY, name text NOT NULL);
+INSERT INTO clients VALUES (1, 'Ann'), (2, 'Bob');
+CREATE VIEW client_names AS SELECT client_id, name FROM clients;
+CREATE VIEW a_clients AS SELECT * FROM client_names WHERE name LIKE 'A%';
+CREATE VIEW client_refs AS SELECT client_id AS ref, name FROM clients;
+CREATE VIEW client_samples AS SELECT name, (SELECT c.client_id FROM clients c ORDER BY 1 LIMIT 1) AS client_id FROM clients;
+CREATE VIEW client_totals AS SELECT client_id, count(*)::int AS n FROM clients GROUP BY client_id;
+COMMENT ON VIEW client_totals IS E'Per client\n@primaryKey client_id';
+CREATE MATERIALIZED VIEW client_index AS SELECT client_id, name FROM clients;
+CREATE UNIQUE INDEX client_index_key ON client_index (client_id);
 
 -- Table-valued function mounted by the config; computed column renamed by the config
 CREATE FUNCTION review_summary(p_book bigint, min_stars int DEFAULT 1)
@@ -888,7 +900,7 @@ types:
 }
 
 #[tokio::test]
-async fn test_without_config_views_have_no_keys() {
+async fn test_without_config_views_have_detected_keys() {
     let env = setup_with("").await;
     let query = env.type_sdl("type", "Query");
     // Keyless relations: lists and connections, no single-row lookups
@@ -896,10 +908,9 @@ async fn test_without_config_views_have_no_keys() {
         query.contains("  bookTags: [BookTag!]!") && query.contains("  cheapBooks: [CheapBook!]!"),
         "{query}"
     );
-    assert!(
-        !query.contains("  cheapBook(") && !query.contains("  bookTag("),
-        "{query}"
-    );
+    assert!(!query.contains("  bookTag("), "{query}");
+    // A simple view over a table has the table's key
+    assert!(query.contains("  cheapBook("), "{query}");
     assert!(env.sdl.contains("type Author implements Node"));
     // Default enum names: the type's name, and <Type><Field> for CHECK-closed columns
     assert!(
@@ -1267,4 +1278,72 @@ entities:
     // Through a relation it is still there
     let data = env.run("{ book(id: 1) { author { fullName } } }").await;
     assert_eq!(data["book"]["author"]["fullName"], "Ada Lovelace", "{data}");
+}
+
+#[tokio::test]
+async fn test_keys_are_detected_and_named_like_their_columns() {
+    let env = setup_with("").await;
+    // A key column not named `id` keeps its name beside `databaseId`, the name filters,
+    // conditions and orderings use
+    let client = env.type_sdl("type", "Client");
+    assert!(
+        client.contains("  databaseId: Int!") && client.contains("  clientId: Int!"),
+        "{client}"
+    );
+    let data = env
+        .run(
+            r#"{ clientsConnection(filter: { clientId: { in: [1] } }, condition: { clientId: 1 }, orderBy: CLIENT_ID_DESC) {
+                nodes { clientId databaseId name }
+            } }"#,
+        )
+        .await;
+    assert_eq!(
+        data["clientsConnection"]["nodes"],
+        json!([{ "clientId": 1, "databaseId": 1, "name": "Ann" }])
+    );
+
+    // Views over one relation: its key, under the view's names; a view over such a view too
+    for (ty, key) in [("ClientName", "clientId"), ("ClientRef", "ref")] {
+        let sdl = env.type_sdl("type", ty);
+        assert!(
+            sdl.contains(" implements Node") && sdl.contains(&format!("  {key}: Int")),
+            "{sdl}"
+        );
+    }
+    assert!(
+        env.sdl.contains("type AClient implements Node"),
+        "{}",
+        env.sdl
+    );
+    // Not a key: a column of a sub-select, a grouped view's column without a declaration
+    assert!(!env
+        .type_sdl("type", "ClientSample")
+        .contains("implements Node"));
+    // Declared in the comment, which keeps its text
+    let totals = env.type_sdl("type", "ClientTotal");
+    assert!(
+        totals.contains(" implements Node") && !env.sdl.contains("@primaryKey"),
+        "{totals}"
+    );
+    assert!(env.sdl.contains("Per client"));
+    // A materialized view's unique index
+    assert!(env
+        .type_sdl("type", "ClientIndex")
+        .contains(" implements Node"));
+
+    let data = env
+        .run(r#"{ clientName(clientId: 2) { name } clientRef(ref: 1) { name } }"#)
+        .await;
+    assert_eq!(
+        data,
+        json!({ "clientName": { "name": "Bob" }, "clientRef": { "name": "Ann" } })
+    );
+
+    // The config overrides a detected key
+    let env = setup_with("entities: { client_names: { primary_key: [name] } }").await;
+    assert!(env
+        .type_sdl("type", "ClientName")
+        .contains("  name: String"));
+    let data = env.run(r#"{ clientName(name: "Ann") { clientId } }"#).await;
+    assert_eq!(data["clientName"]["clientId"], 1);
 }

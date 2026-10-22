@@ -844,7 +844,10 @@ impl ExecutionEngine {
             .client()
             .query_one(&statement, &Self::param_refs(&params))
             .await?;
-        Ok(row.get("data"))
+        // A function returning SQL NULL (e.g. a write refused for a stale revision) is JSON null, not a panic.
+        Ok(row
+            .get::<_, Option<serde_json::Value>>("data")
+            .unwrap_or(serde_json::Value::Null))
     }
 
     /// The parameters of `query`, its row count estimates filled in.

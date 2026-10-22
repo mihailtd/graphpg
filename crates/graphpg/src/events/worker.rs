@@ -357,7 +357,7 @@ pub fn backoff(hook: &WebhookConfig, attempts: i32) -> Duration {
 /// The Standard Webhooks signature of `body`: `v1,<base64 HMAC-SHA256 of "id.timestamp.body">`.
 /// A `whsec_` secret is base64 of the key; any other text is the key itself.
 pub fn sign(secret: &str, id: &str, timestamp: i64, body: &str) -> String {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let b64 = base64::engine::general_purpose::STANDARD;
     let key = secret
         .strip_prefix("whsec_")

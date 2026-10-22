@@ -14,7 +14,7 @@ use serde_json::json;
 use tokio_postgres::NoTls;
 
 const SCHEMA: &str = "function_fixture";
-const FIXTURE_VERSION: &str = "function_fixture v3";
+const FIXTURE_VERSION: &str = "function_fixture v4";
 
 const FIXTURE_SQL: &str = r#"
 CREATE SCHEMA function_fixture;
@@ -74,6 +74,11 @@ CREATE FUNCTION bump_team(team int) RETURNS SETOF members LANGUAGE sql
     AS $$ UPDATE function_fixture.members SET score = score + 10 WHERE team_id = team RETURNING * $$;
 CREATE FUNCTION reset_scores() RETURNS void LANGUAGE sql AS $$ UPDATE function_fixture.members SET score = 0 $$;
 CREATE FUNCTION total_score() RETURNS int LANGUAGE sql VOLATILE AS $$ SELECT sum(score)::int FROM function_fixture.members $$;
+-- Writes that answer SQL NULL: a refused write (no row) and a compare-and-swap that lost (no value)
+CREATE FUNCTION bump_if(member_id int, expected int) RETURNS members LANGUAGE sql
+    AS $$ UPDATE function_fixture.members SET score = score + 1 WHERE id = member_id AND score = expected RETURNING * $$;
+CREATE FUNCTION swap_state(expected int) RETURNS jsonb LANGUAGE sql VOLATILE
+    AS $$ SELECT CASE WHEN expected = 0 THEN jsonb_build_object('revision', 1) END $$;
 
 -- Not exposed: triggers, polymorphic functions, procedures; of overloads only the first
 CREATE FUNCTION tg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
@@ -409,6 +414,24 @@ async fn test_volatile_functions_are_mutations() {
     assert_eq!(data["after"], 0);
     let data = env.run("{ member(id: 1) { score } }").await;
     assert_eq!(data["member"]["score"], 5, "rolled back");
+}
+
+#[tokio::test]
+async fn test_mutations_answering_sql_null_are_json_null() {
+    let env = setup().await;
+    // A write the function refuses answers NULL: the field is null, the request does not fail.
+    let data = env
+        .run_rolled_back(
+            r#"mutation {
+                refused: bumpIf(memberId: "TWVtYmVyOjE=", expected: -1) { name score }
+                lost: swapState(expected: 3)
+                won: swapState(expected: 0)
+            }"#,
+        )
+        .await;
+    assert_eq!(data["refused"], serde_json::Value::Null);
+    assert_eq!(data["lost"], serde_json::Value::Null);
+    assert_eq!(data["won"], json!({ "revision": 1 }));
 }
 
 #[tokio::test]

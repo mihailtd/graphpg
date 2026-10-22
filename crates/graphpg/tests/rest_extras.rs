@@ -152,8 +152,12 @@ async fn views_are_resources_that_follow_their_updatability() {
     assert_eq!(totals.ok()[0]["orders"], 2);
     assert_eq!(number(&totals.ok()[0]["total"]), 150.5);
 
-    // a view has no key (PostgreSQL cannot give it one), so no single-row read
-    get(&app, "/rest/paid_orders/1")
+    // a simple view has its table's key, so a single-row read; a grouped view has none
+    assert_eq!(
+        get(&app, "/rest/paid_orders/1").await.ok()["customer"],
+        "ada"
+    );
+    get(&app, "/rest/customer_totals/ada")
         .await
         .assert_problem(StatusCode::BAD_REQUEST, "BAD_REQUEST");
     // materialized views are read like any other
@@ -195,14 +199,17 @@ async fn views_are_resources_that_follow_their_updatability() {
         let reply = call(&app, method, uri, &[], body).await;
         reply.assert_problem(StatusCode::FORBIDDEN, "FORBIDDEN");
     }
-    // a view without a key has no row to address, so no update or delete either (until a
-    // key is declared)
-    for (method, body) in [
-        ("PATCH", Some(json!({ "customer": "x" }))),
-        ("DELETE", None),
-    ] {
-        let reply = call(&app, method, "/rest/paid_orders/1", &[], body).await;
-        reply.assert_problem(StatusCode::FORBIDDEN, "FORBIDDEN");
+    // a simple view has its table's key: its rows are updated by key
+    for customer in ["x", "ada"] {
+        let reply = call(
+            &app,
+            "PATCH",
+            "/rest/paid_orders/1",
+            &[],
+            Some(json!({ "customer": customer })),
+        )
+        .await;
+        assert_eq!(reply.ok()["customer"], customer);
     }
     // aggregates and search work on views
     let agg = get(&app, "/rest/paid_orders/aggregate?sum=total").await;
@@ -1053,13 +1060,18 @@ async fn openapi_describes_views_aggregates_functions_and_search() {
         }
     }
 
-    // views are resources; only the updatable ones can be written; none has a key
+    // views are resources; only the updatable ones can be written; a simple view has its
+    // table's key, a grouped one none
     assert!(
         paths.contains_key("/rest/paid_orders") && paths.contains_key("/rest/customer_summary")
     );
     assert!(
-        !paths.contains_key("/rest/paid_orders/{key}"),
-        "a view has no key"
+        paths.contains_key("/rest/paid_orders/{key}"),
+        "a simple view has its table's key"
+    );
+    assert!(
+        !paths.contains_key("/rest/customer_totals/{key}"),
+        "a grouped view has no key"
     );
     assert!(
         paths["/rest/customer_totals"].get("post").is_none(),

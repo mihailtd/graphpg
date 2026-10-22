@@ -58,7 +58,7 @@ jobs:
           fi
       # v0.6.3, not v0.6.4: GitHub stopped serving v0.6.4's commit (261c62c) by SHA on 2026-10-15
       # (its tag still works). They differ only in the Node runtime (20 → 24).
-      - uses: moonrepo/setup-toolchain@8794f0318b9df4a43a5ddc23cefd16f595b423dd # v0.6.3
+      - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
       # Once, before any task: pnpm-workspace.yaml makes stale dependencies an error rather
@@ -113,7 +113,7 @@ jobs:
         run: ln -sfn "$CI_TARGET_CACHE" target
       # v0.6.3, not v0.6.4: GitHub stopped serving v0.6.4's commit (261c62c) by SHA on 2026-10-15
       # (its tag still works). They differ only in the Node runtime (20 → 24).
-      - uses: moonrepo/setup-toolchain@8794f0318b9df4a43a5ddc23cefd16f595b423dd # v0.6.3
+      - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
       # Once, before any task: pnpm-workspace.yaml makes stale dependencies an error rather
@@ -123,7 +123,7 @@ jobs:
       # restored (`graphpg-ui:build` would also compile them here, before the cache exists)
       - name: Build UI assets
         run: moon run graphiql-ui:build
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.98.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -162,7 +162,7 @@ jobs:
       # the link to the runner's cache survives as a fresh link)
       - if: runner.environment == 'self-hosted'
         run: ln -sfn "$CI_TARGET_CACHE" target
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.98.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -217,7 +217,7 @@ jobs:
         run: ln -sfn "$CI_TARGET_CACHE" target
       # v0.6.3, not v0.6.4: GitHub stopped serving v0.6.4's commit (261c62c) by SHA on 2026-10-15
       # (its tag still works). They differ only in the Node runtime (20 → 24).
-      - uses: moonrepo/setup-toolchain@8794f0318b9df4a43a5ddc23cefd16f595b423dd # v0.6.3
+      - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
       # Once, before any task: pnpm-workspace.yaml makes stale dependencies an error rather

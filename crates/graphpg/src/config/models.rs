@@ -941,7 +941,8 @@ pub struct RbacConfig {
     #[serde(default, deserialize_with = "switch")]
     pub enabled: bool,
     /// Optional PostgreSQL role to switch to (`SET ROLE`) during schema inspection.
-    /// If None, privileges are checked against the currently connected database user/role.
+    /// If None, privileges are checked against `auth.roles.authenticated` when authentication
+    /// is enabled, else against the currently connected database user/role.
     #[serde(default)]
     pub role: Option<String>,
 }

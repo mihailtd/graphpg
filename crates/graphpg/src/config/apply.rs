@@ -153,7 +153,14 @@ pub fn apply_structure(catalog: &mut DatabaseCatalog, config: &Config) -> Result
         if entity.primary_key.is_empty() {
             continue;
         }
-        if !table.primary_key.is_empty() && table.primary_key != entity.primary_key {
+        // A table's own key stands; a key detected for a view or declared in a comment is
+        // overridden
+        let constrained = table.kind != RelationKind::ForeignTable
+            && table
+                .constraints
+                .iter()
+                .any(|c| c.kind == ConstraintKind::PrimaryKey);
+        if constrained && !table.primary_key.is_empty() && table.primary_key != entity.primary_key {
             errors.push(format!(
                 "{path}.primary_key: `{name}` already has primary key ({})",
                 table.primary_key.join(", ")

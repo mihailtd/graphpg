@@ -24,7 +24,7 @@ INSERT INTO orders VALUES
     (5, 'cyd', 'cancelled', 10.00, 1, '2026-02-20 08:00+00'),
     (6, 'cyd', 'paid', 200.00, 5, '2026-03-01 12:00+00');
 
--- Views have no primary key: they are read-only
+-- Views: a simple one has its table's key, a grouped one none
 CREATE VIEW paid_orders AS
     SELECT id, customer, total, created_at FROM orders WHERE status = 'paid';
 CREATE VIEW customer_totals AS

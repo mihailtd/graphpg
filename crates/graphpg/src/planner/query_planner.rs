@@ -2773,7 +2773,25 @@ impl<'a> PlanningContext<'a> {
                         selections.total_counts.push((key, estimate));
                     }
                 }
-                "pageInfo" => selections.include_page_info = true,
+                "pageInfo" => {
+                    selections.include_page_info = true;
+                    let key = conn_sel.response_key().to_string();
+                    let at = match selections.page_info.iter().position(|(k, _)| *k == key) {
+                        Some(at) => at,
+                        None => {
+                            selections.page_info.push((key, Vec::new()));
+                            selections.page_info.len() - 1
+                        }
+                    };
+                    // Fragments and repeated selections of one key merge, as in GraphQL
+                    let fields = &mut selections.page_info[at].1;
+                    for f in &conn_sel.children {
+                        let alias = f.response_key().to_string();
+                        if !fields.iter().any(|(a, _)| *a == alias) {
+                            fields.push((alias, f.name.clone()));
+                        }
+                    }
+                }
                 "aggregates" => {
                     let key = conn_sel.response_key().to_string();
                     if selections.aggregates.iter().any(|a| a.field_alias == key) {

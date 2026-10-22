@@ -296,3 +296,62 @@ async fn test_rbac_and_federation_combined() {
     assert!(schema.as_ref().get_object("User").is_some());
     assert!(schema.as_ref().get_object("Forum").is_none());
 }
+
+/// The documented auth setup: the engine logs in as a `NOINHERIT` role that holds no privileges
+/// and requests run as `auth.roles.authenticated`. The schema is that role's, not the login's.
+#[tokio::test]
+async fn test_noinherit_login_role_exposes_what_request_roles_may_access() {
+    common::ensure_forum_fixture().await;
+    let (client, connection) = tokio_postgres::connect(common::db_url(), NoTls)
+        .await
+        .expect("Failed to connect to local PostgreSQL 18.6");
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("connection error: {}", e);
+        }
+    });
+    ensure_test_roles(&client).await;
+    client
+        .batch_execute(
+            "DO $$ BEGIN
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'rbac_authenticator') THEN
+                    CREATE ROLE rbac_authenticator NOINHERIT;
+                END IF;
+            END $$;
+            GRANT rbac_reader_role TO rbac_authenticator;",
+        )
+        .await
+        .unwrap();
+
+    let inspect = |rbac: bool, auth: bool| {
+        let client = &client;
+        async move {
+            let mut config = Config::default();
+            config.rbac.enabled = rbac;
+            config.auth.enabled = auth;
+            config.auth.roles.authenticated = Some("rbac_reader_role".to_string());
+            client
+                .batch_execute("SET ROLE rbac_authenticator")
+                .await
+                .unwrap();
+            let catalog = CatalogInspector::new(client)
+                .inspect_schema_with_config("app_public", &config)
+                .await;
+            client.batch_execute("RESET ROLE").await.unwrap();
+            SchemaBuilder::generate_sdl(&catalog.expect("inspects"))
+        }
+    };
+
+    // Without auth, the login role's privileges: none
+    assert!(!inspect(false, false).await.contains("type User"));
+    // Without pruning, everything the request role may access, writes included (the database
+    // refuses them)
+    let sdl = inspect(false, true).await;
+    assert!(sdl.contains("type User"), "{sdl}");
+    assert!(sdl.contains("createUser("));
+    assert!(!sdl.contains("type Forum"));
+    // Pruning without `rbac.role` prunes as the request role
+    let sdl = inspect(true, true).await;
+    assert!(sdl.contains("type User"));
+    assert!(!sdl.contains("createUser("));
+}

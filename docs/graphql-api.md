@@ -148,7 +148,7 @@ type Customer implements Node {
 type Query { node(id: ID!): Node }
 ```
 
-- **`id`** is the stable client-cache key and the argument of `node(id:)`; **`databaseId`** is the raw database value.
+- **`id`** is the stable client-cache key and the argument of `node(id:)`; **`databaseId`** is the raw database value. A key column not named `id` is also a field of its own (`patientId`), the name filters, conditions and `orderBy` use.
 - `node(id:)` decodes the ID in memory, finds the table, and compiles one primary-key lookup (`WHERE id = $1 LIMIT 1`); there is no `UNION ALL` across tables.
   ```graphql
   query ($id: ID!) { node(id: $id) { __typename id ... on Customer { name } ... on Order { total } } }
