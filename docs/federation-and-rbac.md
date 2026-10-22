@@ -98,7 +98,7 @@ With `subscriptions.enabled`, the subgraph's schema has a `Subscription` type, s
 
 ## Role-Based Schema Pruning (RBAC)
 
-> With `rbac.enabled: true`, pruning applies to **every API**: the GraphQL schema, the REST resources and operations, and the OpenAPI document are all generated from the same catalog. A table the role has no privilege on has no REST resource and no path in the document; one it cannot `SELECT` has no `GET` or search; one it cannot `INSERT` into, `UPDATE` or `DELETE` from has no `POST`, `PATCH` / `PUT` or `DELETE`; a column it cannot read is not in the rows or the schemas. Without `rbac.enabled` nothing is pruned (the database still refuses what the role may not do).
+> With `rbac.enabled: true`, pruning applies to **every API**: the GraphQL schema, the REST resources and operations, and the OpenAPI document are all generated from the same catalog. A table the role has no privilege on has no REST resource and no path in the document; one it cannot `SELECT` has no `GET` or search; one it cannot `INSERT` into, `UPDATE` or `DELETE` from has no `POST`, `PATCH` / `PUT` or `DELETE`; a column it cannot read is not in the rows or the schemas. Without `rbac.enabled` no operation or column is pruned (the database still refuses what the role may not do); a relation or function is left out only when neither the login role nor a request role (`auth.roles`) has any privilege on it. With `rbac.enabled` and no `rbac.role`, the schema is pruned as `auth.roles.authenticated` when [authentication](authentication.md) is on, else as the login role.
 
 ### How It Works
 Rather than maintaining a custom permissions DSL or metadata rules inside the GraphQL engine, graphpg uses **PostgreSQL itself as the single source of truth**.

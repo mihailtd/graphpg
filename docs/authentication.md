@@ -70,6 +70,8 @@ CREATE POLICY editors_see_their_department ON documents FOR SELECT TO authentica
          AND department = current_setting('request.jwt.claim.department', true));
 ```
 
+The API is built from what the request roles (`roles.authenticated` and `roles.anonymous`) may access, not from the login role's privileges: a table only `authenticated` has a privilege on is exposed, though `authenticator` holds none. With [`rbac.enabled`](federation-and-rbac.md), the schema is pruned to the privileges of `rbac.role`, or of `roles.authenticated` when `rbac.role` is unset.
+
 If `roles.authenticated` is unset, requests run as graphpg's login role. RLS does not apply to superusers or `BYPASSRLS` roles, and only applies to table owners with `FORCE ROW LEVEL SECURITY`. graphpg warns at startup when the login role bypasses RLS.
 
 Claims are data, never SQL: they are bound as parameters of `set_config`. A claim never replaces `claims_setting` or a mapped setting through `prefix` (a claim named `claims` under the prefix `request.jwt.` is skipped), and a token whose claims contain a NUL character, which PostgreSQL settings cannot hold, is refused (`401`).
