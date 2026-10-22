@@ -25,7 +25,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Mutations: CRUD, upsert | Yes | Yes | Yes |
 | Nested writes (create / connect / update / sync) | Yes | Plugin | Yes (nested inserts) |
 | Functions as fields (queries and mutations) | Yes, by volatility | Yes | Yes |
-| Views, materialized views, declared keys | Yes (keys and relations in YAML) | Yes (smart comments) | Yes |
+| Views, materialized views, declared keys | Yes (keys detected, or declared in a comment or YAML; relations in YAML) | Yes (smart comments) | Yes |
 | Composite types, enums, ranges, domains | Yes | Mostly | Partial |
 | Row-Level Security | JWT claims set as session settings; policies in PostgreSQL | Through `pgSettings`; policies in PostgreSQL | Role permissions in metadata |
 | Schema pruned by database privileges | Yes (`GRANT`s) | Yes | Per role from metadata |
@@ -95,7 +95,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | JSON column access | The whole value; JSON-key filters; a `path` argument in GraphQL | `->` / `->>` in `select`, filters and `order` |
 | Full-text search | `POST …/search/full-text` (ranked, `tsvector`) and the filter inputs | `fts` / `plfts` / `phfts` / `wfts` operators |
 | Other search | Fuzzy (`pg_trgm`), semantic (`pgvector`), BM25, hybrid, nearest (PostGIS), and `GET /rest/search` across tables; scored, best first | No (build with functions) |
-| Views and materialized views | Yes (writable where PostgreSQL can update them; keys declared in YAML) | Yes |
+| Views and materialized views | Yes (writable where PostgreSQL can update them; keys detected or declared) | Yes |
 | Spatial data | `GeoJSON` values, filters, nearest search | Through PostGIS and GeoJSON media-type handlers |
 
 ### Writing

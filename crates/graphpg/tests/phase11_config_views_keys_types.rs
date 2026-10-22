@@ -20,7 +20,7 @@ use tokio_postgres::NoTls;
 use tower::ServiceExt;
 
 const SCHEMA: &str = "engine_fixture";
-const FIXTURE_VERSION: &str = "engine_fixture v4";
+const FIXTURE_VERSION: &str = "engine_fixture v5";
 
 const FIXTURE_SQL: &str = r#"
 CREATE SCHEMA engine_fixture;
@@ -79,6 +79,14 @@ CREATE VIEW client_refs AS SELECT client_id AS ref, name FROM clients;
 CREATE VIEW client_samples AS SELECT name, (SELECT c.client_id FROM clients c ORDER BY 1 LIMIT 1) AS client_id FROM clients;
 CREATE VIEW client_totals AS SELECT client_id, count(*)::int AS n FROM clients GROUP BY client_id;
 COMMENT ON VIEW client_totals IS E'Per client\n@primaryKey client_id';
+-- A join written through rules: PostgreSQL counts it as updatable, but its rows repeat
+CREATE TABLE client_visits (id int PRIMARY KEY, client_id int REFERENCES clients);
+INSERT INTO client_visits VALUES (1, 1), (2, 1), (3, 2);
+CREATE VIEW visiting_clients AS SELECT c.* FROM clients c JOIN client_visits v ON v.client_id = c.client_id;
+CREATE RULE visiting_clients_update AS ON UPDATE TO visiting_clients
+    DO INSTEAD UPDATE clients SET name = NEW.name WHERE client_id = OLD.client_id;
+CREATE RULE visiting_clients_delete AS ON DELETE TO visiting_clients
+    DO INSTEAD DELETE FROM clients WHERE client_id = OLD.client_id;
 CREATE MATERIALIZED VIEW client_index AS SELECT client_id, name FROM clients;
 CREATE UNIQUE INDEX client_index_key ON client_index (client_id);
 
@@ -1315,10 +1323,23 @@ async fn test_keys_are_detected_and_named_like_their_columns() {
         "{}",
         env.sdl
     );
-    // Not a key: a column of a sub-select, a grouped view's column without a declaration
+    // Not a key: a column of a sub-select, a grouped view's column without a declaration, a
+    // join's key column when rules make the join updatable (its rows repeat)
     assert!(!env
         .type_sdl("type", "ClientSample")
         .contains("implements Node"));
+    let visiting = env.catalog.find_table(SCHEMA, "visiting_clients").unwrap();
+    assert!(
+        visiting.primary_key.is_empty(),
+        "{:?}",
+        visiting.primary_key
+    );
+    let data = env.run(r#"{ visitingClients { clientId } }"#).await;
+    assert_eq!(
+        data["visitingClients"].as_array().unwrap().len(),
+        3,
+        "client 1 twice"
+    );
     // Declared in the comment, which keeps its text
     let totals = env.type_sdl("type", "ClientTotal");
     assert!(

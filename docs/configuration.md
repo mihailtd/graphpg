@@ -420,7 +420,7 @@ Optional lines in SQL comments, versioned with your migrations:
 
 - `@name <GraphQLName>` names a table's type, a column's field, a function's field or a type.
 - `@deprecated [reason]` deprecates a column's field, a function's fields, or a table's root fields and the relation fields leading to it.
-- `@primaryKey <column>[, <column>...]` declares the key of a relation without one: a view, a materialized view or a foreign table (`COMMENT ON VIEW programme_adherence IS '@primaryKey patient_id'`). See [keys of views](schema-mapping.md#keys-of-views).
+- `@primaryKey <column>[, <column>...]` declares the key of a relation without one: a view, a materialized view or a foreign table (`COMMENT ON VIEW programme_adherence IS '@primaryKey patient_id'`). See [keys of views](views.md#keys).
 
 The config (`deprecated:` and `primary_key:` on entities, columns and functions) wins over comment hints. A table or column's SQL comment is also its GraphQL description.
 

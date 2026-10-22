@@ -1596,7 +1596,9 @@ impl<'a> CatalogInspector<'a> {
         // An automatically updatable view has one base relation and keeps its rows one for
         // one. Each of its updatable columns is a column of that relation, which the stored
         // query records in its target entries (`resorigtbl`, `resorigcol`); entries of
-        // sub-selects are told apart by being ambiguous or not updatable.
+        // sub-selects are told apart by being ambiguous or not updatable. `DO INSTEAD` rules
+        // on updates or deletes make any view (a join, a grouping) count as updatable, so a
+        // view with one is left out.
         let view_rows = self
             .client
             .query(
@@ -1607,6 +1609,8 @@ impl<'a> CatalogInspector<'a> {
                      JOIN pg_rewrite r ON r.ev_class = c.oid AND r.rulename = '_RETURN'
                      WHERE n.nspname = ANY($1) AND c.relkind = 'v'
                        AND pg_relation_is_updatable(c.oid, false) & 20 = 20
+                       AND NOT EXISTS (SELECT 1 FROM pg_rewrite o
+                                       WHERE o.ev_class = c.oid AND o.is_instead AND o.ev_type IN ('2', '4'))
                  ), entries AS (
                      SELECT DISTINCT v.oid, v.schema, v.name, m[1]::int2 AS attnum, m[2]::oid AS base, m[3]::int2 AS basecol
                      FROM v, regexp_matches(v.tree,
