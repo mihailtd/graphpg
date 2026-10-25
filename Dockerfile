@@ -15,7 +15,7 @@ RUN pnpm --filter @graphpg/graphiql-ui run build
 
 # --- Build: a fully static musl binary -------------------------------------------------
 # Base images are pinned by digest; Dependabot proposes updates.
-FROM rust:1.99.0-alpine@sha256:0cce0a5e0e8ba67b455257a3a02a1d99005f382748789d6464460028810f1627 AS build
+FROM rust:1.99.1-alpine@sha256:b1d5dd5a22a09404d3e798c0cf051b689077360374eb505fa5bb93c479693d87 AS build
 RUN apk add --no-cache musl-dev build-base cmake perl
 WORKDIR /src
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
