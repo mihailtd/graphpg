@@ -20,7 +20,7 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.23"
 regex = "1"
 # Explains a rejected pg_jsonschema check: the version pg_jsonschema 0.3.4 validates with
-jsonschema = { version = "0.58", default-features = false }
+jsonschema = { version = "0.60", default-features = false }
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.7", features = ["cors"] }
 dotenvy = "0.15"
