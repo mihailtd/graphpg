@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { defineConfig } from "vitepress";
 import release from "./release.json" with { type: "json" };
 import { author } from "./theme/site";
@@ -15,7 +17,10 @@ function githubSlug(heading: string): string {
 // GitHub Pages serves a project site under /<repository>/; SITE_BASE overrides it (a custom domain: "/")
 const base = process.env.SITE_BASE ?? "/graphpg/";
 // the public address of the site, for canonical links, the sitemap and social cards (absolute URLs)
-const siteUrl = (process.env.SITE_URL ?? `https://mihailtd.github.io${base}`).replace(/\/?$/, "/");
+const siteUrl = (process.env.SITE_URL || `https://mihailtd.github.io${base}`).replace(/\/?$/, "/");
+
+// Search Console ownership for a URL-prefix property (github.io cannot be verified through DNS)
+const googleVerification = process.env.GOOGLE_SITE_VERIFICATION;
 
 const description =
   "graphpg turns a PostgreSQL schema into type-safe GraphQL and REST APIs, with the GraphQL SDL and OpenAPI 3.1 files your TypeScript types are generated from.";
@@ -43,6 +48,8 @@ const structuredData = {
 
 export default defineConfig({
   title: "graphpg",
+  // page titles carry what graphpg is, so a search result reads on its own ("REST API | graphpg …")
+  titleTemplate: ":title | graphpg: GraphQL and REST for PostgreSQL",
   description,
   base,
   cleanUrls: true,
@@ -62,8 +69,21 @@ export default defineConfig({
     ["meta", { name: "twitter:card", content: "summary_large_image" }],
     ["meta", { name: "twitter:image", content: `${siteUrl}og.png` }],
     ["script", { type: "application/ld+json" }, JSON.stringify(structuredData)],
+    ...(googleVerification
+      ? [
+          ["meta", { name: "google-site-verification", content: googleVerification }] as [
+            string,
+            Record<string, string>,
+          ],
+        ]
+      : []),
   ],
   sitemap: { hostname: siteUrl },
+  // crawlers only read robots.txt at the root of a host, so it points at the sitemap once the site
+  // has its own domain (SITE_BASE "/"); under github.io/<repo>/ it is harmless
+  buildEnd({ outDir }) {
+    writeFileSync(join(outDir, "robots.txt"), `User-agent: *\nAllow: /\n\nSitemap: ${siteUrl}sitemap.xml\n`);
+  },
   // per page: the canonical address, and a social card titled and described like the page
   transformHead({ pageData, title, description: pageDescription }) {
     const path = pageData.relativePath.replace(/(^|\/)index\.md$/, "$1").replace(/\.md$/, "");

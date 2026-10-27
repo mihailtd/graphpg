@@ -45,6 +45,11 @@ jobs:
         env:
           # the project site lives under /<repository>/; set the PAGES_BASE variable to "/" for a custom domain
           SITE_BASE: ${{ vars.PAGES_BASE || format('/{0}/', github.event.repository.name) }}
+          # the public address for canonical links and the sitemap; set it with a custom domain
+          # (e.g. https://graphpg.example.com/), unset falls back to https://<owner>.github.io/<repo>/
+          SITE_URL: ${{ vars.SITE_URL }}
+          # Search Console URL-prefix verification token (the content of its meta tag), optional
+          GOOGLE_SITE_VERIFICATION: ${{ vars.GOOGLE_SITE_VERIFICATION }}
       - if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

@@ -16,3 +16,7 @@ allowBuilds:
 # it works with the current one. Drop once drizzle-kit ships with a patched esbuild.
 overrides:
   esbuild: ^0.28.2
+  # vitepress pins vite and markdown-it below their security fixes (vite < 8.3.3, markdown-it < 15.0.3).
+  # Drop once vitepress ships with the patched versions.
+  vite: ^8.3.3
+  markdown-it: ^15.0.3
