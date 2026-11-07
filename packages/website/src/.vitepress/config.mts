@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig } from "vitepress";
 import release from "./release.json" with { type: "json" };
-import { author } from "./theme/site";
+import { author } from "./theme/site.ts";
 
 // GitHub's heading slugs: lower case, punctuation dropped (dots included), each space a hyphen
 function githubSlug(heading: string): string {
