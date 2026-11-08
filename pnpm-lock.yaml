@@ -59,8 +59,8 @@ importers:
         specifier: 0.52.2
         version: 0.52.2
       monaco-graphql:
-        specifier: ^1.4.0
-        version: 1.9.0(graphql@17.1.0)(monaco-editor@0.52.2)(prettier@3.9.9)
+        specifier: ^2.0.1
+        version: 2.0.1(graphql@17.1.0)(monaco-editor@0.52.2)(prettier@3.9.9)
       react:
         specifier: 19.3.1
         version: 19.3.1
@@ -456,6 +456,9 @@ packages:
 
   '@internationalized/string@3.2.10':
     resolution: {integrity: sha512-PDx6//vHSpRnHfxqMqto11zQvhsaU74O3mKv2F/0eicGZcl9NLjQmGlbHz/LsJh5tLKp4A4L7ZVTzN1/MmMTvA==}
+
+  '@isaacs/nonrecursive-glob-match@1.1.0':
+    resolution: {integrity: sha512-GPm/Dbvk5RLmhRnxXIa7nTpK0xtl4E0wj0MslsuNiJ1FIROU+2+9lgUC/dgF7Ey4QCWhfEsgxilMRMCdHPfDfw==}
 
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
@@ -1334,8 +1337,16 @@ packages:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
 
+  balanced-match@4.0.4:
+    resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
+    engines: {node: 18 || 20 || >=22}
+
   birpc@2.9.0:
     resolution: {integrity: sha512-KrayHS5pBi69Xi9JmvoqrIgYGDkD6mcSe/i6YKi3w5kekCLzrX4+nawcXqrj2tIp50Kw/mT/s3p+GVK0A0sKxw==}
+
+  brace-expansion@5.0.12:
+    resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==}
+    engines: {node: 20 || >=22}
 
   buffer-from@1.1.2:
     resolution: {integrity: sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==}
@@ -1756,6 +1767,11 @@ packages:
     peerDependencies:
       graphql: ^15.5.0 || ^16.0.0 || ^17.0.0
 
+  graphql-language-service@6.0.1:
+    resolution: {integrity: sha512-f+/kcxErsGlv/wbmm1PbaNWEL6nTNyUMpkZffQpiSWisuD07AUGQKE/6t3GtYuPhB/mbbWTuaJXkyE0zv+qHnQ==}
+    peerDependencies:
+      graphql: ^16.11.0 || ^17.0.0
+
   graphql@17.1.0:
     resolution: {integrity: sha512-JKCOa7rSQNrket/JFhuua86hljUO+IIpyUHfKxlKD6FEfbrLX8jc1FDrA0KPKI+s8OspBCF/5npYccAICHXPpQ==}
     engines: {node: ^22.0.0 || ^24.0.0 || >=26.0.0}
@@ -1949,6 +1965,10 @@ packages:
   micromark-util-types@2.0.3:
     resolution: {integrity: sha512-oxB2Ik03hI0gv+VNn9tnh1t1YEe9MDPptViAEgfdf3YQHsn0pzGTgCdlSCJXcwhqm8phaEuM7zeEu3QQzVBrPg==}
 
+  minimatch@11.0.4:
+    resolution: {integrity: sha512-/UJ1dEoVQTjPNDh6SGlUo+ueLMmoHTas4q+8yaAR/5t6nLAIiBDJtoYUh20IYleix7ehiQkgczb84PE3uzHkxg==}
+    engines: {node: 20 || >=22}
+
   minisearch@7.2.0:
     resolution: {integrity: sha512-dqT2XBYUOZOiC5t2HRnwADjhNS2cecp9u+TJRiJ1Qp/f5qjkeT5APcGPjHw+bz89Ms8Jp+cG4AlE+QZ/QnDglg==}
 
@@ -1960,6 +1980,13 @@ packages:
     peerDependencies:
       graphql: ^15.5.0 || ^16.0.0 || ^17.0.0
       monaco-editor: '>= 0.20.0 < 0.53'
+      prettier: ^2.8.0 || ^3.0.0
+
+  monaco-graphql@2.0.1:
+    resolution: {integrity: sha512-E22X37++tTQ1+xQ4KaY3hst27+wtyO8OLnyl7Frshvv31Fms5fvO5qLkvovMfP/XR2xooKlyjh5a0s9KH3wjYQ==}
+    peerDependencies:
+      graphql: ^16.11.0 || ^17.0.0
+      monaco-editor: '>=0.56.0 <0.58.0'
       prettier: ^2.8.0 || ^3.0.0
 
   motion-dom@13.5.0:
@@ -2391,6 +2418,9 @@ packages:
   vscode-languageserver-types@3.18.4:
     resolution: {integrity: sha512-nQsacoiijvl0fRf2q28uFDrAVwRhdCa3QveiF7/CX0r18mLR5FU/1WskSsCKOjmEbtteKUnY8x8Yzxop+k0zwg==}
 
+  vscode-languageserver-types@3.18.5:
+    resolution: {integrity: sha512-kPd6+JQNz3HMJvjKlqUxERSlZHAntl/aGpsk7ImwIh0ewDKDcjgAEyVSYciPiOJD3ftbK9IrfiqUeTZLSbCizw==}
+
   vue@3.5.44:
     resolution: {integrity: sha512-dvvmaOCG7lAMkJTPqPwWeGMsPS6DIsFsfZDUgBp9V6mHf9b3+/wyVwYR4Es+WV6uJC0FKRxp81Obcq0ZwUcGFQ==}
     peerDependencies:
@@ -2739,6 +2769,8 @@ snapshots:
   '@internationalized/string@3.2.10':
     dependencies:
       '@swc/helpers': 0.5.23
+
+  '@isaacs/nonrecursive-glob-match@1.1.0': {}
 
   '@jridgewell/resolve-uri@3.1.2': {}
 
@@ -3448,7 +3480,13 @@ snapshots:
 
   assertion-error@2.0.1: {}
 
+  balanced-match@4.0.4: {}
+
   birpc@2.9.0: {}
+
+  brace-expansion@5.0.12:
+    dependencies:
+      balanced-match: 4.0.4
 
   buffer-from@1.1.2: {}
 
@@ -3811,6 +3849,12 @@ snapshots:
       nullthrows: 1.1.1
       vscode-languageserver-types: 3.18.4
 
+  graphql-language-service@6.0.1(graphql@17.1.0):
+    dependencies:
+      debounce-promise: 3.1.2
+      graphql: 17.1.0
+      vscode-languageserver-types: 3.18.5
+
   graphql@17.1.0: {}
 
   hachure-fill@0.5.2: {}
@@ -4003,6 +4047,11 @@ snapshots:
 
   micromark-util-types@2.0.3: {}
 
+  minimatch@11.0.4:
+    dependencies:
+      '@isaacs/nonrecursive-glob-match': 1.1.0
+      brace-expansion: 5.0.12
+
   minisearch@7.2.0: {}
 
   monaco-editor@0.52.2: {}
@@ -4013,6 +4062,14 @@ snapshots:
       graphql-language-service: 5.7.0(graphql@17.1.0)
       monaco-editor: 0.52.2
       picomatch-browser: 2.2.6
+      prettier: 3.9.9
+
+  monaco-graphql@2.0.1(graphql@17.1.0)(monaco-editor@0.52.2)(prettier@3.9.9):
+    dependencies:
+      graphql: 17.1.0
+      graphql-language-service: 6.0.1(graphql@17.1.0)
+      minimatch: 11.0.4
+      monaco-editor: 0.52.2
       prettier: 3.9.9
 
   motion-dom@13.5.0:
@@ -4437,6 +4494,8 @@ snapshots:
       - msw
 
   vscode-languageserver-types@3.18.4: {}
+
+  vscode-languageserver-types@3.18.5: {}
 
   vue@3.5.44(typescript@7.0.2):
     dependencies:
