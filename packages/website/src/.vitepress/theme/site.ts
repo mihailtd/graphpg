@@ -2,15 +2,40 @@
 // structured data in config.mts read these, so a link changes in one place.
 export const author = {
   name: "Mihai Farcas",
+  alternateName: "Mihai Farcaș",
   site: "https://mihai.ltd",
   github: "https://github.com/mihailtd",
   githubHandle: "mihailtd",
+  linkedin: "https://www.linkedin.com/in/mihai-farcas-ltd/",
+  youtube: "https://youtube.com/@letstalkdev",
+  devto: "https://dev.to/mihailtd",
   company: {
     name: "innovi.pro",
+    displayName: "Innovi Pro",
     url: "https://innovi.pro",
+    email: "contact@innovi.pro",
     description: "AI automation, agents and software architecture consultancy",
   },
 };
+
+export const ecosystem = [
+  {
+    id: "https://innovi.care/#software",
+    name: "Innovi Care",
+    label: "innovi.care",
+    url: "https://innovi.care",
+    category: "HealthApplication, MedicalApplication",
+    description: "Multilingual clinical practice platform and patient portal built on PostgreSQL RLS and graphpg.",
+  },
+  {
+    id: "https://retroagile.com/#software",
+    name: "RetroAgile",
+    label: "retroagile.com",
+    url: "https://retroagile.com",
+    category: "DeveloperApplication",
+    description: "Continuous retrospectives, agent churn auditing and spec-readiness scoring powered by graphpg.",
+  },
+];
 
 export const articles = [
   {

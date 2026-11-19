@@ -3,7 +3,7 @@
 // who builds it. Replaces the default theme's one-line footer (themeConfig.footer is unset).
 import { useData, withBase } from "vitepress";
 import release from "../../release.json";
-import { articles, author } from "../site";
+import { articles, author, ecosystem } from "../site";
 
 const { page } = useData();
 const year = new Date().getUTCFullYear();
@@ -63,6 +63,9 @@ const columns = [
           <li><a :href="author.github">GitHub @{{ author.githubHandle }}</a></li>
           <li><a :href="author.site">mihai.ltd</a></li>
           <li><a :href="author.company.url">innovi.pro</a></li>
+          <li v-for="project in ecosystem" :key="project.url">
+            <a :href="project.url">{{ project.label }}</a>
+          </li>
         </ul>
       </div>
 

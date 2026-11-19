@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig } from "vitepress";
 import release from "./release.json" with { type: "json" };
-import { author } from "./theme/site.ts";
+import { author, ecosystem } from "./theme/site.ts";
 
 // GitHub's heading slugs: lower case, punctuation dropped (dots included), each space a hyphen
 function githubSlug(heading: string): string {
@@ -25,25 +25,68 @@ const googleVerification = process.env.GOOGLE_SITE_VERIFICATION;
 const description =
   "graphpg turns a PostgreSQL schema into type-safe GraphQL and REST APIs, with the GraphQL SDL and OpenAPI 3.1 files your TypeScript types are generated from.";
 
-// structured data: what graphpg is and who builds it, linking the project to its author's sites
+const siteOrigin = siteUrl.replace(/\/$/, "");
+
+// structured data: unified @graph connecting graphpg.com with mihai.ltd, innovi.pro, innovi.care and retroagile.com
 const structuredData = {
   "@context": "https://schema.org",
-  "@type": "SoftwareSourceCode",
-  name: "graphpg",
-  description,
-  url: siteUrl,
-  codeRepository: release.repo,
-  programmingLanguage: ["Rust", "SQL"],
-  runtimePlatform: "PostgreSQL",
-  license: ["https://opensource.org/licenses/MIT", "https://www.apache.org/licenses/LICENSE-2.0"],
-  version: release.version,
-  author: {
-    "@type": "Person",
-    name: author.name,
-    url: author.site,
-    sameAs: [author.site, author.github, author.company.url],
-    worksFor: { "@type": "Organization", name: author.company.name, url: author.company.url },
-  },
+  "@graph": [
+    {
+      "@type": "Person",
+      "@id": "https://mihai.ltd/#person",
+      name: author.name,
+      alternateName: author.alternateName,
+      url: author.site,
+      jobTitle: "Software Architect",
+      worksFor: { "@id": "https://innovi.pro/#organization" },
+      sameAs: [
+        author.site,
+        author.company.url,
+        siteOrigin,
+        ...ecosystem.map((p) => p.url),
+        author.github,
+        author.linkedin,
+        author.youtube,
+        author.devto,
+      ],
+      creatorOf: [{ "@id": `${siteOrigin}/#software` }, ...ecosystem.map((p) => ({ "@id": p.id }))],
+    },
+    {
+      "@type": "Organization",
+      "@id": "https://innovi.pro/#organization",
+      name: author.company.displayName,
+      url: author.company.url,
+      email: author.company.email,
+      founder: { "@id": "https://mihai.ltd/#person" },
+      sameAs: [author.company.url, author.site, siteOrigin, ...ecosystem.map((p) => p.url), author.linkedin],
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${siteOrigin}/#website`,
+      name: "graphpg",
+      url: siteOrigin,
+      description,
+      author: { "@id": "https://mihai.ltd/#person" },
+      publisher: { "@id": "https://innovi.pro/#organization" },
+    },
+    {
+      "@type": ["SoftwareSourceCode", "SoftwareApplication"],
+      "@id": `${siteOrigin}/#software`,
+      name: "graphpg",
+      description,
+      url: siteOrigin,
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "Linux, macOS, Docker",
+      codeRepository: release.repo,
+      programmingLanguage: ["Rust", "SQL"],
+      runtimePlatform: "PostgreSQL",
+      license: ["https://opensource.org/licenses/MIT", "https://www.apache.org/licenses/LICENSE-2.0"],
+      version: release.version,
+      author: { "@id": "https://mihai.ltd/#person" },
+      publisher: { "@id": "https://innovi.pro/#organization" },
+      isPartOf: { "@id": `${siteOrigin}/#website` },
+    },
+  ],
 };
 
 export default defineConfig({
