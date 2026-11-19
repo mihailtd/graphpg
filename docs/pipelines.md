@@ -64,7 +64,7 @@ The Dockerfile compiles dependencies in their own layer, against stand-in source
 Builds the documentation website in `packages/website` and deploys it to GitHub Pages. The site is [VitePress](https://vitepress.dev): a features page of its own, and the guides, introduction and changelog copied from `docs/`, `README.md` and `CHANGELOG.md` at build time (`packages/website/sync.mjs`), so they have one source. Links between those pages stay on the site; links to the rest of the repository go to GitHub.
 
 - It runs on pushes to `main` that change the docs, the README, the changelog, the version in `Cargo.toml` or the site, and manually. Pull requests that touch them build the site without deploying, which catches a dead link or a page VitePress cannot compile.
-- The site is served under `/<repository>/`. For a custom domain, set the repository variable `PAGES_BASE` to `/`.
+- The site is served at the root of `https://graphpg.com/` (`SITE_BASE` defaults to `/` and `SITE_URL` to `https://graphpg.com/`; repository variables `PAGES_BASE` and `SITE_URL` override them if needed).
 - Once, in the repository settings: **Pages → Source: GitHub Actions**.
 - Locally: `moon run website:dev` serves it with reload; `moon run website:build` builds it into `packages/website/src/.vitepress/dist`.
 
