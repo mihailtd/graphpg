@@ -74,7 +74,7 @@ Schema design stays in SQL. An optional [`graphpg.yaml`](docs/configuration.md) 
 
 ## Documentation
 
-The guides are also published as a website at <https://mihailtd.github.io/graphpg/>.
+The guides are also published as a website at <https://graphpg.com>.
 
 | | |
 | :--- | :--- |

@@ -14,12 +14,12 @@ function githubSlug(heading: string): string {
     .replace(/ /g, "-");
 }
 
-// GitHub Pages serves a project site under /<repository>/; SITE_BASE overrides it (a custom domain: "/")
-const base = process.env.SITE_BASE ?? "/graphpg/";
+// Custom domain (graphpg.com) is served at the root; SITE_BASE overrides it if needed
+const base = process.env.SITE_BASE ?? "/";
 // the public address of the site, for canonical links, the sitemap and social cards (absolute URLs)
-const siteUrl = (process.env.SITE_URL || `https://mihailtd.github.io${base}`).replace(/\/?$/, "/");
+const siteUrl = (process.env.SITE_URL || "https://graphpg.com/").replace(/\/?$/, "/");
 
-// Search Console ownership for a URL-prefix property (github.io cannot be verified through DNS)
+// Optional Search Console HTML meta tag verification token (DNS verification is preferred for graphpg.com)
 const googleVerification = process.env.GOOGLE_SITE_VERIFICATION;
 
 const description =
@@ -79,8 +79,7 @@ export default defineConfig({
       : []),
   ],
   sitemap: { hostname: siteUrl },
-  // crawlers only read robots.txt at the root of a host, so it points at the sitemap once the site
-  // has its own domain (SITE_BASE "/"); under github.io/<repo>/ it is harmless
+  // crawlers read robots.txt at the root of graphpg.com and discover sitemap.xml from it
   buildEnd({ outDir }) {
     writeFileSync(join(outDir, "robots.txt"), `User-agent: *\nAllow: /\n\nSitemap: ${siteUrl}sitemap.xml\n`);
   },
