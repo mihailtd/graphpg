@@ -59,13 +59,13 @@ Tags: `main` gets `:edge` and `:sha-<short hash>`. A release tag `vX.Y.Z` gets `
 
 The Dockerfile compiles dependencies in their own layer, against stand-in sources, before copying the real source. That layer changes only when `Cargo.toml` or `Cargo.lock` does, and the GitHub Actions layer cache (`cache-from`/`cache-to type=gha`) keeps it between runs, so a source-only change recompiles just the `graphpg` crate instead of every dependency.
 
-## Pages (`pages.yml`)
+## Website (`pages.yml` and Cloudflare Workers)
 
-Builds the documentation website in `packages/website` and deploys it to GitHub Pages. The site is [VitePress](https://vitepress.dev): a features page of its own, and the guides, introduction and changelog copied from `docs/`, `README.md` and `CHANGELOG.md` at build time (`packages/website/sync.mjs`), so they have one source. Links between those pages stay on the site; links to the rest of the repository go to GitHub.
+Builds and verifies the documentation website in `packages/website`, which is deployed to Cloudflare Workers (`wrangler.jsonc`, static assets from `packages/website/src/.vitepress/dist`) at `https://graphpg.com/`. The site is [VitePress](https://vitepress.dev): a features page of its own, and the guides, introduction and changelog copied from `docs/`, `README.md` and `CHANGELOG.md` at build time (`packages/website/sync.mjs`), so they have one source. Links between those pages stay on the site; links to the rest of the repository go to GitHub.
 
-- It runs on pushes to `main` that change the docs, the README, the changelog, the version in `Cargo.toml` or the site, and manually. Pull requests that touch them build the site without deploying, which catches a dead link or a page VitePress cannot compile.
+- `pages.yml` runs on every pull request and on pushes to `main` that change the docs, README, changelog, version in `Cargo.toml`, `wrangler.jsonc` or the site, catching dead links or pages VitePress cannot compile.
+- Production deploys via Cloudflare Workers Builds (`pnpm install --frozen-lockfile && pnpm --filter @graphpg/website run build`, `npx wrangler deploy`).
 - The site is served at the root of `https://graphpg.com/` (`SITE_BASE` defaults to `/` and `SITE_URL` to `https://graphpg.com/`; repository variables `PAGES_BASE` and `SITE_URL` override them if needed).
-- Once, in the repository settings: **Pages → Source: GitHub Actions**.
 - Locally: `moon run website:dev` serves it with reload; `moon run website:build` builds it into `packages/website/src/.vitepress/dist`.
 
 ## Dependabot (`dependabot.yml`)
