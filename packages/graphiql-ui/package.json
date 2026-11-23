@@ -7,17 +7,16 @@
     "dev": "node build.mjs --watch"
   },
   "dependencies": {
-    "@graphiql/plugin-explorer": "5.1.5",
-    "@graphiql/toolkit": "0.12.1",
-    "graphiql": "5.4.0",
+    "@graphiql/toolkit": "1.0.1",
+    "graphiql": "6.0.1",
     "graphql": "^17.1.0",
-    "monaco-editor": "0.52.2",
-    "monaco-graphql": "^1.4.0",
+    "monaco-editor": "0.57.0",
+    "monaco-graphql": "^2.0.1",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.5",
+    "@biomejs/biome": "^2.6.8",
     "esbuild": "^0.28.2"
   }
 }

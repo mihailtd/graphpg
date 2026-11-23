@@ -1,17 +1,16 @@
 import "./style.css";
-import { explorerPlugin } from "@graphiql/plugin-explorer";
 import { createGraphiQLFetcher } from "@graphiql/toolkit";
-import { GraphiQL, HISTORY_PLUGIN } from "graphiql";
+import { DEFAULT_PLUGINS, GraphiQL } from "graphiql";
 import { parse } from "graphql";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
 // Configure Monaco Editor to fetch worker scripts from the local server
-window.MonacoEnvironment = {
-  getWorkerUrl: (_moduleId, label) => {
-    if (label === "json") return "/graphiql/json.worker.js";
-    if (label === "graphql") return "/graphiql/graphql.worker.js";
-    return "/graphiql/editor.worker.js";
+globalThis.MonacoEnvironment = {
+  getWorker: (_workerId, label) => {
+    if (label === "json") return new Worker("/graphiql/json.worker.js");
+    if (label === "graphql") return new Worker("/graphiql/graphql.worker.js");
+    return new Worker("/graphiql/editor.worker.js");
   },
 };
 
@@ -218,7 +217,7 @@ function DatabaseIcon() {
 }
 
 const sqlPlugin = { title: "SQL", icon: DatabaseIcon, content: SqlPanel };
-const plugins = [HISTORY_PLUGIN, explorerPlugin(), sqlPlugin];
+const plugins = [...DEFAULT_PLUGINS, sqlPlugin];
 
 function App() {
   return h(GraphiQL, {

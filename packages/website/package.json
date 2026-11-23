@@ -12,7 +12,7 @@
     "format:check": "biome format ."
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.5",
+    "@biomejs/biome": "^2.6.8",
     "mermaid": "^12.3.0",
     "vitepress": "2.0.0-alpha.21"
   }

@@ -11,10 +11,15 @@ struct Project {
 
 impl Project {
     fn new(name: &str, pin: &str) -> Self {
+        Self::new_for_schemas(name, &["app_public"], pin)
+    }
+
+    fn new_for_schemas(name: &str, schemas: &[&str], pin: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("graphpg-pin-{name}-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         let project = Self { dir };
+        let schemas = schemas.join(", ");
         let pin = if pin.is_empty() {
             String::new()
         } else {
@@ -23,7 +28,7 @@ impl Project {
         std::fs::write(
             project.path("graphpg.yaml"),
             format!(
-                "database:\n  schemas: [app_public]\nserver:\n  port: 0\nexport:\n  graphql: {d}/schema.graphql\n  openapi: {d}/openapi.json\n  subgraph: {d}/subgraph.graphql\n{pin}",
+                "database:\n  schemas: [{schemas}]\nserver:\n  port: 0\nexport:\n  graphql: {d}/schema.graphql\n  openapi: {d}/openapi.json\n  subgraph: {d}/subgraph.graphql\n{pin}",
                 d = project.dir.display()
             ),
         )
@@ -274,4 +279,107 @@ fn the_pin_can_be_turned_off_or_made_a_warning_everywhere() {
     let project = Project::new("nofiles", "fail");
     let (exited, text) = project.start(&["--mode", "prod"]);
     assert!(exited.is_none(), "{text}");
+}
+
+#[test]
+fn exported_schema_is_independent_of_constraint_and_function_creation_order() {
+    let connect = || async {
+        let (client, connection) = tokio_postgres::connect(common::db_url(), tokio_postgres::NoTls)
+            .await
+            .expect("connect to test database");
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client
+    };
+
+    common::block_on(async {
+        let client = connect().await;
+        client
+            .batch_execute(
+                "DROP SCHEMA IF EXISTS pin_oid_order CASCADE;
+                 CREATE SCHEMA pin_oid_order;
+                 CREATE TABLE pin_oid_order.alpha (id int PRIMARY KEY);
+                 CREATE TABLE pin_oid_order.beta (id int PRIMARY KEY);
+                 CREATE TABLE pin_oid_order.gamma (id int PRIMARY KEY);
+                 CREATE TABLE pin_oid_order.items (
+                     id int PRIMARY KEY,
+                     alpha_id int NOT NULL,
+                     beta_id int NOT NULL,
+                     gamma_id int NOT NULL,
+                     code_b text NOT NULL,
+                     code_a text NOT NULL
+                 );
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_gamma_id_fkey
+                     FOREIGN KEY (gamma_id) REFERENCES pin_oid_order.gamma(id);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_beta_id_fkey
+                     FOREIGN KEY (beta_id) REFERENCES pin_oid_order.beta(id);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_alpha_id_fkey
+                     FOREIGN KEY (alpha_id) REFERENCES pin_oid_order.alpha(id);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_z_code_b_key UNIQUE (code_b);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_a_code_a_key UNIQUE (code_a);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_z_check CHECK (gamma_id > 0);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_a_check CHECK (alpha_id > 0);
+                 CREATE FUNCTION pin_oid_order.pick(a text) RETURNS text LANGUAGE sql STABLE AS $$ SELECT a $$;
+                 CREATE FUNCTION pin_oid_order.pick(a int) RETURNS int LANGUAGE sql STABLE AS $$ SELECT a $$;",
+            )
+            .await
+            .expect("create initial pin_oid_order schema");
+    });
+
+    let project = Project::new_for_schemas("oid-order", &["pin_oid_order"], "fail");
+    let export = project.run(&["schema", "export"]);
+    assert!(export.status.success(), "{}", text_of(&export));
+
+    // Recreate the identical schema with constraints and overloads added in the opposite order
+    // (as pg_dump / pg_restore does), giving every constraint and function a new relative OID.
+    common::block_on(async {
+        let client = connect().await;
+        client
+            .batch_execute(
+                "DROP SCHEMA pin_oid_order CASCADE;
+                 CREATE SCHEMA pin_oid_order;
+                 CREATE TABLE pin_oid_order.alpha (id int PRIMARY KEY);
+                 CREATE TABLE pin_oid_order.beta (id int PRIMARY KEY);
+                 CREATE TABLE pin_oid_order.gamma (id int PRIMARY KEY);
+                 CREATE TABLE pin_oid_order.items (
+                     id int PRIMARY KEY,
+                     alpha_id int NOT NULL,
+                     beta_id int NOT NULL,
+                     gamma_id int NOT NULL,
+                     code_b text NOT NULL,
+                     code_a text NOT NULL
+                 );
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_a_check CHECK (alpha_id > 0);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_a_code_a_key UNIQUE (code_a);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_alpha_id_fkey
+                     FOREIGN KEY (alpha_id) REFERENCES pin_oid_order.alpha(id);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_beta_id_fkey
+                     FOREIGN KEY (beta_id) REFERENCES pin_oid_order.beta(id);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_gamma_id_fkey
+                     FOREIGN KEY (gamma_id) REFERENCES pin_oid_order.gamma(id);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_z_check CHECK (gamma_id > 0);
+                 ALTER TABLE pin_oid_order.items ADD CONSTRAINT items_z_code_b_key UNIQUE (code_b);
+                 CREATE FUNCTION pin_oid_order.pick(a int) RETURNS int LANGUAGE sql STABLE AS $$ SELECT a $$;
+                 CREATE FUNCTION pin_oid_order.pick(a text) RETURNS text LANGUAGE sql STABLE AS $$ SELECT a $$;",
+            )
+            .await
+            .expect("recreate pin_oid_order schema");
+    });
+
+    let check = project.run(&["schema", "export", "--check"]);
+    assert!(check.status.success(), "{}", text_of(&check));
+
+    let (exited, text) = project.start(&["--mode", "prod"]);
+    assert!(
+        exited.is_none(),
+        "prod should accept identical restored schema:\n{text}"
+    );
+
+    common::block_on(async {
+        let client = connect().await;
+        let _ = client
+            .batch_execute("DROP SCHEMA IF EXISTS pin_oid_order CASCADE;")
+            .await;
+    });
 }

@@ -1221,12 +1221,12 @@ enum MessageErrorCode {
   CREATED_AT_REQUIRED
   """`expectedVersion` is not the row's `rowVersion`: the row changed since that version was read."""
   STALE_VERSION
-  """A row with this primary key (`id`) already exists."""
-  ID_TAKEN
   """`authorId` refers to a `User` that does not exist (`messages_author_id_fkey`)."""
   AUTHOR_NOT_FOUND
   """`forumId` refers to a `Forum` that does not exist (`messages_forum_id_fkey`)."""
   FORUM_NOT_FOUND
+  """A row with this primary key (`id`) already exists."""
+  ID_TAKEN
 }
 
 input CreateMessageInput {
