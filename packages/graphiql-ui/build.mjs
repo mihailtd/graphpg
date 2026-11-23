@@ -8,7 +8,7 @@
 // to clients that accept gzip and inflates them for the rest, so nothing is embedded twice.
 // `manifest.json.gz` is written last, so its presence means the directory is complete.
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,15 +21,15 @@ const outDir = resolve(root, "../../crates/graphpg-ui/assets/graphiql");
 const watch = process.argv.includes("--watch");
 
 const workers = {
-  "editor.worker": require.resolve("monaco-editor/esm/vs/editor/editor.worker.js"),
-  "json.worker": require.resolve("monaco-editor/esm/vs/language/json/json.worker.js"),
+  "editor.worker": require.resolve("monaco-editor/editor/editor.worker.js"),
+  "json.worker": require.resolve("monaco-editor/languages/features/json/json.worker.js"),
   "graphql.worker": require.resolve("monaco-graphql/esm/graphql.worker.js"),
 };
 
 const versions = {
   graphiql: require("graphiql/package.json").version,
   react: require("react/package.json").version,
-  monaco: require("monaco-editor/package.json").version,
+  monaco: JSON.parse(readFileSync(resolve(root, "node_modules/monaco-editor/package.json"), "utf8")).version,
 };
 
 // Nothing is written by esbuild itself: the outputs come back in memory and `publish` stores them

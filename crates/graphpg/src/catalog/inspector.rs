@@ -952,7 +952,7 @@ impl<'a> CatalogInspector<'a> {
                      LEFT JOIN pg_class fc ON fc.oid = con.confrelid
                      LEFT JOIN pg_namespace fn ON fn.oid = fc.relnamespace
                      WHERE n.nspname = ANY($1) AND con.contype IN ('p', 'u', 'f', 'c', 'x')
-                     ORDER BY con.conrelid, con.oid"
+                     ORDER BY con.conrelid, con.conname"
                 ),
                 &[&schemas_vec],
             )
@@ -1346,7 +1346,7 @@ impl<'a> CatalogInspector<'a> {
              LEFT JOIN pg_class erc ON erc.oid = et.typrelid AND erc.relkind IN ('r', 'v', 'm', 'p', 'f')
              LEFT JOIN pg_namespace ern ON ern.oid = erc.relnamespace
              WHERE {filter}
-             ORDER BY p.proname, p.oid"
+             ORDER BY n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)"
         );
         // Arguments in declaration order, `OUT`/`TABLE` columns included
         let arg_query = format!(
@@ -1727,7 +1727,7 @@ impl<'a> CatalogInspector<'a> {
             JOIN pg_class cl ON cl.oid = c.conrelid
             JOIN pg_namespace n ON cl.relnamespace = n.oid
             WHERE n.nspname = ANY($1) AND c.contype = 'c'
-            ORDER BY cl.relname, c.conname;
+            ORDER BY n.nspname, cl.relname, c.conname;
         ";
         for r in self.client.query(chk_query, &[&schemas_vec]).await? {
             let conname: String = r.get(0);
@@ -1840,7 +1840,7 @@ impl<'a> CatalogInspector<'a> {
                   'pgroonga_text_array_full_text_search_ops_v2'))
                 OR (am.amname IN ('gist', 'spgist') AND (op.opcname LIKE '%geometry_ops%' OR op.opcname LIKE '%geography_ops%'))
               )
-            ORDER BY c.relname, i.relname;
+            ORDER BY n.nspname, c.relname, i.relname;
         ";
         use super::integrations::Integration;
         let mut vector_methods: Vec<&str> = Vec::new();
@@ -2011,7 +2011,7 @@ impl<'a> CatalogInspector<'a> {
               AND cardinality(con.conkey) = 1
               AND c.relkind IN ('r', 'p')
               AND a.attname = ANY($2)
-            ORDER BY c.relname, con.conname;
+            ORDER BY n.nspname, c.relname, con.conname;
         ";
         if let Ok(rows) = self
             .client
@@ -2087,7 +2087,7 @@ impl<'a> CatalogInspector<'a> {
             JOIN pg_class c ON c.oid = tree.child
             JOIN pg_namespace cn ON cn.oid = c.relnamespace
             WHERE pn.nspname = ANY($1)
-            ORDER BY p.relname, tree.depth DESC, c.relname;
+            ORDER BY pn.nspname, p.relname, tree.depth DESC, cn.nspname, c.relname;
         ";
         if let Ok(rows) = self.client.query(inherits_query, &[&schemas_vec]).await {
             for r in rows {
