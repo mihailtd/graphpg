@@ -14,9 +14,8 @@ env:
   # The jobs that never serve the UI do not need it built (see crates/graphpg-ui/build.rs); the
   # ones that run the tests set it to 1.
   GRAPHPG_REQUIRE_UI: "0"
-  # Line tables only: panics still name the file and line, and the forty-odd test binaries
-  # fit the runner's disk (full debug info made the linker die with SIGBUS, out of space)
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # A job builds once; what incremental builds keep for the next one only fills the runner's disk
+  CARGO_INCREMENTAL: "0"
 
 # Runners: `vars.CI_RUNS_ON` (the self-hosted runners when set), except for pull requests from
 # forks, which always run on GitHub-hosted runners: a fork's code must never run on a machine of
@@ -90,7 +89,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres -d graphpg_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
-      # pg_duckdb on its own (tests/parquet.rs): its threads crash the server next to the pgrx
+      # pg_duckdb on its own (tests/it/parquet.rs): its threads crash the server next to the pgrx
       # extensions of the image above
       duckdb:
         image: docker.io/pgduckdb/pgduckdb:18-v1.1.1
