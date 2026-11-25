@@ -2,7 +2,8 @@
 //!
 //! The tests need a PostgreSQL 18 database. Point them at one with `TEST_DATABASE_URL`
 //! (default `postgres://postgres:postgres@localhost:5432/graphpg_test`; `docker compose up -d`
-//! in the repository root starts a matching one). Each test file creates the schema it needs.
+//! in the repository root starts a matching one). Each test file creates the schema it needs,
+//! and runs at the same time as the others: it writes to that schema only.
 #![allow(dead_code)]
 
 use std::sync::OnceLock;
@@ -23,9 +24,21 @@ pub fn db_url() -> &'static str {
     })
 }
 
+/// Held by a test that needs the database to itself (`tests/alone`).
+pub async fn alone() -> tokio::sync::MutexGuard<'static, ()> {
+    static ALONE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    ALONE.lock().await
+}
+
 /// Create the `app_public` forum fixture (users, forums, messages) unless it already exists.
 pub async fn ensure_forum_fixture() {
     ensure_fixture("app_public", FORUM_SQL).await;
+}
+
+/// Create the forum fixture as `schema`: for tests that write forums, users or messages, so that
+/// they change no rows another file's tests read.
+pub async fn ensure_forum_fixture_in(schema: &str) {
+    ensure_fixture(schema, &FORUM_SQL.replace("app_public", schema)).await;
 }
 
 /// Create the `interfaces_and_unions` fixture (single-table, class-table and union polymorphism).

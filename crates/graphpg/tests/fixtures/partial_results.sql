@@ -1,4 +1,4 @@
--- Root fields that fail on their own, for partial results (tests/partial_results.rs).
+-- Root fields that fail on their own, for partial results (tests/it/partial_results.rs).
 CREATE SCHEMA partial_results;
 
 CREATE TABLE partial_results.items (

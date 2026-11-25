@@ -4,7 +4,7 @@ graphpg serves one PostgreSQL database, and that database can reach others. Post
 
 The join happens **inside PostgreSQL**. A request still compiles to one SQL statement. PostgreSQL's planner decides what to send to the other side (`postgres_fdw` pushes filters, ordering, limits, aggregates and joins between tables of the same server), and graphpg's filters, pagination, limits, error masking and partial results apply as usual. Nothing in graphpg joins rows itself.
 
-This guide covers setup, what works, and what to watch out for. Every behavior it states is covered by `crates/graphpg/tests/foreign_data.rs`, which runs against `postgres_fdw` and `file_fdw`. The other wrappers it mentions are not tested by graphpg.
+This guide covers setup, what works, and what to watch out for. Every behavior it states is covered by `crates/graphpg/tests/it/foreign_data.rs`, which runs against `postgres_fdw` and `file_fdw`. The other wrappers it mentions are not tested by graphpg.
 
 - [Quick start: another PostgreSQL database](#quick-start-another-postgresql-database)
 - [Keys and relations](#keys-and-relations)

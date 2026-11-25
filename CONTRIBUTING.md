@@ -43,11 +43,13 @@ Skip either in an emergency with `git commit --no-verify` / `git push --no-verif
 
 ## Tests
 
-- Each file in `crates/graphpg/tests/` is an integration test against a real database. A file creates the schema it needs, guarded by an advisory lock; when you change a fixture, bump its version string so it is rebuilt.
+- The integration tests in `crates/graphpg/tests/` run against a real database, as two programs: `it`, whose tests all run in parallel, and `alone`, for what looks at the whole database (extension detection, the schema watcher), one test at a time (`common::alone()`). A new file is a module of one of them: add it to `it/main.rs` (or `alone/main.rs`), not to `tests/` itself, where cargo would link the whole engine into another program.
+- A file creates the schema it needs, guarded by an advisory lock, and writes to that schema only (`common::ensure_forum_fixture_in` is the forum fixture under another name); when you change a fixture, bump its version string so it is rebuilt.
 - Shared fixtures live in `crates/graphpg/tests/fixtures/` and `tests/common/mod.rs`.
+- One file's tests: `cargo test --test it rls_auth::`.
 - The end-to-end suite (`e2e/`) also **explores** the schema it serves (`e2e/src/explore.ts`): every root field, relation, ordering and page, aggregate, grouping and filter the schema advertises is requested, and every filter operator, cursor and id is sent malformed and boundary values. The engine may refuse a request (a typed error), never fail on one (a 5xx or an untyped database error). Run it against any graphpg, a large schema of your own included: `pnpm --filter @graphpg/e2e explore http://localhost:4000/graphql [--only <regex>] [--max <n>]` (it needs `graphql.introspection`).
-- The generated-schema snapshot (`tests/snapshots/`) is reviewed with `cargo insta review`, or accepted with `INSTA_UPDATE=always cargo test --test forum_schema`.
-- Tests in one file run in parallel: don't assert on counts of rows that other tests in the file create.
+- The generated-schema snapshot (`tests/it/snapshots/`) is reviewed with `cargo insta review`, or accepted with `INSTA_UPDATE=always cargo test --test it forum_schema::`.
+- Tests run in parallel: don't assert on counts of rows that other tests create.
 
 ## Pull requests
 

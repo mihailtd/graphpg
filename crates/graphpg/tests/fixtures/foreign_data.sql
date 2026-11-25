@@ -1,4 +1,4 @@
--- Foreign data (tests/foreign_data.rs): a "remote" PostgreSQL table reached with postgres_fdw
+-- Foreign data (tests/it/foreign_data.rs): a "remote" PostgreSQL table reached with postgres_fdw
 -- (a loopback connection to this database, standing in for another server), and a CSV
 -- file read with file_fdw (written by the test with COPY before each run).
 CREATE EXTENSION IF NOT EXISTS postgres_fdw;

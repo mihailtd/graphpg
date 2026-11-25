@@ -1,0 +1,1 @@
+- **Smaller, faster test builds**: the 63 integration test files are two test programs instead of one each, so the engine is linked twice instead of 63 times. Local debug builds keep line tables only (`CARGO_PROFILE_DEV_DEBUG=full` for a debugger).
