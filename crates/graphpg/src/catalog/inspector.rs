@@ -33,6 +33,18 @@ pub enum CatalogError {
     Config(Vec<String>),
 }
 
+/// Times a catalog query is run when a concurrent transaction keeps dropping what it reads.
+const CATALOG_ATTEMPTS: u32 = 3;
+
+/// The error of a catalog function (`pg_get_constraintdef`, ...) reading an object that a
+/// concurrent transaction dropped after the query's snapshot was taken: `could not open
+/// relation with OID`, `cache lookup failed` (`XX000`), or `42P01`.
+fn is_concurrent_ddl(err: &tokio_postgres::Error) -> bool {
+    use tokio_postgres::error::SqlState;
+    err.code()
+        .is_some_and(|c| *c == SqlState::INTERNAL_ERROR || *c == SqlState::UNDEFINED_TABLE)
+}
+
 /// SQL predicate: the object `oid` of system catalog `class` is not owned by an extension,
 /// unless the extension is exposed (`$2`: expose all, `$3`: exposed extension names).
 fn not_extension_owned(class: &str, oid: &str) -> String {
@@ -274,7 +286,7 @@ impl<'a> CatalogInspector<'a> {
         }
 
         self.inspect_exclusive_arcs(schema_names, catalog).await?;
-        self.inspect_polymorphism(schema_names, catalog).await;
+        self.inspect_polymorphism(schema_names, catalog).await?;
         detect_many_to_many(catalog);
         self.inspect_search_indexes(schema_names, catalog).await?;
         Ok(())
@@ -312,10 +324,17 @@ impl<'a> CatalogInspector<'a> {
                 None => "installed".to_string(),
                 Some(sql) => {
                     // A failing probe (an incompatible version, no privilege) is no use
-                    let probed = self.guarded_query(sql, schema_names).await?;
+                    let probed = match self.guarded_query(sql, &[&schema_names]).await? {
+                        // The catalog kept changing under the probe: refuse this inspection
+                        // (a reload keeps the schema being served) rather than serve without
+                        // the integration
+                        Err(err) if is_concurrent_ddl(&err) => return Err(err.into()),
+                        probed => probed,
+                    };
                     let uses: i64 = match probed.as_ref().map(|rows| rows.first()) {
                         Ok(Some(row)) => row.get(0),
                         Ok(None) => 0,
+                        // An incompatible version or a missing privilege: no use
                         Err(err) => {
                             tracing::warn!(integration = integration.name(), error = %err, "could not detect the extension's use; integration off");
                             0
@@ -338,28 +357,64 @@ impl<'a> CatalogInspector<'a> {
         Ok(())
     }
 
-    /// Runs `sql` with the schemas as `$1`; an error is returned as a value, not raised. Inside
-    /// a transaction (the pruning role's) a savepoint keeps a failure from aborting it.
+    /// Runs `sql` with `params`; an error is returned as a value, not raised. Inside a
+    /// transaction (the pruning role's) a savepoint keeps a failure from aborting it. A query
+    /// that failed because a concurrent transaction dropped an object it read
+    /// ([`is_concurrent_ddl`]) is run again, up to [`CATALOG_ATTEMPTS`] times: each run takes a
+    /// new snapshot, which no longer has the dropped object.
     async fn guarded_query(
         &self,
         sql: &str,
-        schema_names: &[&str],
+        params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
     ) -> Result<Result<Vec<tokio_postgres::Row>, tokio_postgres::Error>, CatalogError> {
-        let in_transaction = self
-            .client
-            .batch_execute("SAVEPOINT graphpg_probe")
-            .await
-            .is_ok();
-        let result = self.client.query(sql, &[&schema_names]).await;
-        if in_transaction {
-            let end = if result.is_ok() {
-                "RELEASE SAVEPOINT graphpg_probe"
-            } else {
-                "ROLLBACK TO SAVEPOINT graphpg_probe; RELEASE SAVEPOINT graphpg_probe"
-            };
-            self.client.batch_execute(end).await?;
+        let mut attempt = 1;
+        loop {
+            let in_transaction = self
+                .client
+                .batch_execute("SAVEPOINT graphpg_probe")
+                .await
+                .is_ok();
+            let result = self.client.query(sql, params).await;
+            if in_transaction {
+                let end = if result.is_ok() {
+                    "RELEASE SAVEPOINT graphpg_probe"
+                } else {
+                    "ROLLBACK TO SAVEPOINT graphpg_probe; RELEASE SAVEPOINT graphpg_probe"
+                };
+                self.client.batch_execute(end).await?;
+            }
+            match result {
+                Err(err) if is_concurrent_ddl(&err) && attempt < CATALOG_ATTEMPTS => {
+                    tracing::debug!(attempt, error = %err, "catalog changed during a query; running it again");
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(10 * u64::from(attempt)))
+                        .await;
+                }
+                result => return Ok(result),
+            }
         }
-        Ok(result)
+    }
+
+    /// The rows of a single-table-inheritance sub-pass. Concurrent DDL that outlasts the
+    /// retries refuses the inspection; another error leaves the sub-pass out, with a warning.
+    async fn sti_rows(
+        &self,
+        sql: &str,
+        schemas: &[String],
+        discriminators: &[String],
+        kind: &str,
+    ) -> Result<Option<Vec<tokio_postgres::Row>>, CatalogError> {
+        match self
+            .guarded_query(sql, &[&schemas, &discriminators])
+            .await?
+        {
+            Ok(rows) => Ok(Some(rows)),
+            Err(err) if is_concurrent_ddl(&err) => Err(err.into()),
+            Err(err) => {
+                tracing::warn!(error = %err, "could not read the {kind} discriminators of single-table inheritance");
+                Ok(None)
+            }
+        }
     }
 
     /// TimescaleDB's hypertables (and their time dimension) and continuous aggregates, when
@@ -379,14 +434,14 @@ impl<'a> CatalogInspector<'a> {
                 "SELECT hypertable_schema::text, hypertable_name::text, column_name::text, time_interval::text
                  FROM timescaledb_information.dimensions
                  WHERE dimension_number = 1 AND hypertable_schema = ANY($1)",
-                schema_names,
+                &[&schema_names],
             )
             .await?;
         let aggregates = self
             .guarded_query(
                 "SELECT view_schema::text, view_name::text, materialized_only
                  FROM timescaledb_information.continuous_aggregates WHERE view_schema = ANY($1)",
-                schema_names,
+                &[&schema_names],
             )
             .await?;
         let (Ok(hypertables), Ok(aggregates)) = (hypertables, aggregates) else {
@@ -1979,7 +2034,11 @@ impl<'a> CatalogInspector<'a> {
     ///   children or a discriminator column, so plain 1:1 extension tables stay untouched.
     ///
     /// Names are finalised later by `DatabaseCatalog::resolve_polymorphic_names`.
-    async fn inspect_polymorphism(&self, schema_names: &[&str], catalog: &mut DatabaseCatalog) {
+    async fn inspect_polymorphism(
+        &self,
+        schema_names: &[&str],
+        catalog: &mut DatabaseCatalog,
+    ) -> Result<(), CatalogError> {
         let schemas_vec: Vec<String> = schema_names.iter().map(|s| s.to_string()).collect();
         const DISCRIMINATOR_NAMES: &[&str] = &[
             "type",
@@ -2021,10 +2080,9 @@ impl<'a> CatalogInspector<'a> {
               AND a.attname = ANY($2)
             ORDER BY n.nspname, c.relname, con.conname;
         ";
-        if let Ok(rows) = self
-            .client
-            .query(chk_query, &[&schemas_vec, &discriminators])
-            .await
+        if let Some(rows) = self
+            .sti_rows(chk_query, &schemas_vec, &discriminators, "CHECK")
+            .await?
         {
             for r in rows {
                 let table: String = r.get(0);
@@ -2052,10 +2110,9 @@ impl<'a> CatalogInspector<'a> {
             GROUP BY n.nspname, c.relname, a.attname, a.attnum
             ORDER BY n.nspname, c.relname, a.attnum;
         ";
-        if let Ok(rows) = self
-            .client
-            .query(enum_query, &[&schemas_vec, &discriminators])
-            .await
+        if let Some(rows) = self
+            .sti_rows(enum_query, &schemas_vec, &discriminators, "enum")
+            .await?
         {
             for r in rows {
                 let table: String = r.get(0);
@@ -2188,6 +2245,7 @@ impl<'a> CatalogInspector<'a> {
                 );
             }
         }
+        Ok(())
     }
 }
 

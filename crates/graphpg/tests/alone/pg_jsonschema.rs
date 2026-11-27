@@ -373,3 +373,76 @@ async fn a_value_its_domain_rejects_is_typed() {
         "{codes}"
     );
 }
+
+/// #270: DDL in another schema of the database while graphpg inspects one. The probe that
+/// detects pg_jsonschema's use must not fail on the other schema's constraints (it used to
+/// call `pg_get_constraintdef` on them, and a table dropped in between made it fail), and
+/// the integration must not be switched off.
+#[tokio::test]
+async fn detection_survives_ddl_in_another_schema() {
+    let _alone = common::alone().await;
+    if !common::with_extensions(&["pg_jsonschema"]).await {
+        return;
+    }
+    let db = client().await;
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS jsonschema_quiet CASCADE; CREATE SCHEMA jsonschema_quiet;
+         CREATE TABLE jsonschema_quiet.docs (id int PRIMARY KEY,
+             body jsonb CHECK (jsonb_matches_schema('{\"type\": \"object\"}', body)));
+         DROP SCHEMA IF EXISTS jsonschema_noisy CASCADE; CREATE SCHEMA jsonschema_noisy;",
+    )
+    .await
+    .unwrap();
+
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut churn = Vec::new();
+    for w in 0..4 {
+        let stop = stop.clone();
+        churn.push(tokio::spawn(async move {
+            let ddl = client().await;
+            // Two statements, two transactions: each table is committed, then dropped
+            let create = format!(
+                "CREATE TABLE jsonschema_noisy.w{w} (a int CHECK (a > 0), b int CHECK (b > 0),
+                     c jsonb CHECK (jsonb_matches_schema('{{}}', c)))"
+            );
+            let drop = format!("DROP TABLE jsonschema_noisy.w{w}");
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                ddl.execute(create.as_str(), &[]).await.unwrap();
+                ddl.execute(drop.as_str(), &[]).await.unwrap();
+            }
+        }));
+    }
+
+    let config = Config::default();
+    let mut failures = Vec::new();
+    for _ in 0..300 {
+        match CatalogInspector::new(&db)
+            .inspect_schema_with_config("jsonschema_quiet", &config)
+            .await
+        {
+            Ok(catalog) => {
+                if !catalog
+                    .integrations
+                    .iter()
+                    .any(|i| i.integration.name() == "pg_jsonschema")
+                {
+                    failures.push("integration off".to_string());
+                }
+            }
+            Err(e) => failures.push(e.to_string()),
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    for task in churn {
+        task.await.unwrap();
+    }
+    db.batch_execute("DROP SCHEMA jsonschema_quiet CASCADE; DROP SCHEMA jsonschema_noisy CASCADE;")
+        .await
+        .unwrap();
+    assert!(
+        failures.is_empty(),
+        "{} of 300 inspections lost pg_jsonschema: {:?}",
+        failures.len(),
+        &failures[..failures.len().min(3)]
+    );
+}
