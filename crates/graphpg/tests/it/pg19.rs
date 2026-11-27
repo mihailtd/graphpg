@@ -585,7 +585,9 @@ async fn test_pg19_wait_for_lsn_and_replica_routing() {
         "POST",
         "/graphql",
         Some(json!({ "query": "{ authors { name } }" })),
-        &[(MIN_WAL_POSITION_HEADER, "0/1")],
+        // No server has replayed it (a primary that crash-recovered still reports the last
+        // LSN it replayed, so `0/1` could pass the PostgreSQL 18 check)
+        &[(MIN_WAL_POSITION_HEADER, "FFFFFFFF/FFFFFFFF")],
     )
     .await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();

@@ -860,11 +860,17 @@ async fn test_read_replica_routing() {
     let (_, _, body) = graphql(state.clone(), query.clone(), &[]).await;
     assert_eq!(body["extensions"]["database"], "replica");
     assert_eq!(body["data"]["accounts"].as_array().unwrap().len(), 2);
-    // ...unless it has not replayed the client's own writes
-    let (_, _, body) = graphql(state.clone(), query, &[(MIN_WAL_POSITION_HEADER, "0/1")]).await;
+    // ...unless it has not replayed the client's own writes. (Not `0/1`: a primary that went
+    // through crash recovery keeps reporting the last LSN it replayed.)
+    let (_, _, body) = graphql(
+        state.clone(),
+        query,
+        &[(MIN_WAL_POSITION_HEADER, "FFFFFFFF/FFFFFFFF")],
+    )
+    .await;
     assert_eq!(
         body["extensions"]["database"], "primary",
-        "a primary replays no WAL"
+        "no server has replayed this position"
     );
 
     // Mutations run on the primary and report its WAL position

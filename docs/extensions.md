@@ -23,6 +23,8 @@ Beyond types and indexes, graphpg **integrates** with popular extensions: it inf
 
 An extension that is installed but unused changes nothing.
 
+When graphpg cannot read what an extension uses (no privilege on its catalog, an incompatible version), that integration stays off and a warning says why. When the database's catalog keeps changing during the check, because migrations run in other schemas of the same database, graphpg runs the check again. If it still cannot tell, it does not guess: startup fails with the error, and a reload is refused and keeps serving the current schema.
+
 At startup graphpg logs each integration that is on, and what turned it on:
 
 ```
