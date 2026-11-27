@@ -50,3 +50,4 @@ crates/graphpg-ui/assets/
 benchmarks/rest/results/graphpg.md
 benchmarks/rest/results/postgrest.md
 benchmarks/rest/results/*.log
+benchmarks/pg19/results/

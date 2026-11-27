@@ -91,8 +91,14 @@ async fn print_statements(
             .unwrap_or_default()
     );
     for (i, op) in report.operations.iter().enumerate() {
+        let plan_info = match (op.generic_plan_calls, op.custom_plan_calls) {
+            (Some(generic), Some(custom)) if generic + custom > 0 => {
+                format!(", {generic} generic / {custom} custom plans")
+            }
+            _ => String::new(),
+        };
         println!(
-            "{:>3}. {}: {} calls, {:.1} ms total, {:.2} ms mean, {:.1} rows per call{}",
+            "{:>3}. {}: {} calls, {:.1} ms total, {:.2} ms mean, {:.1} rows per call{}{}",
             i + 1,
             op.operation,
             op.calls,
@@ -103,8 +109,21 @@ async fn print_statements(
                 format!(", {} statement shapes", op.statements)
             } else {
                 String::new()
-            }
+            },
+            plan_info,
         );
+        if let (Some(generic), Some(custom)) = (op.generic_plan_calls, op.custom_plan_calls) {
+            if generic > 0
+                && generic >= custom
+                && (op.mean_ms() >= 10.0 || !op.suggestions.is_empty())
+            {
+                println!(
+                    "     plan cache: mostly generic plans ({}/{}); inspect with --debug-explain or try plan_cache_mode = 'force_custom_plan' / pg_stash_advice",
+                    generic,
+                    generic + custom
+                );
+            }
+        }
         for s in &op.suggestions {
             match s.cost_with_index {
                 Some(after) => println!(

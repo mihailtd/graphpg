@@ -1245,6 +1245,7 @@ impl Ctx {
         let span = tracing::info_span!("rest.execute", rest.resource = %self.resource, rest.method = %method);
         let auth = self.auth.clone();
 
+        let explain_io = self.catalog.server_version >= 190000;
         let joined = if write {
             let client = self
                 .state
@@ -1256,10 +1257,11 @@ impl Ctx {
             tokio::spawn(
                 async move {
                     let mut plans = Vec::new();
-                    let result = ExecutionEngine::run_with_auth(
+                    let result = ExecutionEngine::run_with_options(
                         &*client,
                         &compiled,
                         want_explain.then_some(&mut plans),
+                        explain_io,
                         auth.as_ref(),
                     )
                     .await;
@@ -1278,10 +1280,11 @@ impl Ctx {
             tokio::spawn(
                 async move {
                     let mut plans = Vec::new();
-                    let result = ExecutionEngine::run_with_auth(
+                    let result = ExecutionEngine::run_with_options(
                         &*client,
                         &compiled,
                         want_explain.then_some(&mut plans),
+                        explain_io,
                         auth.as_ref(),
                     )
                     .await;
@@ -1801,6 +1804,46 @@ fn edges_request(
             RequestField::new("runningSum").with_children(columns),
         ));
     }
+    for (name, col_names) in query.value_window_specs() {
+        if col_names.is_empty() {
+            continue;
+        }
+        if !has(name) {
+            return Err(ProblemDetails::invalid(
+                format!("`{name}` is not available for `{}`", table.name),
+                name,
+            ));
+        }
+        let columns: Vec<RequestField> = col_names
+            .iter()
+            .filter_map(|col_name| {
+                table
+                    .visible_columns()
+                    .find(|c| c.field_name == *col_name || c.name == *col_name)
+            })
+            .map(|c| {
+                RequestField::new(&c.field_name).with_children(value_selection(
+                    &ctx.catalog,
+                    &c.pg_type,
+                    0,
+                ))
+            })
+            .collect();
+        let mut field = windowed(RequestField::new(name).with_children(columns));
+        if query.ignore_nulls {
+            field = field.with_argument("ignoreNulls", serde_json::json!(true));
+        }
+        if matches!(name, "lag" | "lead") {
+            if let Some(offset) = query.window_offset {
+                field = field.with_argument("offset", serde_json::json!(offset));
+            }
+        } else if name == "nthValue" {
+            if let Some(n) = query.window_nth {
+                field = field.with_argument("n", serde_json::json!(n));
+            }
+        }
+        edge.push(field);
+    }
     edge.push(RequestField::new("node").with_children(nodes.children));
     request
         .children
@@ -1840,6 +1883,13 @@ fn rows_from_edges(data: &mut serde_json::Value, root: &str, query: &RestQuery) 
                     .iter()
                     .map(String::as_str)
                     .chain((!query.running.is_empty()).then_some("runningSum"))
+                    .chain(
+                        query
+                            .value_window_specs()
+                            .into_iter()
+                            .filter(|(_, cols)| !cols.is_empty())
+                            .map(|(name, _)| name),
+                    )
                 {
                     window.insert(
                         name.to_string(),
@@ -1914,7 +1964,10 @@ async fn list_rows(
         query::CountPreference::None => (false, false),
     };
 
-    let edges = query.cursors || !query.window.is_empty() || !query.running.is_empty();
+    let edges = query.cursors
+        || !query.window.is_empty()
+        || !query.running.is_empty()
+        || query.has_value_windows();
     if edges && !connection {
         return Err(ProblemDetails::bad_request(
             "`cursors`, `window` and `running` are for lists that are connections",

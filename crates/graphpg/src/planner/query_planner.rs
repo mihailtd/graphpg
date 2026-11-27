@@ -1722,6 +1722,19 @@ impl<'a> PlanningContext<'a> {
                 }
             }
         }
+        let action = obj.get("action").and_then(|v| v.as_str());
+        if action == Some("SELECT") {
+            if self.catalog().server_version < 190000 {
+                return Err(invalid(
+                    "onConflict: `SELECT` requires PostgreSQL 19 or later".to_string(),
+                ));
+            }
+            if update.is_some() {
+                return Err(invalid(
+                    "onConflict.update: cannot be combined with action `SELECT`".to_string(),
+                ));
+            }
+        }
         Ok(Some(OnConflict {
             // Rows are matched with the column type's own equality, as the unique index does
             // (e.g. case-insensitively for `citext`)
@@ -1730,8 +1743,69 @@ impl<'a> PlanningContext<'a> {
                 .map(|c| (c.name.clone(), Some(c.pg_type.assignment_cast())))
                 .collect(),
             update,
-            do_nothing: obj.get("action").and_then(|v| v.as_str()) == Some("NOTHING"),
+            do_nothing: action == Some("NOTHING"),
+            do_select: action == Some("SELECT"),
         }))
+    }
+
+    /// A `connectOrCreate` node: the row with `key`, or else a new one from `values`. When
+    /// `where` matches a valid `conflict_keys()` arbiter on equality and `create` sets those
+    /// same non-null key columns to identical values, the insert names that arbiter in
+    /// `ON CONFLICT`: on PostgreSQL 19+ as one `INSERT ... ON CONFLICT (<key>) DO SELECT`, on
+    /// older servers as `DO NOTHING` inside the 2-CTE form.
+    fn lookup_or_insert(
+        &self,
+        target: &TableMetadata,
+        key: Vec<WhereCondition>,
+        values: &[ColumnValue],
+    ) -> WriteNodeKind {
+        let conflict_key = self.lookup_or_insert_conflict_key(target, &key, values);
+        let do_select = conflict_key.is_some() && self.catalog().server_version >= 190000;
+        WriteNodeKind::LookupOrInsert {
+            key,
+            conflict_key,
+            do_select,
+        }
+    }
+
+    /// The arbiter columns of [`Self::lookup_or_insert`], if `where` and `create` agree on one.
+    fn lookup_or_insert_conflict_key(
+        &self,
+        target: &TableMetadata,
+        key: &[WhereCondition],
+        values: &[ColumnValue],
+    ) -> Option<Vec<String>> {
+        if key.is_empty() || values.is_empty() {
+            return None;
+        }
+        if !key.iter().all(|k| k.operator == "=" && !k.value.is_null()) {
+            return None;
+        }
+        for (_, cols) in target.conflict_keys() {
+            if cols.len() != key.len() {
+                continue;
+            }
+            let matches_all = cols.iter().all(|col| {
+                let Some(cond) = key.iter().find(|k| k.column == col.name) else {
+                    return false;
+                };
+                let Some(cv) = values
+                    .iter()
+                    .find(|v| v.column == col.name && !v.value.is_null())
+                else {
+                    return false;
+                };
+                if matches!(col.pg_type, PgType::Json | PgType::Jsonb) {
+                    return false;
+                }
+                crate::compiler::SqlCompiler::param_text(&cond.value)
+                    == crate::compiler::SqlCompiler::param_text(&cv.value)
+            });
+            if matches_all {
+                return Some(cols.iter().map(|c| c.name.clone()).collect());
+            }
+        }
+        None
     }
 
     /// A column assignment from a GraphQL input value at `path` (`input`: the value is
@@ -1874,14 +1948,8 @@ impl<'a> PlanningContext<'a> {
                     &format!("{at}.create"),
                     true,
                 )?;
-                let found = push_node(
-                    nodes,
-                    target,
-                    WriteNodeKind::LookupOrInsert { key },
-                    values,
-                    Vec::new(),
-                    at,
-                );
+                let kind = self.lookup_or_insert(target, key, &values);
+                let found = push_node(nodes, target, kind, values, Vec::new(), at);
                 refs.extend(rel.columns.iter().map(|(target_col, fk)| NodeRef {
                     column: fk.clone(),
                     pg_cast: fk_cast(fk),
@@ -2404,14 +2472,8 @@ impl<'a> PlanningContext<'a> {
                             &format!("{at}.create"),
                             true,
                         )?;
-                        let found = push_node(
-                            nodes,
-                            target,
-                            WriteNodeKind::LookupOrInsert { key },
-                            values,
-                            Vec::new(),
-                            at.clone(),
-                        );
+                        let kind = self.lookup_or_insert(target, key, &values);
+                        let found = push_node(nodes, target, kind, values, Vec::new(), at.clone());
                         let refs = source_refs
                             .iter()
                             .cloned()
@@ -4039,8 +4101,9 @@ impl<'a> PlanningContext<'a> {
     }
 
     /// Window values selected on a connection's edges: positions (`rowNumber`, `rank`,
-    /// `denseRank`, `percentRank`) and running sums, over the matching rows in the
-    /// connection's order, within `partitionBy` groups.
+    /// `denseRank`, `percentRank`), running sums, and PostgreSQL 19+ value windows (`lag`,
+    /// `lead`, `firstValue`, `lastValue`, `nthValue` with `ignoreNulls`), over the matching
+    /// rows in the connection's order, within `partitionBy` groups.
     fn plan_windows(
         &self,
         edge_fields: &[&RequestField],
@@ -4048,14 +4111,24 @@ impl<'a> PlanningContext<'a> {
     ) -> Result<Vec<WindowSelection>, PlannerError> {
         let mut windows = Vec::new();
         for f in edge_fields {
-            let function = match f.name.as_str() {
-                "rowNumber" => "row_number",
-                "rank" => "rank",
-                "denseRank" => "dense_rank",
-                "percentRank" => "percent_rank",
-                "runningSum" => "running_sum",
+            let (function, is_value_window) = match f.name.as_str() {
+                "rowNumber" => ("row_number", false),
+                "rank" => ("rank", false),
+                "denseRank" => ("dense_rank", false),
+                "percentRank" => ("percent_rank", false),
+                "runningSum" => ("running_sum", false),
+                "lag" => ("lag", true),
+                "lead" => ("lead", true),
+                "firstValue" => ("first_value", true),
+                "lastValue" => ("last_value", true),
+                "nthValue" => ("nth_value", true),
                 _ => continue,
             };
+            if is_value_window && self.catalog().server_version < 190000 {
+                return Err(PlannerError::InvalidInput(
+                    "window value functions require PostgreSQL 19 or later".to_string(),
+                ));
+            }
             let partition_arg = f.argument("partitionBy").cloned();
             let partition = self.plan_group_keys(partition_arg, table_meta, "partitionBy")?;
             if partition
@@ -4066,6 +4139,40 @@ impl<'a> PlanningContext<'a> {
                     "partitionBy: `_BINNED` values need a bin width; truncate instead".to_string(),
                 ));
             }
+            let ignore_nulls = if is_value_window {
+                f.argument("ignoreNulls")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            let offset = match function {
+                "lag" | "lead" => {
+                    let n = match f.argument("offset") {
+                        None | Some(serde_json::Value::Null) => 1,
+                        Some(v) => v.as_i64().filter(|&n| n >= 0).ok_or_else(|| {
+                            PlannerError::InvalidInput(format!(
+                                "{}: `offset` must be a non-negative integer",
+                                f.name
+                            ))
+                        })?,
+                    };
+                    Some(n)
+                }
+                "nth_value" => {
+                    let n = f
+                        .argument("n")
+                        .and_then(|v| v.as_i64())
+                        .filter(|&n| n >= 1)
+                        .ok_or_else(|| {
+                            PlannerError::InvalidInput(
+                                "nthValue: `n` must be at least 1".to_string(),
+                            )
+                        })?;
+                    Some(n)
+                }
+                _ => None,
+            };
             let fields = if function == "running_sum" {
                 f.children
                     .iter()
@@ -4082,6 +4189,24 @@ impl<'a> PlanningContext<'a> {
                         })
                     })
                     .collect()
+            } else if is_value_window {
+                f.children
+                    .iter()
+                    .filter_map(|c| {
+                        let col = table_meta.column_by_field(c.name.as_str())?;
+                        Some(AggregateField {
+                            field_alias: c.response_key().to_string(),
+                            column_name: col.name.clone(),
+                            is_range: col.pg_type.is_range(),
+                            extremes: Default::default(),
+                            output: self.plan_output(
+                                &col.pg_type,
+                                col.enum_key.as_deref(),
+                                Some(&c.children),
+                            ),
+                        })
+                    })
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -4091,6 +4216,8 @@ impl<'a> PlanningContext<'a> {
                 fields,
                 partition,
                 rank_keys: 0,
+                ignore_nulls,
+                offset,
             });
         }
         Ok(windows)

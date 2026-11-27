@@ -726,6 +726,11 @@ pub struct DatabaseConfig {
     /// Append a sqlcommenter comment (application, operation or route) to every statement.
     #[serde(deserialize_with = "switch", default = "default_true")]
     pub sql_comments: bool,
+    /// How long a PostgreSQL 19+ read replica waits (`WAIT FOR LSN`) to catch up to
+    /// `X-Min-WAL-Position` before falling back to the primary (default `none`: check
+    /// immediately without waiting).
+    #[serde(deserialize_with = "timeout", default)]
+    pub replica_wait_timeout: Option<Timeout>,
 }
 
 fn default_pool_size() -> usize {
@@ -745,6 +750,7 @@ impl Default for DatabaseConfig {
             statement_cache: default_statement_cache(),
             schemas: Vec::new(),
             sql_comments: true,
+            replica_wait_timeout: None,
         }
     }
 }

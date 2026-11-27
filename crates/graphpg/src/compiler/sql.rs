@@ -43,6 +43,16 @@ pub fn escape_like(s: &str) -> String {
     out
 }
 
+struct ExportConnectionParts<'a> {
+    table_alias: &'a str,
+    selections: &'a ConnectionSelections,
+    from: String,
+    where_sql: String,
+    order: String,
+    limit: String,
+    params: Vec<String>,
+}
+
 /// Joins attached to one FROM scope (the row source of a SELECT). Every field list compiled
 /// against that row — including all branches of a polymorphic row — shares the scope, so a
 /// relation reached several times is joined once:
@@ -244,6 +254,11 @@ pub struct CompiledWrite {
     /// A version check (`expectedVersion`): it returns whether the row still has the
     /// expected version, and the write fails with `STALE_VERSION` if not.
     pub guard: bool,
+    /// A `connectOrCreate` whose insert gave way to a concurrent one (`ON CONFLICT DO
+    /// NOTHING` before PostgreSQL 19): when it returns no row, it is run again, and a new
+    /// statement's snapshot sees the row the other transaction committed.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub retry_if_empty: bool,
 }
 
 /// Returned column holding the row as it was before the write (`RETURNING OLD`), as JSON.
@@ -356,11 +371,9 @@ impl SqlCompiler {
         CompiledOperation::Mutation(mutations)
     }
 
-    /// The rows of a plan's single root connection as a statement returning one `row` (the
-    /// node's JSON) per matching row, in the connection's order: exports stream them
-    /// instead of building one response. `first`, `after` and `before` apply; without
-    /// `first` every row is returned. `None` when the plan is not one connection.
-    pub fn compile_rows(plan: &OperationPlan) -> Option<CompiledQuery> {
+    /// Builds the common inner query parts for connection row exports (`compile_rows`,
+    /// `compile_rows_text`, `compile_rows_copy`).
+    fn export_connection_parts(plan: &OperationPlan) -> Option<ExportConnectionParts<'_>> {
         let [(_, step_id)] = plan.root_fields() else {
             return None;
         };
@@ -442,6 +455,27 @@ impl SqlCompiler {
         let limit = first
             .map(|n| format!(" LIMIT {}", Self::bind_count(&mut params, n)))
             .unwrap_or_default();
+        Some(ExportConnectionParts {
+            table_alias,
+            selections,
+            from,
+            where_sql: Self::where_sql(&where_clauses),
+            order: order.join(", "),
+            limit,
+            params,
+        })
+    }
+
+    fn compile_rows_with(plan: &OperationPlan, cast_text: bool) -> Option<CompiledQuery> {
+        let ExportConnectionParts {
+            table_alias,
+            selections,
+            from,
+            where_sql,
+            order,
+            limit,
+            mut params,
+        } = Self::export_connection_parts(plan)?;
         let mut scope = JoinScope::default();
         let node = Self::row_object(
             table_alias,
@@ -452,13 +486,245 @@ impl SqlCompiler {
             plan,
             &mut params,
         );
-        let order = order.join(", ");
+        let projected = if cast_text {
+            format!("({node})::text")
+        } else {
+            node
+        };
         let sql = format!(
-            "SELECT {node} AS row FROM (SELECT {table_alias}.* FROM {from}{} ORDER BY {order}{limit}) {table_alias}{} ORDER BY {order}",
-            Self::where_sql(&where_clauses),
+            "SELECT {projected} AS row FROM (SELECT {table_alias}.* FROM {from}{where_sql} ORDER BY {order}{limit}) {table_alias}{} ORDER BY {order}",
             scope.sql
         );
         Some(CompiledQuery::new(sql, params))
+    }
+
+    /// The rows of a plan's single root connection as a statement returning one `row` (the
+    /// node's JSON) per matching row, in the connection's order: exports stream them
+    /// instead of building one response. `first`, `after` and `before` apply; without
+    /// `first` every row is returned. `None` when the plan is not one connection.
+    pub fn compile_rows(plan: &OperationPlan) -> Option<CompiledQuery> {
+        Self::compile_rows_with(plan, false)
+    }
+
+    /// Like [`compile_rows`](Self::compile_rows), returning raw serialized `text` per row so
+    /// NDJSON/JSON portal exports avoid decoding and re-encoding `serde_json::Value` per row.
+    pub fn compile_rows_text(plan: &OperationPlan) -> Option<CompiledQuery> {
+        Self::compile_rows_with(plan, true)
+    }
+
+    /// PostgreSQL 19+ native `COPY (SELECT ...) TO STDOUT (FORMAT json[, FORCE_ARRAY])` for
+    /// streaming single-root exports directly out of PostgreSQL. Returns `None` when the plan
+    /// is not a single homogeneous connection or parameters cannot be inlined safely.
+    pub fn compile_rows_copy(plan: &OperationPlan, force_array: bool) -> Option<String> {
+        let ExportConnectionParts {
+            table_alias,
+            selections,
+            from,
+            where_sql,
+            order,
+            limit,
+            mut params,
+        } = Self::export_connection_parts(plan)?;
+        if selections.node_polymorphism.is_some() || selections.node_fields.is_empty() {
+            return None;
+        }
+        let mut scope = JoinScope::default();
+        let pairs = Self::object_field_pairs(
+            table_alias,
+            &selections.node_fields,
+            "Node",
+            &mut scope,
+            plan,
+            &mut params,
+        );
+        if pairs.is_empty() {
+            return None;
+        }
+        let mut seen = HashSet::new();
+        for (alias, _) in &pairs {
+            if !seen.insert(alias.as_str()) {
+                return None;
+            }
+        }
+        let cols: Vec<String> = pairs
+            .iter()
+            .map(|(alias, expr)| format!("{expr} AS {}", quote_ident(alias)))
+            .collect();
+        let select_sql = format!(
+            "SELECT {} FROM (SELECT {table_alias}.* FROM {from}{where_sql} ORDER BY {order}{limit}) {table_alias}{} ORDER BY {order}",
+            cols.join(", "),
+            scope.sql
+        );
+        let inlined = Self::substitute_params_for_copy(&select_sql, &params)?;
+        let array_opt = if force_array { ", FORCE_ARRAY" } else { "" };
+        Some(format!(
+            "COPY ({inlined}) TO STDOUT (FORMAT json{array_opt})"
+        ))
+    }
+
+    /// Formats `val` as a collision-free PostgreSQL dollar-quoted literal.
+    fn dollar_quote_literal(val: &str, seed: usize) -> String {
+        let mut tag = format!("$gp{seed}$");
+        while val.contains(&tag) {
+            tag.pop();
+            tag.push_str("_$");
+        }
+        format!("{tag}{val}{tag}")
+    }
+
+    /// Substitutes `$1..$N` placeholders outside SQL literals, identifiers, dollar quotes and
+    /// comments with collision-free dollar-quoted string literals so `COPY (SELECT ...)` can run
+    /// without bind parameters. Returns `None` if any parameter contains NUL or is out of range.
+    pub fn substitute_params_for_copy(sql: &str, params: &[String]) -> Option<String> {
+        if params.iter().any(|p| p.contains('\0')) {
+            return None;
+        }
+        let bytes = sql.as_bytes();
+        let len = bytes.len();
+        let mut out = String::with_capacity(sql.len() + params.len() * 16);
+        let mut i = 0;
+
+        while i < len {
+            let b = bytes[i];
+            let prev_ident =
+                i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+            // Escape string E'...' / e'...'
+            if !prev_ident && (b == b'e' || b == b'E') && i + 1 < len && bytes[i + 1] == b'\'' {
+                let start = i;
+                i += 2;
+                while i < len {
+                    if bytes[i] == b'\\' && i + 1 < len {
+                        i += 1;
+                        i += sql[i..].chars().next().map_or(1, char::len_utf8);
+                    } else if bytes[i] == b'\'' {
+                        if i + 1 < len && bytes[i + 1] == b'\'' {
+                            i += 2;
+                        } else {
+                            i += 1;
+                            break;
+                        }
+                    } else {
+                        i += sql[i..].chars().next().map_or(1, char::len_utf8);
+                    }
+                }
+                out.push_str(&sql[start..i]);
+            } else if b == b'\'' {
+                let start = i;
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'\'' {
+                        if i + 1 < len && bytes[i + 1] == b'\'' {
+                            i += 2;
+                        } else {
+                            i += 1;
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                out.push_str(&sql[start..i]);
+            } else if b == b'"' {
+                let start = i;
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'"' {
+                        if i + 1 < len && bytes[i + 1] == b'"' {
+                            i += 2;
+                        } else {
+                            i += 1;
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                out.push_str(&sql[start..i]);
+            } else if b == b'-' && i + 1 < len && bytes[i + 1] == b'-' {
+                let start = i;
+                i += 2;
+                while i < len && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                if i < len {
+                    i += 1;
+                }
+                out.push_str(&sql[start..i]);
+            } else if b == b'/' && i + 1 < len && bytes[i + 1] == b'*' {
+                let start = i;
+                i += 2;
+                let mut depth = 1usize;
+                while i < len && depth > 0 {
+                    if bytes[i] == b'/' && i + 1 < len && bytes[i + 1] == b'*' {
+                        depth += 1;
+                        i += 2;
+                    } else if bytes[i] == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                out.push_str(&sql[start..i]);
+            } else if b == b'$' {
+                if i + 1 < len && bytes[i + 1].is_ascii_digit() {
+                    let mut end = i + 1;
+                    while end < len && bytes[end].is_ascii_digit() {
+                        end += 1;
+                    }
+                    let idx: usize = sql[i + 1..end].parse().ok()?;
+                    if idx == 0 || idx > params.len() {
+                        return None;
+                    }
+                    out.push_str(&Self::dollar_quote_literal(&params[idx - 1], idx - 1));
+                    i = end;
+                } else if let Some(tag_len) = Self::dollar_tag_len(&sql[i..]) {
+                    let tag = &sql[i..i + tag_len];
+                    let body_start = i + tag_len;
+                    if let Some(rel_end) = sql[body_start..].find(tag) {
+                        let end = body_start + rel_end + tag_len;
+                        out.push_str(&sql[i..end]);
+                        i = end;
+                    } else {
+                        out.push_str(&sql[i..]);
+                        i = len;
+                    }
+                } else {
+                    out.push('$');
+                    i += 1;
+                }
+            } else {
+                let ch_len = sql[i..].chars().next().map_or(1, char::len_utf8);
+                out.push_str(&sql[i..i + ch_len]);
+                i += ch_len;
+            }
+        }
+        Some(out)
+    }
+
+    /// Length (in bytes) of a PostgreSQL dollar-quote opening tag `$tag$` at the start of `s`,
+    /// or `None` if `s` does not begin with one.
+    fn dollar_tag_len(s: &str) -> Option<usize> {
+        let mut chars = s.char_indices();
+        let (_, '$') = chars.next()? else {
+            return None;
+        };
+        let mut first = true;
+        for (idx, c) in chars {
+            if c == '$' {
+                return Some(idx + 1);
+            }
+            let valid = if first {
+                c.is_alphabetic() || c == '_'
+            } else {
+                c.is_alphanumeric() || c == '_'
+            };
+            if !valid {
+                return None;
+            }
+            first = false;
+        }
+        None
     }
 
     /// `INSERT INTO <table> (<columns>) SELECT ... FROM <staging>`: rows staged as text
@@ -1152,16 +1418,16 @@ impl SqlCompiler {
         }
     }
 
-    /// Builds the key/value pairs of a row's JSON object. Scalar columns reference
-    /// `table_alias`; relations add joins to `scope`.
-    fn object_fields(
+    /// Builds `(field_alias, sql_expr)` pairs for a row's selected fields. Scalar columns
+    /// reference `table_alias`; relations add joins to `scope`.
+    fn object_field_pairs(
         table_alias: &str,
         fields: &[SelectedField],
         empty_typename: &str,
         scope: &mut JoinScope,
         plan: &OperationPlan,
         params: &mut Vec<String>,
-    ) -> Vec<String> {
+    ) -> Vec<(String, String)> {
         let mut pairs = Vec::new();
 
         for field in fields {
@@ -1171,9 +1437,9 @@ impl SqlCompiler {
                     column_name,
                     output,
                 } => {
-                    pairs.push(Self::json_pair(
-                        field_alias,
-                        &Self::value_output(&col(table_alias, column_name), output, 0),
+                    pairs.push((
+                        field_alias.clone(),
+                        Self::value_output(&col(table_alias, column_name), output, 0),
                     ));
                 }
                 SelectedField::GlobalId {
@@ -1188,13 +1454,13 @@ impl SqlCompiler {
                         Self::sql_literal(&format!("{type_name}:")),
                         col(table_alias, pk_column)
                     );
-                    pairs.push(Self::json_pair(field_alias, &expr));
+                    pairs.push((field_alias.clone(), expr));
                 }
                 SelectedField::Typename {
                     field_alias,
                     type_name,
                 } => {
-                    pairs.push(Self::json_pair(field_alias, &Self::sql_literal(type_name)));
+                    pairs.push((field_alias.clone(), Self::sql_literal(type_name)));
                 }
                 SelectedField::Relation {
                     field_alias,
@@ -1202,7 +1468,7 @@ impl SqlCompiler {
                 } => {
                     if let Some(child_step) = plan.get_step(*step_id) {
                         let expr = Self::relation_expr(*step_id, child_step, scope, plan, params);
-                        pairs.push(Self::json_pair(field_alias, &expr));
+                        pairs.push((field_alias.clone(), expr));
                     }
                 }
                 SelectedField::ExclusiveArcTarget {
@@ -1212,13 +1478,13 @@ impl SqlCompiler {
                 } => {
                     let expr =
                         Self::exclusive_arc_expr(table_alias, arc, type_fields, plan, params);
-                    pairs.push(Self::json_pair(field_alias, &expr));
+                    pairs.push((field_alias.clone(), expr));
                 }
                 SelectedField::OnAlias {
                     table_alias: other_alias,
                     field,
                 } => {
-                    let other_pairs = Self::object_fields(
+                    let other_pairs = Self::object_field_pairs(
                         other_alias,
                         std::slice::from_ref(field.as_ref()),
                         "",
@@ -1226,11 +1492,7 @@ impl SqlCompiler {
                         plan,
                         params,
                     );
-                    pairs.extend(
-                        other_pairs
-                            .into_iter()
-                            .filter(|p| !p.starts_with("'__typename': ''")),
-                    );
+                    pairs.extend(other_pairs);
                 }
                 SelectedField::JoinRow {
                     schema,
@@ -1259,7 +1521,7 @@ impl SqlCompiler {
                         sel_fields,
                         params,
                     );
-                    pairs.push(Self::json_pair(field_alias, &expr));
+                    pairs.push((field_alias.clone(), expr));
                 }
                 SelectedField::RowVersion {
                     field_alias,
@@ -1276,19 +1538,32 @@ impl SqlCompiler {
                         quote_qualified(schema, table),
                         on.join(" AND ")
                     );
-                    pairs.push(Self::json_pair(field_alias, &expr));
+                    pairs.push((field_alias.clone(), expr));
                 }
             }
         }
 
-        if pairs.is_empty() {
-            pairs.push(Self::json_pair(
-                "__typename",
-                &Self::sql_literal(empty_typename),
-            ));
+        if pairs.is_empty() && !empty_typename.is_empty() {
+            pairs.push(("__typename".to_string(), Self::sql_literal(empty_typename)));
         }
 
         pairs
+    }
+
+    /// Builds the key/value pairs of a row's JSON object. Scalar columns reference
+    /// `table_alias`; relations add joins to `scope`.
+    fn object_fields(
+        table_alias: &str,
+        fields: &[SelectedField],
+        empty_typename: &str,
+        scope: &mut JoinScope,
+        plan: &OperationPlan,
+        params: &mut Vec<String>,
+    ) -> Vec<String> {
+        Self::object_field_pairs(table_alias, fields, empty_typename, scope, plan, params)
+            .into_iter()
+            .map(|(key, expr)| Self::json_pair(&key, &expr))
+            .collect()
     }
 
     /// Value of a relation field. A to-one relation onto a primary key reads a plain
@@ -1508,6 +1783,7 @@ impl SqlCompiler {
                 expect_rows: None,
                 counts: true,
                 guard: false,
+                retry_if_empty: false,
             };
             let keys = (0..key_columns.len())
                 .map(|column| ParamSource::Returned { column })
@@ -1693,6 +1969,7 @@ impl SqlCompiler {
             expect_rows: None,
             counts: false,
             guard: true,
+            retry_if_empty: false,
         }
     }
 
@@ -2072,7 +2349,15 @@ impl SqlCompiler {
                     &mut params,
                     &mut deferred,
                 );
-                (format!("{insert}{}", Self::returning_sql(&returning)), None)
+                // PostgreSQL 19 `ON CONFLICT ... DO SELECT` requires a `RETURNING` clause even
+                // when no columns are needed by downstream steps.
+                let returning_clause =
+                    if on_conflict.is_some_and(|oc| oc.do_select) && returning.is_empty() {
+                        " RETURNING 1".to_string()
+                    } else {
+                        Self::returning_sql(&returning)
+                    };
+                (format!("{insert}{returning_clause}"), None)
             }
             WriteNodeKind::Lookup { key } => {
                 // A row only read is its own previous version
@@ -2224,24 +2509,57 @@ impl SqlCompiler {
                 };
                 (sql, None)
             }
-            WriteNodeKind::LookupOrInsert { key } => {
-                // The row with the key, or else a new one: one statement, one row
-                let where_sql = Self::key_conditions("_l", key, &mut params).join(" AND ");
-                let (cols, exprs) = Self::insert_columns(node, &mut params, &mut deferred);
-                let sql = format!(
-                    "WITH _found AS (SELECT {} FROM {target} AS _l WHERE {where_sql} LIMIT 1), \
-                     _new AS (INSERT INTO {target} AS _n{cols} SELECT {exprs} WHERE NOT EXISTS (SELECT 1 FROM _found) RETURNING {}) \
-                     SELECT * FROM _found UNION ALL SELECT * FROM _new",
-                    Self::returned_columns(&returning, "_l"),
-                    Self::returned_columns(&returning, "_n")
+            WriteNodeKind::LookupOrInsert {
+                key,
+                conflict_key,
+                do_select,
+            } => {
+                let missing_msg = format!(
+                    "`{}` neither found nor created a `{}` row",
+                    node.path, node.table
                 );
-                (
-                    sql,
-                    Some(format!(
-                        "`{}` neither found nor created a `{}` row",
-                        node.path, node.table
-                    )),
-                )
+                let conflict = conflict_key
+                    .as_ref()
+                    .filter(|c| !c.is_empty() && !node.values.is_empty())
+                    .map(|cols| {
+                        cols.iter()
+                            .map(|c| quote_ident(c))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    });
+                match conflict {
+                    // PostgreSQL 19+: one atomic statement without 23505 race or dead tuples.
+                    // Plain `DO SELECT` needs only `SELECT, INSERT` (unlike `FOR KEY SHARE`,
+                    // which requires `UPDATE`); child FK checks acquire key-share locks on insert.
+                    Some(conflict) if *do_select => {
+                        let (cols, exprs) = Self::insert_columns(node, &mut params, &mut deferred);
+                        let sql = format!(
+                            "INSERT INTO {target} AS _n{cols} VALUES ({exprs}) ON CONFLICT ({conflict}) DO SELECT RETURNING {}",
+                            Self::returned_columns(&returning, "_n")
+                        );
+                        (sql, Some(missing_msg))
+                    }
+                    // The row with the key, or else a new one: one statement, one row. With an
+                    // arbiter, an insert racing a concurrent one of the same key waits for it
+                    // and returns nothing (`DO NOTHING`) instead of failing with 23505; the
+                    // executor then runs the statement again, and under READ COMMITTED its new
+                    // snapshot finds the committed row (`retry_if_empty`).
+                    conflict => {
+                        let where_sql = Self::key_conditions("_l", key, &mut params).join(" AND ");
+                        let (cols, exprs) = Self::insert_columns(node, &mut params, &mut deferred);
+                        let on_conflict = conflict
+                            .map(|c| format!(" ON CONFLICT ({c}) DO NOTHING"))
+                            .unwrap_or_default();
+                        let sql = format!(
+                            "WITH _found AS (SELECT {} FROM {target} AS _l WHERE {where_sql} LIMIT 1), \
+                             _new AS (INSERT INTO {target} AS _n{cols} SELECT {exprs} WHERE NOT EXISTS (SELECT 1 FROM _found){on_conflict} RETURNING {}) \
+                             SELECT * FROM _found UNION ALL SELECT * FROM _new",
+                            Self::returned_columns(&returning, "_l"),
+                            Self::returned_columns(&returning, "_n")
+                        );
+                        (sql, Some(missing_msg))
+                    }
+                }
             }
             WriteNodeKind::UpdateOrInsert { key } => {
                 // A child with the key is moved to the parent, or else created with it
@@ -2360,6 +2678,14 @@ impl SqlCompiler {
                 None,
             ),
         };
+        let retry_if_empty = matches!(
+            &node.kind,
+            WriteNodeKind::LookupOrInsert {
+                conflict_key: Some(cols),
+                do_select: false,
+                ..
+            } if !cols.is_empty() && !node.values.is_empty()
+        );
         let verb = match &node.kind {
             WriteNodeKind::Insert
             | WriteNodeKind::Link
@@ -2417,6 +2743,7 @@ impl SqlCompiler {
             expect_rows,
             counts: is_root,
             guard: false,
+            retry_if_empty,
         }
     }
 
@@ -2880,6 +3207,9 @@ impl SqlCompiler {
             Some(cols) => cols.iter().map(String::as_str).collect(),
             None => columns.iter().copied().filter(|c| !is_key(c)).collect(),
         };
+        if oc.do_select {
+            return format!(" ON CONFLICT ({key}) DO SELECT");
+        }
         if oc.do_nothing || update.is_empty() {
             return format!(" ON CONFLICT ({key}) DO NOTHING");
         }
@@ -3026,6 +3356,43 @@ impl SqlCompiler {
                     fields.push(Self::json_pair(
                         &f.field_alias,
                         &format!("{table_alias}.\"__w{i}_{j}\""),
+                    ));
+                }
+                let obj = if fields.is_empty() {
+                    "'{}'::json".to_string()
+                } else {
+                    Self::json_object(&fields)
+                };
+                window_pairs.push(Self::json_pair(&w.field_alias, &obj));
+            } else if matches!(
+                w.function.as_str(),
+                "lag" | "lead" | "first_value" | "last_value" | "nth_value"
+            ) {
+                let null_clause = if w.ignore_nulls { " IGNORE NULLS" } else { "" };
+                let over_val = match w.function.as_str() {
+                    "lag" | "lead" => format!("OVER ({partition}ORDER BY {})", order.join(", ")),
+                    "first_value" | "last_value" => format!(
+                        "OVER ({partition}ORDER BY {} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                        order.join(", ")
+                    ),
+                    _ => format!(
+                        "OVER ({partition}ORDER BY {} ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)",
+                        order.join(", ")
+                    ),
+                };
+                let mut fields = Vec::new();
+                for (j, f) in w.fields.iter().enumerate() {
+                    let c = col(table_alias, &f.column_name);
+                    let call = match w.function.as_str() {
+                        "lag" | "lead" | "nth_value" => {
+                            format!("{}({c}, {})", w.function, w.offset.unwrap_or(1))
+                        }
+                        _ => format!("{}({c})", w.function),
+                    };
+                    window_cols.push(format!("{call}{null_clause} {over_val} AS \"__w{i}_{j}\""));
+                    fields.push(Self::json_pair(
+                        &f.field_alias,
+                        &Self::value_output(&format!("{table_alias}.\"__w{i}_{j}\""), &f.output, 0),
                     ));
                 }
                 let obj = if fields.is_empty() {
@@ -4461,7 +4828,7 @@ impl SqlCompiler {
     }
 
     /// Text form a JSON value is bound as.
-    fn param_text(value: &serde_json::Value) -> String {
+    pub(crate) fn param_text(value: &serde_json::Value) -> String {
         match value {
             serde_json::Value::String(s) => s.clone(),
             other => other.to_string(),
@@ -4783,6 +5150,7 @@ impl SqlCompiler {
             expect_rows: None,
             counts: false,
             guard: false,
+            retry_if_empty: false,
         };
         let mut params = Vec::new();
         let call = Self::unnested(
@@ -5330,5 +5698,31 @@ mod tests {
     fn escapes_like_patterns() {
         assert_eq!(escape_like("100%_off\\"), "100\\%\\_off\\\\");
         assert_eq!(escape_like("plain"), "plain");
+    }
+
+    #[test]
+    fn substitutes_params_for_copy_safely() {
+        let params = vec!["hello".to_string(), "it's $$1".to_string()];
+        let sql = "SELECT $1::text AS \"col$1\", '$1' AS lit, E'a\\'b$2' AS elit, $tag$keep $1$tag$ AS dq -- $2\n /* nested /* $1 */ */ WHERE c = $2::text";
+        let out = SqlCompiler::substitute_params_for_copy(sql, &params).unwrap();
+        assert_eq!(
+            out,
+            "SELECT $gp0$hello$gp0$::text AS \"col$1\", '$1' AS lit, E'a\\'b$2' AS elit, $tag$keep $1$tag$ AS dq -- $2\n /* nested /* $1 */ */ WHERE c = $gp1$it's $$1$gp1$::text"
+        );
+
+        // Collision with $gp0$ inside parameter value extends the tag
+        let tricky = vec!["break$gp0$; DROP TABLE t; --".to_string()];
+        let out2 = SqlCompiler::substitute_params_for_copy("WHERE x = $1::text", &tricky).unwrap();
+        assert_eq!(
+            out2,
+            "WHERE x = $gp0_$break$gp0$; DROP TABLE t; --$gp0_$::text"
+        );
+
+        // Out-of-range or NUL-containing parameters return None
+        assert!(SqlCompiler::substitute_params_for_copy("WHERE x = $2", &["a".into()]).is_none());
+        assert!(SqlCompiler::substitute_params_for_copy("WHERE x = $0", &["a".into()]).is_none());
+        assert!(
+            SqlCompiler::substitute_params_for_copy("WHERE x = $1", &["a\0b".into()]).is_none()
+        );
     }
 }

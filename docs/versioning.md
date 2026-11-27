@@ -33,4 +33,38 @@ Something the next major version removes or changes is deprecated first, in a mi
 
 ## Supported PostgreSQL
 
-The test suite runs against PostgreSQL 18. Dropping a PostgreSQL version is a major change.
+One compiled `graphpg` binary supports **PostgreSQL 18** and **PostgreSQL 19**. It reads the server's `server_version_num` each time it inspects the catalog, and each read replica's every 10 seconds, and it uses PostgreSQL 19 features only on a server that has them ([how](postgresql-19.md#how-graphpg-detects-the-version)). On PostgreSQL 19 the GraphQL schema and OpenAPI document gain fields and enum values and lose nothing, so re-export pinned schemas after upgrading. Dropping a PostgreSQL major version is a major change.
+
+### Automatic PostgreSQL adaptations
+
+| Capability | PostgreSQL 18 | PostgreSQL 19+ |
+| :--- | :--- | :--- |
+| **`connectOrCreate` by a unique key** | `WITH _found ... _new` with `ON CONFLICT (<key>) DO NOTHING`, run again if a concurrent insert won: no `23505` under contention | One `INSERT ... ON CONFLICT (<key>) DO SELECT RETURNING` |
+| **Upsert conflict action `SELECT`** | Not exposed | GraphQL `ConflictAction.SELECT` and REST `resolution=select` |
+| **Read-your-writes on standbys (`X-Min-WAL-Position`)** | Immediate `pg_last_wal_replay_lsn() >= $1` check, else the primary | `WAIT FOR LSN '<lsn>' WITH (MODE 'standby_replay', TIMEOUT '...', NO_THROW)` when `database.replica_wait_timeout` is set, else the primary |
+| **Streaming `POST /export`** | Portal fetch of each row's JSON as text | `COPY (SELECT ...) TO STDOUT (FORMAT json[, FORCE_ARRAY])` for `ndjson` and `"format": "json"` |
+| **Window value functions** | `rowNumber`, `rank`, `denseRank`, `percentRank`, `runningSum` | Also `lag`, `lead`, `firstValue`, `lastValue`, `nthValue` with `ignoreNulls` (`IGNORE NULLS` / `RESPECT NULLS`) |
+| **Diagnostics & statement advice** | `EXPLAIN (ANALYZE, BUFFERS, SERIALIZE, MEMORY)` | Adds `IO`, `pg_stat_statements` generic vs custom plan counts, and `postgres_fdw` `import_stats` advice |
+| **JSONPath** (`matchesPath`, `existsPath`, `path`) | PostgreSQL 18's JSONPath | Also the string methods `.lower()`, `.upper()`, `.initcap()`, `.replace()`, `.split_part()`, `.btrim()`, `.ltrim()`, `.rtrim()` |
+
+### Extension compatibility
+
+The whole test suite runs against PostgreSQL 18 with every extension below (`docker/test-pg/Dockerfile`), and against PostgreSQL 19.0 with the extensions that publish PostgreSQL 19 packages (`docker/test-pg/Dockerfile.19`, from the PGDG repository). Where an extension has no PostgreSQL 19 package yet, its tests are skipped on 19. Stay on PostgreSQL 18 if your database relies on it.
+
+| Component / Extension | PostgreSQL 18 | PostgreSQL 19 | Notes |
+| :--- | :--- | :--- | :--- |
+| **PostgreSQL core** | Tested | Tested | 18.6 and 19.0 |
+| **Contrib** (`pg_stat_statements`, `postgres_fdw`, `file_fdw`, `pg_trgm`, `ltree`, `citext`, `btree_gist`, `pgcrypto`, `uuid-ossp`) | Tested | Tested | Ship with PostgreSQL |
+| **pgvector** | Tested | Tested | `postgresql-19-pgvector` 0.8.7 |
+| **PostGIS** | Tested | Tested | `postgresql-19-postgis-3` 3.7.0 |
+| **hypopg** | Tested | Tested | `postgresql-19-hypopg` 1.4.5 |
+| **pg_cron** | Tested | Tested | `postgresql-19-cron` 1.6.8 |
+| **pg_partman** | Tested | Tested | `postgresql-19-partman` 5.5.1 |
+| **pgmq** | Tested | Tested | SQL only, installed from source (1.10.0) |
+| **pg_duckdb** | Tested | Not tested | On a server of its own (`pgduckdb/pgduckdb:18-v1.1.1`) |
+| **TimescaleDB** | Tested | No package yet | |
+| **PGroonga** | Tested | No package yet | |
+| **pg_jsonschema** | Tested | No package yet | |
+| **VectorChord** | Tested | No package yet | |
+| **pgvectorscale** | Tested | No package yet | |
+

@@ -161,6 +161,7 @@ export default defineConfig({
       { text: "Docs", link: "/docs/", activeMatch: "^/docs/" },
       { text: "GraphQL", link: "/docs/graphql-api" },
       { text: "REST", link: "/docs/rest-api" },
+      { text: "PostgreSQL 19", link: "/docs/postgresql-19" },
       { text: "Changelog", link: "/changelog" },
       {
         text: `v${release.version}`,
@@ -178,6 +179,7 @@ export default defineConfig({
           text: "Getting started",
           items: [
             { text: "Introduction", link: "/docs/" },
+            { text: "PostgreSQL 19", link: "/docs/postgresql-19" },
             { text: "AI agents", link: "/docs/ai-agents" },
             { text: "End-to-end type safety", link: "/docs/type-safety" },
             { text: "Configuration", link: "/docs/configuration" },

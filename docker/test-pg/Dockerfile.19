@@ -1,0 +1,23 @@
+# PostgreSQL 19 for the test suite (`crates/graphpg/tests/pg19.rs` and everything else), with
+# the extensions that publish PostgreSQL 19 packages. The others (TimescaleDB, PGroonga,
+# pg_jsonschema, VectorChord, pgvectorscale) have none yet: their tests skip and name the
+# extension. See docs/versioning.md for the matrix.
+#
+#   podman build -t graphpg-test-pg:19 -f docker/test-pg/Dockerfile.19 docker/test-pg
+FROM docker.io/library/postgres:19-trixie
+
+ARG PGMQ_VERSION=1.10.0
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends curl ca-certificates make \
+        postgresql-server-dev-19 \
+        postgresql-19-pgvector postgresql-19-postgis-3 postgresql-19-cron \
+        postgresql-19-hypopg postgresql-19-partman; \
+    # pgmq: SQL only
+    curl -fsSL "https://github.com/pgmq/pgmq/archive/refs/tags/v${PGMQ_VERSION}.tar.gz" | tar -xz -C /tmp; \
+    make -C /tmp/pgmq-${PGMQ_VERSION}/pgmq-extension install; \
+    rm -rf /tmp/pgmq-*; \
+    apt-get purge -y --auto-remove postgresql-server-dev-19 make; \
+    rm -rf /var/lib/apt/lists/*
+
+CMD ["postgres", "-c", "shared_preload_libraries=pg_cron,pg_stat_statements", "-c", "cron.database_name=graphpg_test"]

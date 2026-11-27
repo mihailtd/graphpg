@@ -27,6 +27,7 @@ mod parquet;
 mod partial_results;
 mod persisted_queries;
 mod pg18_constraints;
+mod pg19;
 mod pgmq_recipe;
 mod phase10_env_schema;
 mod phase11_config_views_keys_types;

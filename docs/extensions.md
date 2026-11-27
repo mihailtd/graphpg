@@ -160,10 +160,15 @@ statements: graphpg's 2 most expensive operations by total time (pg_stat_stateme
 Notes:
 
 - pg_stat_statements must be in `shared_preload_libraries`, and created in the database (`CREATE EXTENSION pg_stat_statements`). The role graphpg connects as sees other roles' statements only with `pg_read_all_stats`.
+- On **PostgreSQL 19+**, `graphpg advise --statements` (and `GET /debug/statements`) also reports `genericPlanCalls` vs `customPlanCalls` from `pg_stat_statements`, and highlights slow parameterized operations stuck on generic plans so you can tune `plan_cache_mode` or stabilize plans with core `pg_plan_advice` / `pg_stash_advice` without changing generated SQL.
 - pg_stat_statements identifies a statement by its normalized SQL, without comments, and keeps the text it first saw: two operations running the same SQL are counted together, under the first one's name.
 - Generic plans use average selectivities, not the values requests sent: a column whose values are very unevenly common can need an index the report does not suggest.
 - `extensions.integrations.pg_stat_statements: off` turns `--statements` off.
 
+## PostgreSQL versions & extension support
+
+One `graphpg` binary supports both PostgreSQL 18 and PostgreSQL 19, adapting automatically at startup via `server_version_num`. See the [extension compatibility matrix](versioning.md#extension-compatibility) for which third-party extensions have PostgreSQL 19 packages available and which still require PostgreSQL 18.
+
 ## Testing against the real extensions
 
-The integration tests run against `ghcr.io/mihailtd/graphpg-test-pg:18` (`docker/test-pg`): PostgreSQL 18 with every extension above, plus PostGIS, pg_cron, hypopg and pg_partman. `docker compose up` starts it. Where an extension is missing (another `TEST_DATABASE_URL`), its tests are skipped, and the skip message names the extension.
+The integration tests run against `ghcr.io/mihailtd/graphpg-test-pg:18` (`docker/test-pg`): PostgreSQL 18 with every extension above, plus PostGIS, pg_cron, hypopg and pg_partman. `docker compose up` starts it. `docker/test-pg/Dockerfile.19` builds the PostgreSQL 19 counterpart with the extensions that have PostgreSQL 19 packages ([matrix](versioning.md#extension-compatibility)). Where an extension is missing (another `TEST_DATABASE_URL`), its tests are skipped, and the skip message names the extension.

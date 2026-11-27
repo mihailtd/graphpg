@@ -27,6 +27,8 @@ enum Resolution {
     Merge,
     /// Leave the existing row as it is.
     Ignore,
+    /// Leave the existing row as it is and return it (`ON CONFLICT DO SELECT`, PostgreSQL 19+).
+    Select,
 }
 
 /// The query parameters of a write that are not the filter grammar.
@@ -86,7 +88,8 @@ fn write_params(raw: &str, endpoint: Endpoint) -> Result<WriteParams, ProblemDet
                 params.resolution = match value.as_str() {
                     "merge" => Resolution::Merge,
                     "ignore" => Resolution::Ignore,
-                    _ => return Err(invalid("`resolution` must be `merge` or `ignore`")),
+                    "select" => Resolution::Select,
+                    _ => return Err(invalid("`resolution` must be `merge`, `ignore` or `select`")),
                 }
             }
             ("update", Endpoint::Upsert) => params.update = Some(query::split_list(&value)),
@@ -326,6 +329,7 @@ pub(super) fn create_missing(raw_query: Option<&str>) -> Result<Missing, Problem
 fn on_conflict(
     table: &TableMetadata,
     params: &WriteParams,
+    server_version: u32,
 ) -> Result<serde_json::Value, ProblemDetails> {
     let target: Vec<String> = match &params.conflict {
         Some(columns) => columns.clone(),
@@ -369,14 +373,32 @@ fn on_conflict(
                 "conflict",
             )
         })?;
-    if params.resolution == Resolution::Ignore {
-        if params.update.is_some() {
-            return Err(ProblemDetails::invalid(
-                "`update` names the columns a merge updates: it does not go with `resolution=ignore`",
-                "update",
-            ));
+    match params.resolution {
+        Resolution::Ignore => {
+            if params.update.is_some() {
+                return Err(ProblemDetails::invalid(
+                    "`update` names the columns a merge updates: it does not go with `resolution=ignore`",
+                    "update",
+                ));
+            }
+            return Ok(serde_json::json!({ "key": key, "action": "NOTHING" }));
         }
-        return Ok(serde_json::json!({ "key": key, "action": "NOTHING" }));
+        Resolution::Select => {
+            if server_version < 190000 {
+                return Err(ProblemDetails::invalid(
+                    "`resolution=select` requires PostgreSQL 19 or later",
+                    "resolution",
+                ));
+            }
+            if params.update.is_some() {
+                return Err(ProblemDetails::invalid(
+                    "`update` names the columns a merge updates: it does not go with `resolution=select`",
+                    "update",
+                ));
+            }
+            return Ok(serde_json::json!({ "key": key, "action": "SELECT" }));
+        }
+        Resolution::Merge => {}
     }
     let mut on_conflict = serde_json::json!({ "key": key, "action": "UPDATE" });
     if let Some(columns) = &params.update {
@@ -413,7 +435,7 @@ pub async fn rest_bulk_upsert_handler(
         let body = parse_json_body(&json_body(table, &headers, body, true)?)?;
         let mut rows = bulk_rows(&ctx, body)?;
         fill_missing(&mut rows, params.missing);
-        let on_conflict = on_conflict(table, &params)?;
+        let on_conflict = on_conflict(table, &params, ctx.catalog.server_version)?;
 
         let m = mutation_field(
             &ctx.catalog,

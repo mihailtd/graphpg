@@ -109,9 +109,16 @@ async fn test_introspect_and_generate_schema_from_forum_database() {
 
     assert_eq!(doc.operations.iter().count(), 1);
 
-    // 5. Snapshot test the generated SDL
+    // 5. Snapshot test the generated SDL. PostgreSQL 19 adds to the API (window value fields,
+    // the `SELECT` conflict action), so each major version has its own snapshot, and a change
+    // to either has to be committed on purpose.
+    let suffix = if catalog.server_version >= 190000 {
+        "_pg19"
+    } else {
+        ""
+    };
     let sdl = SchemaBuilder::generate_sdl(&catalog);
-    insta::assert_snapshot!("forum_app_public_schema", sdl);
+    insta::assert_snapshot!(format!("forum_app_public_schema{suffix}"), sdl);
 
     // ... and the OpenAPI document, which a change to the REST API must update on purpose
     // (`cargo insta review`, or `INSTA_UPDATE=always cargo test`): a spec change fails CI
@@ -123,5 +130,5 @@ async fn test_introspect_and_generate_schema_from_forum_database() {
         "app_public",
         Some(&valid_schema),
     );
-    insta::assert_json_snapshot!("forum_app_public_openapi", openapi);
+    insta::assert_json_snapshot!(format!("forum_app_public_openapi{suffix}"), openapi);
 }

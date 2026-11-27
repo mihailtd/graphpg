@@ -633,8 +633,16 @@ impl<'a> CatalogInspector<'a> {
                 ));
             }
             if reltuples < 0.0 {
+                let extra = if wrapper == "postgres_fdw" && catalog.server_version >= 190000 {
+                    format!(
+                        " (PostgreSQL 19+: `ALTER SERVER {} OPTIONS (ADD import_stats 'true')` imports remote statistics without sampling)",
+                        quote_ident(&server)
+                    )
+                } else {
+                    String::new()
+                };
                 warn(AdviceLevel::Info, format!(
-                    "{at} has never been analyzed, so its row estimates are guesses. Consider: ANALYZE {}.{};",
+                    "{at} has never been analyzed, so its row estimates are guesses. Consider: ANALYZE {}.{};{extra}",
                     quote_ident(&schema), quote_ident(&name)
                 ));
             }

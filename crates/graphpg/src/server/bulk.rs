@@ -26,13 +26,20 @@ use tokio_postgres::types::{ToSql, Type};
 /// Rows fetched from the export's portal at a time.
 const EXPORT_BATCH: i32 = 1000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportFormat {
+    Ndjson,
+    Json,
+    Csv,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ExportRequest {
     pub query: String,
     #[serde(rename = "operationName")]
     pub operation_name: Option<String>,
     pub variables: Option<serde_json::Value>,
-    /// `ndjson` (default) or `csv`.
+    /// `ndjson` (default), `json`, or `csv`.
     pub format: Option<String>,
 }
 
@@ -59,13 +66,14 @@ pub async fn export_handler(
         Ok(ctx) => ctx,
         Err(err) => return err.into_response(),
     };
-    let csv = match req.format.as_deref() {
-        None | Some("ndjson") => false,
-        Some("csv") => true,
+    let format = match req.format.as_deref() {
+        None | Some("ndjson") => ExportFormat::Ndjson,
+        Some("json") => ExportFormat::Json,
+        Some("csv") => ExportFormat::Csv,
         Some(other) => {
             return json_error(
                 StatusCode::BAD_REQUEST,
-                format!("unknown export format `{other}` (ndjson or csv)"),
+                format!("unknown export format `{other}` (ndjson, json or csv)"),
                 None,
             )
         }
@@ -107,13 +115,23 @@ pub async fn export_handler(
         Ok(plan) => plan,
         Err(err) => return json_error(StatusCode::BAD_REQUEST, err.to_string(), None),
     };
-    let Some(query) = SqlCompiler::compile_rows(&plan) else {
+    let copy_sql = (catalog.server_version >= 190000 && format != ExportFormat::Csv)
+        .then(|| SqlCompiler::compile_rows_copy(&plan, format == ExportFormat::Json))
+        .flatten();
+    let portal_query = if copy_sql.is_some() {
+        None
+    } else if format == ExportFormat::Csv {
+        SqlCompiler::compile_rows(&plan)
+    } else {
+        SqlCompiler::compile_rows_text(&plan)
+    };
+    if copy_sql.is_none() && portal_query.is_none() {
         return json_error(
             StatusCode::BAD_REQUEST,
             "an export's operation selects exactly one connection field (its `nodes`)",
             None,
         );
-    };
+    }
 
     let mut client = match state.read_pool(None).await {
         Ok((client, _)) => client,
@@ -126,6 +144,25 @@ pub async fn export_handler(
             if let Some(auth) = &auth_ctx {
                 auth.apply_on(&*transaction).await?;
             }
+            if let Some(copy_sql) = copy_sql {
+                let copy_stream = transaction.copy_out(&copy_sql).await?;
+                let mut copy_stream = std::pin::pin!(copy_stream);
+                let mut sent_any = false;
+                while let Some(chunk) = copy_stream.next().await {
+                    let bytes = chunk?;
+                    if !bytes.is_empty() {
+                        sent_any = true;
+                        if tx_out.send(Ok(bytes)).await.is_err() {
+                            return Ok(());
+                        }
+                    }
+                }
+                if format == ExportFormat::Json && !sent_any {
+                    let _ = tx_out.send(Ok(Bytes::from_static(b"[]\n"))).await;
+                }
+                return transaction.commit().await;
+            }
+            let query = portal_query.expect("checked above");
             let statement = transaction.prepare(&query.sql).await?;
             let params: Vec<&(dyn ToSql + Sync)> = query
                 .params
@@ -134,6 +171,7 @@ pub async fn export_handler(
                 .collect();
             let portal = transaction.bind(&statement, &params).await?;
             let mut header: Option<Vec<String>> = None;
+            let mut first_json_item = true;
             loop {
                 let rows = transaction.query_portal(&portal, EXPORT_BATCH).await?;
                 if rows.is_empty() {
@@ -141,20 +179,34 @@ pub async fn export_handler(
                 }
                 let mut chunk = String::new();
                 for row in &rows {
-                    let value: serde_json::Value = row.get(0);
-                    if csv {
-                        let keys = header.get_or_insert_with(|| {
-                            let keys: Vec<String> = value
-                                .as_object()
-                                .map(|o| o.keys().cloned().collect())
-                                .unwrap_or_default();
-                            chunk.push_str(&csv_line(keys.iter().map(|k| Some(k.clone()))));
-                            keys
-                        });
-                        chunk.push_str(&csv_line(keys.iter().map(|k| csv_cell(value.get(k)))));
-                    } else {
-                        chunk.push_str(&value.to_string());
-                        chunk.push('\n');
+                    match format {
+                        ExportFormat::Csv => {
+                            let value: serde_json::Value = row.get(0);
+                            let keys = header.get_or_insert_with(|| {
+                                let keys: Vec<String> = value
+                                    .as_object()
+                                    .map(|o| o.keys().cloned().collect())
+                                    .unwrap_or_default();
+                                chunk.push_str(&csv_line(keys.iter().map(|k| Some(k.clone()))));
+                                keys
+                            });
+                            chunk.push_str(&csv_line(keys.iter().map(|k| csv_cell(value.get(k)))));
+                        }
+                        ExportFormat::Ndjson => {
+                            let raw: &str = row.get(0);
+                            chunk.push_str(raw);
+                            chunk.push('\n');
+                        }
+                        ExportFormat::Json => {
+                            let raw: &str = row.get(0);
+                            if first_json_item {
+                                chunk.push('[');
+                                first_json_item = false;
+                            } else {
+                                chunk.push(',');
+                            }
+                            chunk.push_str(raw);
+                        }
                     }
                 }
                 if tx_out.send(Ok(Bytes::from(chunk))).await.is_err() {
@@ -165,6 +217,16 @@ pub async fn export_handler(
                     break;
                 }
             }
+            if format == ExportFormat::Json {
+                let closing = if first_json_item { "[]" } else { "]" };
+                if tx_out
+                    .send(Ok(Bytes::from_static(closing.as_bytes())))
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
+            }
             transaction.commit().await
         }
         .await;
@@ -172,7 +234,7 @@ pub async fn export_handler(
             tracing::warn!(error = %err, "export failed while streaming");
             // Rows already sent cannot be taken back: NDJSON gets a last error line, and the
             // stream then ends with an error so the transfer is visibly incomplete
-            if !csv {
+            if format == ExportFormat::Ndjson {
                 let line = serde_json::json!({ "error": err.as_db_error().map(|d| d.message().to_string()).unwrap_or_else(|| err.to_string()) });
                 let _ = tx_out.send(Ok(Bytes::from(format!("{line}\n")))).await;
             }
@@ -182,10 +244,10 @@ pub async fn export_handler(
         }
     });
 
-    let content_type = if csv {
-        "text/csv; charset=utf-8"
-    } else {
-        "application/x-ndjson"
+    let content_type = match format {
+        ExportFormat::Csv => "text/csv; charset=utf-8",
+        ExportFormat::Json => "application/json",
+        ExportFormat::Ndjson => "application/x-ndjson",
     };
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
