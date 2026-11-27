@@ -1,0 +1,10 @@
+- **PostgreSQL 19 support** ([guide](docs/postgresql-19.md)): one binary for PostgreSQL 18 and 19. graphpg reads `server_version_num` at each catalog inspection (and each replica's every 10 s) and uses PostgreSQL 19 features only where the server has them:
+  - `connectOrCreate` by a unique key compiles to one `INSERT ... ON CONFLICT (<key>) DO SELECT RETURNING`; upserts gain `ConflictAction.SELECT` (GraphQL) and `resolution=select` (REST `PUT`).
+  - `X-Min-WAL-Position` reads wait on a standby with `WAIT FOR LSN` for up to the new `database.replica_wait_timeout` before falling back to the primary.
+  - `POST /export` streams through `COPY (...) TO STDOUT (FORMAT json[, FORCE_ARRAY])`, and gains `"format": "json"` (a JSON array) on every version.
+  - Connection edges and REST lists gain the window values `lag`, `lead`, `firstValue`, `lastValue` and `nthValue`, with `ignoreNulls` (`IGNORE NULLS`).
+  - `matchesPath`, `existsPath` and `path` accept PostgreSQL 19's JSONPath string methods (`.lower()`, `.btrim()`, `.split_part()`, ...), and a path the server rejects is a `BAD_USER_INPUT` error.
+  - `debug.explain` adds `IO`; `graphpg advise --statements` and `/debug/statements` report generic vs custom plan calls; foreign tables never analyzed get `import_stats` advice.
+- **`connectOrCreate` no longer fails under contention on PostgreSQL 18**: two requests creating the same new key both get the row. The insert gives way with `ON CONFLICT DO NOTHING` and the statement runs once more to read the committed row (`40001`, retried as before, under `REPEATABLE READ` and `SERIALIZABLE`). Before, 2–8% of racing requests failed with `23505`.
+- **Exports** read each row's JSON as text from PostgreSQL instead of parsing and re-serializing it.
+- **Tests and tooling**: `docker/test-pg/Dockerfile.19` builds a PostgreSQL 19 test database with the extensions that publish PostgreSQL 19 packages; the forum schema snapshots have a PostgreSQL 19 variant; `benchmarks/pg19/` compares both versions (pinned `jit`, alternating rounds, medians and ranges).

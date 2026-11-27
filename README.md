@@ -8,7 +8,7 @@ For AI work it covers two jobs. **Agents that use your data** get typed tools ov
 
 graphpg is a single Rust binary. It reads PostgreSQL's catalogs at startup, builds the APIs, and compiles each request into one SQL statement (lateral joins and JSON aggregation, so nested selections don't cause N+1 queries). Both APIs are planned onto the same engine, so they share filters, pagination, nested writes, typed errors, authorization and safety limits.
 
-> **Status:** 1.1, the API is stable. Versions follow [semantic versioning](docs/versioning.md): the GraphQL and REST APIs derived from a database, error codes, configuration and CLI change incompatibly only in a major version. The behaviour documented here is covered by an integration test suite that runs against PostgreSQL 18. See the [changelog](CHANGELOG.md).
+> **Status:** 1.x, the API is stable. Versions follow [semantic versioning](docs/versioning.md): the GraphQL and REST APIs derived from a database, error codes, configuration and CLI change incompatibly only in a major version. One compiled `graphpg` binary supports **PostgreSQL 18 and PostgreSQL 19**, adapting automatically at startup via `server_version_num` (see [PostgreSQL 19](docs/postgresql-19.md) and the [compatibility matrix](docs/versioning.md#supported-postgresql)). See the [changelog](CHANGELOG.md).
 
 ## Quick start
 
@@ -24,7 +24,7 @@ Run the published container image against your own database:
 ```bash
 docker run --rm -p 4000:4000 \
   -e DATABASE_URL=postgres://user:pass@host.docker.internal/mydb \
-  ghcr.io/mihailtd/graphpg:1.3.1 --mode dev
+  ghcr.io/mihailtd/graphpg:1.4.0 --mode dev
 ```
 
 The image is a static binary on `distroless/static` (about 27 MB with the embedded GraphiQL and Scalar UIs, no shell, non-root, signed with Sigstore). See [running in a container](docs/configuration.md#running-in-a-container).
@@ -53,6 +53,21 @@ curl -X POST localhost:4000/rest/authors -H 'content-type: application/json' \
      -d '{"username": "ada", "displayName": "Ada", "posts": {"create": [{"title": "Hello", "body": "Hi there"}]}}'    # a nested write
 ```
 
+## Built for PostgreSQL 19 (and 18)
+
+Point the same `graphpg` binary at PostgreSQL 19 and it uses what PostgreSQL 19 adds, with no flag and no separate build. graphpg reads the server's version each time it inspects the catalog (and each replica's), and turns a PostgreSQL 19 feature on only where the server has it. On PostgreSQL 18 everything keeps working, and the API on PostgreSQL 19 only grows (re-export [pinned schemas](docs/configuration.md#pinned-schemas) after upgrading).
+
+| PostgreSQL 19 feature | What it gives you in graphpg |
+| :--- | :--- |
+| **`ON CONFLICT DO SELECT`** | `connectOrCreate` by a unique key in one statement, plus `ConflictAction.SELECT` and REST `resolution=select`. On PostgreSQL 18, `connectOrCreate` is now race-free too, through `ON CONFLICT DO NOTHING`. |
+| **`WAIT FOR LSN`** | Read-your-writes on standbys (`X-Min-WAL-Position`): a replica that is a few milliseconds behind waits up to `database.replica_wait_timeout` instead of sending the read to the primary |
+| **`COPY ... (FORMAT json)`** | `POST /export` streamed by PostgreSQL itself, as NDJSON or a JSON array (`"format": "json"`) |
+| **`IGNORE NULLS` windows** | `lag`, `lead`, `firstValue`, `lastValue` and `nthValue` on connection edges and REST lists, for forward-filling sparse series without self-joins |
+| **JSONPath string methods** | `.lower()`, `.btrim()`, `.split_part()` and the others in `matchesPath`, `existsPath` and `path`, evaluated by PostgreSQL in the same statement |
+| **`EXPLAIN IO` & plan statistics** | `IO` in `debug.explain`, and generic vs custom plan counts in `graphpg advise --statements` |
+
+Read the [PostgreSQL 19 guide](docs/postgresql-19.md) and check extension readiness in the [extension compatibility matrix](docs/versioning.md#extension-compatibility).
+
 ## What it generates
 
 - **Types, relations and lookups** from tables, views, foreign keys (composite ones too), unique keys and many-to-many junction tables; Relay connections with keyset pagination, `node(id:)` and global IDs.
@@ -62,7 +77,7 @@ curl -X POST localhost:4000/rest/authors -H 'content-type: application/json' \
 - **Functions as fields**: `STABLE` functions become queries, `VOLATILE` ones mutations, and functions of a row become computed fields.
 - **PostgreSQL types**: enums, composite types, domains, arrays, ranges and multiranges, `ltree`, `jsonb`, pgvector, PostGIS.
 - **Search** fields from the indexes you have: trigram, full-text, pgvector, BM25 and hybrid.
-- **Modern PostgreSQL**: temporal keys (`WITHOUT OVERLAPS`, `PERIOD`), `RETURNING OLD`, `JSON_TABLE` views, `MERGE`-based syncing of children.
+- **Modern PostgreSQL**: PostgreSQL 19 (`ON CONFLICT DO SELECT`, `WAIT FOR LSN`, `COPY ... FORMAT json`, `IGNORE NULLS` value windows, `EXPLAIN IO`) alongside PostgreSQL 17/18 (`WITHOUT OVERLAPS` / `PERIOD` temporal keys, `RETURNING OLD`, `JSON_TABLE` views, `MERGE`-based child sync), adapting automatically at startup.
 - **Authorization from the database**: OAuth 2.0 bearer tokens are verified and their claims are made available to **Row-Level Security** policies; with `rbac.enabled`, the GraphQL schema, REST API and OpenAPI document are pruned to what the connecting role may do, from `GRANT`s.
 - **Safety limits for both APIs**: page size, query depth, estimated cost, bulk size, request size and `statement_timeout`, enforced on the plan before any SQL runs; production errors never carry PostgreSQL's own messages ([limits](docs/configuration.md#safety-limits)). Optional [rate limits](docs/configuration.md#rate-limits) per client, and [persisted queries](docs/graphql-api.md#persisted-queries) with an allow-list of operations for production.
 - **Pinned schemas**: `graphpg schema export` writes the GraphQL SDL and the OpenAPI document; `--check` fails CI when they are out of date, and production refuses to start on drift.
@@ -78,6 +93,7 @@ The guides are also published as a website at <https://graphpg.com>.
 
 | | |
 | :--- | :--- |
+| [PostgreSQL 19](docs/postgresql-19.md) | Automatic PG 19 / 18 adaptation (`ON CONFLICT DO SELECT`, `WAIT FOR LSN`, `COPY FORMAT json`, `IGNORE NULLS` windows, JSONPath string methods, `EXPLAIN IO`), how the version is detected, and upgrade notes |
 | [AI agents](docs/ai-agents.md) | MCP tools for agents through Apollo's MCP Server, vector and hybrid search for retrieval, typed contracts for agents that write code, and the guardrails |
 | [End-to-end type safety](docs/type-safety.md) | From a migration to TypeScript errors in the app: exporting the SDL and OpenAPI document, GraphQL Code Generator and openapi-typescript, what a column rename looks like, where the chain stops |
 | [Configuration](docs/configuration.md) | Running graphpg, environment variables, `graphpg.yaml`, safety limits, pinned schemas, multiple schemas, dev mode |
@@ -107,7 +123,7 @@ The guides are also published as a website at <https://graphpg.com>.
 
 ```bash
 docker compose up -d           # PostgreSQL 18 with pgvector, database graphpg_test
-cargo test --workspace         # TEST_DATABASE_URL overrides the connection string
+cargo test --workspace         # TEST_DATABASE_URL overrides the connection string (supports PG 18 and PG 19)
 ```
 
 Each test file creates the schema it needs. See [CONTRIBUTING.md](CONTRIBUTING.md).

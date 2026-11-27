@@ -1066,9 +1066,27 @@ impl OpenApiGenerator {
                 .writable_columns()
                 .map(|c| c.field_name.clone())
                 .collect();
+            let (resolution_desc, resolution_values): (&str, Vec<&str>) = if catalog.server_version
+                >= 190000
+            {
+                (
+                    "Insert the rows of the array ({}), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`), leave them (`resolution=ignore`), or leave and return them (`resolution=select`, PostgreSQL 19+). One statement, one transaction.",
+                    vec!["merge", "ignore", "select"],
+                )
+            } else {
+                (
+                    "Insert the rows of the array ({}), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.",
+                    vec!["merge", "ignore"],
+                )
+            };
+            let res_param_desc = if catalog.server_version >= 190000 {
+                "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it, `select` leaves and returns it"
+            } else {
+                "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it"
+            };
             collection.insert("put".into(), json!({
                 "summary": format!("Upsert many {name}"),
-                "description": format!("Insert the rows of the array ({}), and for those whose `conflict` key exists either update them (`resolution=merge`, the default: the columns the rows set, or those of `update`) or leave them (`resolution=ignore`). One statement, one transaction.", limit_text),
+                "description": resolution_desc.replacen("{}", &limit_text, 1),
                 "operationId": format!("upsert_many_{name}"),
                 "parameters": [
                     {
@@ -1078,8 +1096,8 @@ impl OpenApiGenerator {
                     },
                     {
                         "name": "resolution", "in": "query",
-                        "description": "What happens to a row whose key exists: `merge` updates it, `ignore` leaves it",
-                        "schema": { "type": "string", "enum": ["merge", "ignore"], "default": "merge" }
+                        "description": res_param_desc,
+                        "schema": { "type": "string", "enum": resolution_values, "default": "merge" }
                     },
                     {
                         "name": "update", "in": "query", "style": "form", "explode": false,
@@ -1540,7 +1558,7 @@ impl OpenApiGenerator {
 
     /// What a row of a list can carry besides its columns: its cursor, window values among the
     /// matching rows and running sums (the `edges` of the GraphQL connection).
-    fn edge_parameters(table: &TableMetadata) -> Vec<Value> {
+    fn edge_parameters(table: &TableMetadata, server_version: u32) -> Vec<Value> {
         let numeric: Vec<String> = table
             .visible_columns()
             .filter(|c| c.pg_type.is_numeric())
@@ -1578,6 +1596,43 @@ impl OpenApiGenerator {
                 "description": "Running sums of these columns up to each row, in the list's order (a ledger's balance): `_window.runningSum.<column>`",
                 "schema": { "type": "array", "items": { "type": "string", "enum": numeric } }
             }));
+        }
+        let has_aggregates = table.visible_columns().any(|c| c.pg_type.is_orderable());
+        let visible_cols: Vec<String> = table
+            .visible_columns()
+            .map(|c| c.field_name.clone())
+            .collect();
+        if server_version >= 190000 && has_aggregates && !visible_cols.is_empty() {
+            for (param, desc) in [
+                ("lag", "Values from an earlier row in the list's order (`_window.lag.<column>`, PostgreSQL 19+)"),
+                ("lead", "Values from a later row in the list's order (`_window.lead.<column>`, PostgreSQL 19+)"),
+                ("firstValue", "First values in the partition up to each row (`_window.firstValue.<column>`, PostgreSQL 19+)"),
+                ("lastValue", "Last values in the partition up to each row (`_window.lastValue.<column>`, PostgreSQL 19+)"),
+                ("nthValue", "Values from the 1-based `windowNth` row of the partition (`_window.nthValue.<column>`, PostgreSQL 19+)"),
+            ] {
+                params.push(json!({
+                    "name": param, "in": "query", "style": "form", "explode": false,
+                    "description": desc,
+                    "schema": { "type": "array", "items": { "type": "string", "enum": visible_cols } }
+                }));
+            }
+            params.extend([
+                json!({
+                    "name": "ignoreNulls", "in": "query",
+                    "description": "Skip NULL values (`IGNORE NULLS`, PostgreSQL 19+) in value window functions",
+                    "schema": { "type": "boolean", "default": false }
+                }),
+                json!({
+                    "name": "windowOffset", "in": "query",
+                    "description": "Row offset for `lag` and `lead` (default 1, PostgreSQL 19+)",
+                    "schema": { "type": "integer", "minimum": 0, "default": 1 }
+                }),
+                json!({
+                    "name": "windowNth", "in": "query",
+                    "description": "1-based row position `n` for `nthValue` (PostgreSQL 19+)",
+                    "schema": { "type": "integer", "minimum": 1 }
+                }),
+            ]);
         }
         params
     }
@@ -1928,7 +1983,7 @@ impl OpenApiGenerator {
         ];
         params.extend(Self::embed_parameters(table, catalog, limits, true));
         if table.operations.connection {
-            params.extend(Self::edge_parameters(table));
+            params.extend(Self::edge_parameters(table, catalog.server_version));
         }
         params.retain(|p| !p.is_null());
         Value::Array(params)

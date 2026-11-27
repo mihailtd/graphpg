@@ -1423,6 +1423,19 @@ impl SchemaBuilder {
             // 3. Generate Relay Edge and Connection types
             let edge_type_name = format!("{}Edge", type_name);
             let connection_type_name = format!("{}Connection", type_name);
+            let has_value_windows =
+                catalog.server_version >= 190000 && has_aggregates && !columns.is_empty();
+            if has_value_windows {
+                connection_types_sdl.push_str(&format!("type {type_name}WindowValues {{\n"));
+                for col in &columns {
+                    connection_types_sdl.push_str(&format!(
+                        "  {}: {}\n",
+                        col.field_name,
+                        catalog.column_type(col, false)
+                    ));
+                }
+                connection_types_sdl.push_str("}\n\n");
+            }
 
             connection_types_sdl.push_str(&format!("type {} {{\n", edge_type_name));
             connection_types_sdl.push_str("  cursor: String!\n");
@@ -1439,6 +1452,16 @@ impl SchemaBuilder {
                 if !numeric_cols.is_empty() {
                     connection_types_sdl.push_str(&format!(
                         "  \"\"\"Sums of the matching rows up to this one in the connection's order: running totals (a ledger's balance).\"\"\"\n  runningSum({partition}): {type_name}SumAggregate\n"
+                    ));
+                }
+                if has_value_windows {
+                    let ignore = "\"\"\"Skip NULL values (`IGNORE NULLS`, PostgreSQL 19+).\"\"\" ignoreNulls: Boolean = false";
+                    connection_types_sdl.push_str(&format!(
+                        "  \"\"\"Column values from an earlier row in the connection's order (PostgreSQL 19+).\"\"\"\n  lag({partition}, offset: Int = 1, {ignore}): {type_name}WindowValues\n  \
+                         \"\"\"Column values from a later row in the connection's order (PostgreSQL 19+).\"\"\"\n  lead({partition}, offset: Int = 1, {ignore}): {type_name}WindowValues\n  \
+                         \"\"\"First column values in the partition up to the current row (PostgreSQL 19+).\"\"\"\n  firstValue({partition}, {ignore}): {type_name}WindowValues\n  \
+                         \"\"\"Last non-null or most recent column values up to the current row (PostgreSQL 19+).\"\"\"\n  lastValue({partition}, {ignore}): {type_name}WindowValues\n  \
+                         \"\"\"Column values from the 1-based `n`th row of the partition (PostgreSQL 19+).\"\"\"\n  nthValue(n: Int!, {partition}, {ignore}): {type_name}WindowValues\n"
                     ));
                 }
             }
@@ -1615,12 +1638,18 @@ impl SchemaBuilder {
             .iter()
             .any(|t| t.has_upsert() && (t.operations.create || t.operations.create_many))
         {
-            mutation_types_sdl.push_str(concat!(
-                "\"\"\"What an insert does when a row conflicts with an existing one on a unique key.\"\"\"\n",
-                "enum ConflictAction {\n",
-                "  \"\"\"Update the existing row from the proposed one.\"\"\"\n  UPDATE\n",
-                "  \"\"\"Leave the existing row as it is.\"\"\"\n  NOTHING\n",
-                "}\n\n",
+            let select_val = if catalog.server_version >= 190000 {
+                "  \"\"\"Leave the existing row as it is and return it (`ON CONFLICT DO SELECT`, PostgreSQL 19+).\"\"\"\n  SELECT\n"
+            } else {
+                ""
+            };
+            mutation_types_sdl.push_str(&format!(
+                "\"\"\"What an insert does when a row conflicts with an existing one on a unique key.\"\"\"\n\
+                 enum ConflictAction {{\n  \
+                 \"\"\"Update the existing row from the proposed one.\"\"\"\n  UPDATE\n  \
+                 \"\"\"Leave the existing row as it is.\"\"\"\n  NOTHING\n\
+                 {select_val}\
+                 }}\n\n"
             ));
         }
 

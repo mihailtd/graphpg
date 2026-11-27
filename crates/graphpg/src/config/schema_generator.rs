@@ -657,7 +657,11 @@ impl ConfigSchemaGenerator {
                     "uniqueItems": true,
                     "description": "Database schemas to expose, the first being the default (default app_public)"
                 },
-                "sql_comments": Self::switch_described("Append a sqlcommenter comment to every statement (default true)")
+                "sql_comments": Self::switch_described("Append a sqlcommenter comment to every statement (default true)"),
+                "replica_wait_timeout": {
+                    "type": ["string", "integer", "null"],
+                    "description": "How long a PostgreSQL 19+ read replica waits (`WAIT FOR LSN`) to catch up to `X-Min-WAL-Position` before falling back to the primary (e.g. `50ms`, default `off`)"
+                }
             },
             "additionalProperties": false
         })

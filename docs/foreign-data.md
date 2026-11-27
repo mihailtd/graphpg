@@ -165,7 +165,8 @@ Measured on a loopback connection (no network latency), a page of 100 customers 
 Settings that matter:
 
 - **`use_remote_estimate 'true'`** (on the server or the table). Without it, PostgreSQL plans with guesses for foreign tables, which can pick poor join orders.
-- **`ANALYZE` the foreign tables** after importing them and when their data changes a lot. It samples the remote table to keep local statistics.
+- **`ANALYZE` the foreign tables** after importing them and when their data changes a lot. It samples the remote table to keep local statistics (on PostgreSQL 19+, set `import_stats 'true'` on the server or foreign table so `ANALYZE` imports remote statistics without row sampling).
+- **Prepared-statement array pushdown (PostgreSQL 19+)**: PostgreSQL 19 pushes parameterized array comparisons (`WHERE col = ANY ($1)`, used by graphpg's `in` filters and batched relations) directly down to `postgres_fdw` servers instead of filtering locally.
 - **`fetch_size`** (rows per round trip, default 100): raise it for large lists and exports.
 - **`limits.cost` does not know about the network.** It estimates rows, not round trips. Lower `limits.page_size.max` or `limits.depth` if remote relations get expensive.
 - **`limits.statement_timeout`** cancels the remote query too, when the local statement is cancelled.

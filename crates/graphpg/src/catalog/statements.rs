@@ -38,6 +38,12 @@ pub struct OperationStats {
     pub rows: i64,
     /// Distinct statements (shapes) of the operation.
     pub statements: usize,
+    /// Executions that used a generic plan (`pg_stat_statements` on PostgreSQL 19+).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generic_plan_calls: Option<i64>,
+    /// Executions that used a custom plan (`pg_stat_statements` on PostgreSQL 19+).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_plan_calls: Option<i64>,
     pub suggestions: Vec<IndexSuggestion>,
 }
 
@@ -83,7 +89,7 @@ pub async fn top_statements(
         .integration(Integration::PgStatStatements)
         .ok_or(StatementsError::NotInstalled)?;
     let ext = quote_ident(&pgss.schema);
-    let mut operations = grouped_operations(client, &ext).await?;
+    let mut operations = grouped_operations(client, &pgss.schema, catalog.server_version).await?;
     let since: Option<String> = client
         .query_opt(
             &format!("SELECT stats_reset::text FROM {ext}.pg_stat_statements_info"),
@@ -123,16 +129,49 @@ pub async fn top_statements(
     Ok(report)
 }
 
-/// graphpg's statements in `pg_stat_statements` (schema `ext`, quoted), summed by operation,
+/// Whether `pg_stat_statements` exposes PG 19+'s `generic_plan_calls` / `custom_plan_calls`
+/// columns (guarding upgraded instances before `ALTER EXTENSION pg_stat_statements UPDATE`).
+async fn has_plan_call_columns(client: &Client, schema: &str, server_version: u32) -> bool {
+    if server_version < 190000 {
+        return false;
+    }
+    client
+        .query_one(
+            "SELECT EXISTS (
+                SELECT 1
+                FROM pg_attribute a
+                JOIN pg_class c ON c.oid = a.attrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = $1
+                  AND c.relname = 'pg_stat_statements'
+                  AND a.attname = 'generic_plan_calls'
+                  AND NOT a.attisdropped
+            )",
+            &[&schema],
+        )
+        .await
+        .map(|r| r.get::<_, bool>(0))
+        .unwrap_or(false)
+}
+
+/// graphpg's statements in `pg_stat_statements` (`schema`, unquoted), summed by operation,
 /// each with the text of its statements.
 async fn grouped_operations(
     client: &Client,
-    ext: &str,
+    schema: &str,
+    server_version: u32,
 ) -> Result<Vec<(OperationStats, Vec<String>)>, StatementsError> {
+    let ext = quote_ident(schema);
+    let plan_calls = has_plan_call_columns(client, schema, server_version).await;
+    let extra_cols = if plan_calls {
+        ", generic_plan_calls, custom_plan_calls"
+    } else {
+        ""
+    };
     let rows = client
         .query(
             &format!(
-                "SELECT query, calls, total_exec_time, rows FROM {ext}.pg_stat_statements
+                "SELECT query, calls, total_exec_time, rows{extra_cols} FROM {ext}.pg_stat_statements
                  WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
                    AND query LIKE '%application=''graphpg''%'
                    -- not the plans of earlier runs of this report
@@ -160,6 +199,8 @@ async fn grouped_operations(
                     total_ms: 0.0,
                     rows: 0,
                     statements: 0,
+                    generic_plan_calls: plan_calls.then_some(0),
+                    custom_plan_calls: plan_calls.then_some(0),
                     suggestions: Vec::new(),
                 },
                 Vec::new(),
@@ -168,6 +209,14 @@ async fn grouped_operations(
         entry.0.calls += row.get::<_, i64>(1);
         entry.0.total_ms += row.get::<_, f64>(2);
         entry.0.rows += row.get::<_, i64>(3);
+        if plan_calls {
+            if let Some(ref mut g) = entry.0.generic_plan_calls {
+                *g += row.get::<_, i64>(4);
+            }
+            if let Some(ref mut c) = entry.0.custom_plan_calls {
+                *c += row.get::<_, i64>(5);
+            }
+        }
         entry.0.statements += 1;
         entry.1.push(query);
     }
@@ -188,7 +237,7 @@ pub async fn slow_operations(
     let pgss = catalog
         .integration(Integration::PgStatStatements)
         .ok_or(StatementsError::NotInstalled)?;
-    let operations = grouped_operations(client, &quote_ident(&pgss.schema)).await?;
+    let operations = grouped_operations(client, &pgss.schema, catalog.server_version).await?;
     Ok(operations
         .into_iter()
         .map(|(o, _)| (o.operation.clone(), o.mean_ms(), o.calls))

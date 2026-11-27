@@ -65,6 +65,58 @@ How often have you asked an agent to "change this everywhere" and found, a day l
 
 <section class="home-section">
 
+<p class="eyebrow">PostgreSQL 19</p>
+
+## Built for PostgreSQL 19, automatic on 18
+
+Point the same `graphpg` binary at PostgreSQL 19 and it uses what PostgreSQL 19 adds, with no flag and no separate build: graphpg reads the server's version and turns each PostgreSQL 19 feature on only where the server has it. `connectOrCreate` becomes one `INSERT ... ON CONFLICT DO SELECT`, exports stream from `COPY ... FORMAT json`, standbys wait for your writes with `WAIT FOR LSN`, and JSONPath filters gain string methods. On PostgreSQL 18 everything keeps working, and `connectOrCreate` is race-free there too.
+
+::: code-group
+
+```graphql [ON CONFLICT DO SELECT]
+mutation {
+  createNote(input: {
+    authorId: 1
+    body: "Ready for PG 19"
+    tag: { connectOrCreate: { where: { slug: "postgres" }, create: { slug: "postgres", name: "Postgres" } } }
+  }) {
+    note { databaseId tag { slug } }
+  }
+}
+```
+
+```yaml [WAIT FOR LSN]
+# graphpg.yaml — bounded standby wait for X-Min-WAL-Position read-your-writes
+database:
+  replica_wait_timeout: 50ms
+```
+
+```graphql [IGNORE NULLS windows]
+{
+  readingsConnection(orderBy: [SEQ_ASC, PRIMARY_KEY_ASC]) {
+    edges {
+      node { grp seq }
+      lastValue(partitionBy: [GRP], ignoreNulls: true) { val label }
+      lag(partitionBy: [GRP], offset: 1, ignoreNulls: true) { val }
+    }
+  }
+}
+```
+
+```bash [COPY FORMAT json]
+curl -X POST localhost:4000/export \
+  -H 'content-type: application/json' \
+  -d '{"query": "{ postsConnection(orderBy: [PRIMARY_KEY_ASC]) { nodes { databaseId title } } }", "format": "json"}'
+```
+
+:::
+
+<p>Read the <a href="./docs/postgresql-19">PostgreSQL 19 guide →</a> or check extension readiness in the <a href="./docs/versioning#extension-compatibility">extension compatibility matrix →</a></p>
+
+</section>
+
+<section class="home-section">
+
 <p class="eyebrow">Schema in SQL</p>
 
 ## SQL is the schema language agents already write well
@@ -343,11 +395,11 @@ curl 'localhost:4000/rest/rpc/popular_tags'
   </div>
   <div class="capability">
     <h3>Modern PostgreSQL</h3>
-    <p>Temporal keys (<code>WITHOUT OVERLAPS</code>, <code>PERIOD</code>), <code>RETURNING OLD</code>, <code>JSON_TABLE</code> views, <code>MERGE</code>-based syncing of children.</p>
+    <p>PostgreSQL 19 (<code>ON CONFLICT DO SELECT</code>, <code>WAIT FOR LSN</code>, <code>IGNORE NULLS</code> windows) alongside temporal keys, <code>RETURNING OLD</code>, <code>JSON_TABLE</code> and <code>MERGE</code>.</p>
   </div>
   <div class="capability">
     <h3>Federation and streaming</h3>
-    <p>Apollo Federation v2 subgraphs, <code>@defer</code> / <code>@stream</code>, NDJSON and CSV export, <code>COPY</code> import, read replicas.</p>
+    <p>Apollo Federation v2 subgraphs, <code>@defer</code> / <code>@stream</code>, PG 19 <code>COPY FORMAT json</code> / NDJSON / CSV export, <code>COPY</code> import, read replicas.</p>
   </div>
   <div class="capability">
     <h3>Other databases and files</h3>
@@ -363,7 +415,7 @@ curl 'localhost:4000/rest/rpc/popular_tags'
   </div>
   <div class="capability">
     <h3>Index advice</h3>
-    <p><code>graphpg advise --statements</code> finds the costliest operations in <code>pg_stat_statements</code> and the indexes they lack, checked with hypopg.</p>
+    <p><code>graphpg advise --statements</code> surfaces <code>pg_stat_statements</code> generic vs custom plan counts (PG 19+), <code>EXPLAIN IO</code>, and missing indexes checked with hypopg.</p>
   </div>
 </div>
 

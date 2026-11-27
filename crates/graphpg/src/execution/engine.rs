@@ -213,6 +213,11 @@ impl ExecutionError {
 /// deadlock (it then fails with the last error).
 pub const MAX_ATTEMPTS: u32 = 10;
 
+/// Times a `connectOrCreate` statement is run while it returns no row because a concurrent
+/// insert of the same key won (`CompiledWrite::retry_if_empty`). One more is normally enough:
+/// the winner has committed by the time `ON CONFLICT DO NOTHING` returns.
+const LOOKUP_OR_INSERT_ATTEMPTS: u32 = 3;
+
 /// Pause before attempt `attempt + 1`: exponential from 2 ms up to 256 ms, with jitter so
 /// competing transactions spread out.
 fn retry_delay(attempt: u32) -> std::time::Duration {
@@ -505,6 +510,18 @@ impl ExecutionEngine {
         explain: Option<&mut Vec<String>>,
         auth_ctx: Option<&crate::server::AuthSessionContext>,
     ) -> Result<serde_json::Value, ExecutionError> {
+        Self::run_with_options(conn, compiled, explain, false, auth_ctx).await
+    }
+
+    /// Runs a compiled operation with explicit `EXPLAIN` (`IO` when `explain_io` is true, on
+    /// PostgreSQL 19+) and optional authenticated session context.
+    pub async fn run_with_options<C: Connection>(
+        conn: &C,
+        compiled: &CompiledOperation,
+        explain: Option<&mut Vec<String>>,
+        explain_io: bool,
+        auth_ctx: Option<&crate::server::AuthSessionContext>,
+    ) -> Result<serde_json::Value, ExecutionError> {
         use tracing::Instrument as _;
         let kind = match compiled {
             CompiledOperation::Query(_) => "query",
@@ -523,7 +540,7 @@ impl ExecutionEngine {
             error.type = tracing::field::Empty,
         );
         let start = std::time::Instant::now();
-        let result = Self::run_with_retries(conn, compiled, explain, auth_ctx)
+        let result = Self::run_with_retries(conn, compiled, explain, explain_io, auth_ctx)
             .instrument(span.clone())
             .await;
         let error = result.as_ref().err().map(ExecutionError::metric_code);
@@ -539,17 +556,18 @@ impl ExecutionEngine {
         result
     }
 
-    /// [`run_with_auth`](Self::run_with_auth), run again after a transient failure.
+    /// [`run_with_options`](Self::run_with_options), run again after a transient failure.
     async fn run_with_retries<C: Connection>(
         conn: &C,
         compiled: &CompiledOperation,
         mut explain: Option<&mut Vec<String>>,
+        explain_io: bool,
         auth_ctx: Option<&crate::server::AuthSessionContext>,
     ) -> Result<serde_json::Value, ExecutionError> {
         let mut attempt = 1;
         loop {
             let (result, owned) =
-                Self::run_once(conn, compiled, explain.as_deref_mut(), auth_ctx).await;
+                Self::run_once(conn, compiled, explain.as_deref_mut(), explain_io, auth_ctx).await;
             match result {
                 Err(err) if owned && err.is_transient() && attempt < MAX_ATTEMPTS => {
                     tracing::debug!(attempt, error = %err, "retrying the operation after a transient failure");
@@ -570,6 +588,7 @@ impl ExecutionEngine {
         conn: &C,
         compiled: &CompiledOperation,
         mut explain: Option<&mut Vec<String>>,
+        explain_io: bool,
         auth_ctx: Option<&crate::server::AuthSessionContext>,
     ) -> (Result<serde_json::Value, ExecutionError>, bool) {
         match compiled {
@@ -590,10 +609,13 @@ impl ExecutionEngine {
                     if let Some(lines) = explain.as_deref_mut() {
                         // What EXPLAIN ANALYZE executes is rolled back
                         let plan = match scope {
-                            Some(_) => Self::explain_rolled_back(conn.client(), query).await,
+                            Some(_) => {
+                                Self::explain_rolled_back(conn.client(), query, explain_io).await
+                            }
                             None => {
                                 let explain_scope = Scope::begin(conn).await?;
-                                let plan = Self::explain(conn.client(), query).await;
+                                let plan =
+                                    Self::explain_with_io(conn.client(), query, explain_io).await;
                                 explain_scope.rollback(conn.client()).await?;
                                 plan
                             }
@@ -629,7 +651,9 @@ impl ExecutionEngine {
                 }
                 let mut data = serde_json::Map::new();
                 for mutation in mutations {
-                    match Self::run_mutation(conn, mutation, explain.as_deref_mut()).await {
+                    match Self::run_mutation(conn, mutation, explain.as_deref_mut(), explain_io)
+                        .await
+                    {
                         Ok(value) => {
                             data.insert(mutation.field_alias.clone(), value);
                         }
@@ -665,6 +689,7 @@ impl ExecutionEngine {
         conn: &C,
         mutation: &CompiledMutation,
         mut explain: Option<&mut Vec<String>>,
+        explain_io: bool,
     ) -> Result<serde_json::Value, ExecutionError> {
         let client = conn.client();
         if let Some(lines) = explain.as_deref_mut() {
@@ -676,7 +701,7 @@ impl ExecutionEngine {
         for write in &mutation.writes {
             let query = written.resolve(&write.statement, &mutation.node_paths)?;
             if let Some(lines) = explain.as_deref_mut() {
-                lines.extend(Self::explain_rolled_back(client, &query).await?);
+                lines.extend(Self::explain_rolled_back(client, &query, explain_io).await?);
             }
             let failed = |error| ExecutionError::Write {
                 error,
@@ -685,10 +710,32 @@ impl ExecutionEngine {
             Self::check_params(&query.params)?;
             let statement = conn.prepare(&query.sql).await?;
             let params = Self::param_refs(&query.params);
-            let count = if write.returning.is_empty() && !write.collect {
-                client.execute(&statement, &params).await.map_err(failed)? as usize
+            // A `connectOrCreate` that gave way to a concurrent insert of its key returns no
+            // row; under READ COMMITTED the next statement's snapshot sees the committed row.
+            // (Under REPEATABLE READ PostgreSQL raises a serialization failure instead, and the
+            // whole operation is retried.)
+            let attempts = if write.retry_if_empty {
+                LOOKUP_OR_INSERT_ATTEMPTS
             } else {
-                let rows = client.query(&statement, &params).await.map_err(failed)?;
+                1
+            };
+            let count = if write.returning.is_empty() && !write.collect {
+                let mut count = 0;
+                for _ in 0..attempts {
+                    count = client.execute(&statement, &params).await.map_err(failed)? as usize;
+                    if count > 0 {
+                        break;
+                    }
+                }
+                count
+            } else {
+                let mut rows = Vec::new();
+                for _ in 0..attempts {
+                    rows = client.query(&statement, &params).await.map_err(failed)?;
+                    if !rows.is_empty() {
+                        break;
+                    }
+                }
                 let texts = |row: &tokio_postgres::Row| {
                     (0..row.len())
                         .map(|c| row.get::<_, Option<String>>(c))
@@ -736,9 +783,9 @@ impl ExecutionEngine {
         if let Some(lines) = explain {
             // Without writes the payload statement is the data-modifying one
             let plan = if mutation.writes.is_empty() {
-                Self::explain_rolled_back(client, &payload).await?
+                Self::explain_rolled_back(client, &payload, explain_io).await?
             } else {
-                Self::explain(client, &payload).await?
+                Self::explain_with_io(client, &payload, explain_io).await?
             };
             lines.extend(plan);
         }
@@ -775,9 +822,10 @@ impl ExecutionEngine {
     async fn explain_rolled_back(
         client: &Client,
         compiled: &CompiledQuery,
+        explain_io: bool,
     ) -> Result<Vec<String>, ExecutionError> {
         client.batch_execute("SAVEPOINT _explain").await?;
-        let result = Self::explain(client, compiled).await;
+        let result = Self::explain_with_io(client, compiled, explain_io).await;
         client
             .batch_execute("ROLLBACK TO SAVEPOINT _explain")
             .await?;
@@ -879,8 +927,19 @@ impl ExecutionEngine {
         client: &Client,
         compiled: &CompiledQuery,
     ) -> Result<Vec<String>, ExecutionError> {
+        Self::explain_with_io(client, compiled, false).await
+    }
+
+    /// Like [`explain`](Self::explain), adding PostgreSQL 19+'s `IO` option (asynchronous I/O
+    /// reporting) when `io` is true.
+    pub async fn explain_with_io(
+        client: &Client,
+        compiled: &CompiledQuery,
+        io: bool,
+    ) -> Result<Vec<String>, ExecutionError> {
+        let io_opt = if io { ", IO" } else { "" };
         let explain_sql = format!(
-            "EXPLAIN (ANALYZE, BUFFERS, SERIALIZE, MEMORY, FORMAT TEXT) {}",
+            "EXPLAIN (ANALYZE, BUFFERS, SERIALIZE, MEMORY{io_opt}, FORMAT TEXT) {}",
             compiled.sql.trim_end().trim_end_matches(';')
         );
         let params = Self::resolved_params(client, compiled).await?;

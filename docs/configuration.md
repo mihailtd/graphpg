@@ -26,15 +26,15 @@ graphpg export-config-schema --out graphpg.schema.json
 docker run -p 4000:4000 \
   -e DATABASE_URL=postgres://user:pass@db/mydb \
   -v "$PWD/graphpg.yaml:/app/graphpg.yaml:ro" \
-  ghcr.io/mihailtd/graphpg:1.3.1
+  ghcr.io/mihailtd/graphpg:1.4.0
 ```
 
 The image is a statically linked binary on `gcr.io/distroless/static`: no shell, no package manager, CA certificates, and a non-root user (UID 65532). graphpg reads `graphpg.yaml` from the working directory, `/app`. Because there is no shell or `curl` in the image, probe `GET /health` from outside (a Kubernetes `httpGet` probe, or your load balancer) rather than with a `HEALTHCHECK` command. The container stops cleanly on `SIGTERM`.
 
 | Tag | Moves | Use for |
 | :--- | :--- | :--- |
-| `1.3.1` | never | Pinning a release |
-| `1.3`, `1` | with each patch / minor release | Following a release line |
+| `1.4.0` | never | Pinning a release |
+| `1.4`, `1` | with each patch / minor release | Following a release line |
 | `latest` | with each (non-prerelease) release | Trying it out |
 | `sha-<short hash>` | never | One exact commit of `main` |
 | `edge` | with each commit on `main` | Testing unreleased changes |
@@ -52,7 +52,7 @@ OpenTelemetry export is compiled into the image: set `telemetry.otlp.endpoint` (
 | `/graphiql` | `GET` | GraphiQL IDE, when `graphql.ui` is on (404 otherwise) |
 | `/scalar` | `GET` | Scalar API reference, when `openapi.ui` is on (404 otherwise); it shows the OpenAPI document at `/openapi.json` |
 | `/schema.graphql` | `GET` | The GraphQL SDL, when `graphql.sdl` is on (404 otherwise); `/subgraph.graphql` is the Federation subgraph SDL, with `graphql.federation.enabled`. Paths: `graphql.sdl_path`, `graphql.subgraph_path` |
-| `/export` | `POST` | A connection query streamed as NDJSON or CSV (404 when `graphql.enabled: false`) |
+| `/export` | `POST` | A connection query streamed as NDJSON, JSON array (`"format": "json"`), or CSV (404 when `graphql.enabled: false`) |
 | `/import/{Type}` | `POST` | NDJSON rows of `Create<Type>Input`, inserted all-or-nothing with `COPY` (404 when `graphql.enabled: false`) |
 | `/health` | `GET` | Liveness |
 | `/live`, `/ready` | `GET` | Liveness, and readiness (the database answers) |
@@ -96,6 +96,7 @@ database:
   statement_cache: 512          # prepared statements per connection (0: none); see performance.md
   schemas: [auth, app]          # the first is the default schema (default: app_public)
   sql_comments: true            # sqlcommenter comments on every statement
+  replica_wait_timeout: 50ms    # PostgreSQL 19+: bound `WAIT FOR LSN` on standbys (`off` for none)
 
 server:
   host: 0.0.0.0
@@ -322,7 +323,7 @@ With `watch.enabled`, a change to the config file is read within a few seconds: 
 - `limits` (page size, depth, cost, bulk rows, groups, `count_threshold`, `require_filter`);
 - `errors` (`map`, `detail`), `debug.statements`, `export` and `database.schemas` beyond the first.
 
-The others are fixed when the server starts: `server`, `database.pool_size` / `statement_cache` / `sql_comments` and the first of `database.schemas`, `auth`, `debug.sql` / `explain`, `headers`, `graphql.enabled` / `ui` / `introspection` / `sdl` / `sdl_path` / `subgraph_path` / `federation` / `persisted_queries`, `openapi.enabled` / `spec` / `path` / `ui`, `limits.request_body_bytes`, `limits.rate_limit` and `limits.statement_timeout`, `subscriptions`, `events`, `telemetry`, `reload` and `watch`. A change to one of them is logged as a warning naming it (`these settings changed in the config but take effect on restart`); restart to apply it.
+The others are fixed when the server starts: `server`, `database.pool_size` / `statement_cache` / `sql_comments` / `replica_wait_timeout` and the first of `database.schemas`, `auth`, `debug.sql` / `explain`, `headers`, `graphql.enabled` / `ui` / `introspection` / `sdl` / `sdl_path` / `subgraph_path` / `federation` / `persisted_queries`, `openapi.enabled` / `spec` / `path` / `ui`, `limits.request_body_bytes`, `limits.rate_limit` and `limits.statement_timeout`, `subscriptions`, `events`, `telemetry`, `reload` and `watch`. A change to one of them is logged as a warning naming it (`these settings changed in the config but take effect on restart`); restart to apply it.
 
 ### Reloading the schema without a restart
 

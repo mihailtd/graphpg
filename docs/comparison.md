@@ -33,7 +33,7 @@ graphpg serves a **GraphQL** API and a **REST** API (with an OpenAPI 3.1 descrip
 | Apollo Federation subgraph | Yes (v2) | Plugin | Yes (v3) |
 | `@defer` / `@stream` | Yes | Yes | No |
 | Subscriptions | Live queries, opt-in: any query field, re-run every interval and sent when it changes, under RLS; WebSocket, SSE, multipart ([guide](subscriptions.md)) | Live queries and subscriptions through plugins | Yes (live queries and streaming) |
-| PostgreSQL 17/18 features (`JSON_TABLE` views, temporal keys, `RETURNING OLD`, `MERGE`) | Yes | Manual (custom SQL) | Manual |
+| PostgreSQL 17 / 18 / 19 features (`ON CONFLICT DO SELECT`, `WAIT FOR LSN`, `COPY FORMAT json`, `IGNORE NULLS` windows, `EXPLAIN IO`, temporal keys, `RETURNING OLD`, `JSON_TABLE`, `MERGE`) | Yes ([guide](postgresql-19.md), auto-adapts via `server_version_num`) | Manual (custom SQL) | Manual |
 | Hierarchies (recursive, `ltree`) | Yes | Custom SQL or plugin | Custom SQL |
 | Search (trigram, pgvector, full-text, PostGIS, BM25) | Root fields from the indexes present | Plugins | Partial |
 | Bulk export (NDJSON / CSV) and `COPY` import | Yes | No | No |

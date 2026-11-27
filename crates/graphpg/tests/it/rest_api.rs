@@ -764,6 +764,7 @@ async fn disabled_api_and_unknown_resources_are_problem_json() {
 #[tokio::test]
 async fn openapi_matches_the_behaviour() {
     let state = state().await;
+    let pg19 = state.current_catalog().server_version >= 190000;
     let doc = (*state.current_openapi_document()).clone();
     let app = create_router(Arc::new(state));
 
@@ -783,39 +784,50 @@ async fn openapi_matches_the_behaviour() {
         .unwrap();
     let mut documented: Vec<&str> = params.iter().map(|p| p["name"].as_str().unwrap()).collect();
     documented.sort_unstable();
-    assert_eq!(
-        documented,
-        [
-            "Prefer",
-            "Range",
-            "after",
-            "anti",
-            "args[uniqueAuthorCount][featured]",
-            "before",
-            "cursors",
-            "fields",
-            "fields[featuredMessages]",
-            "fields[messages]",
-            "fields[randomUser]",
-            "filter",
-            "filter[featuredMessages]",
-            "filter[messages]",
-            "first",
-            "first[featuredMessages]",
-            "first[messages]",
-            "include",
-            "inner",
-            "last",
-            "offset",
-            "offset[featuredMessages]",
-            "offset[messages]",
-            "order",
-            "order[featuredMessages]",
-            "order[messages]",
-            "partition",
-            "window"
-        ]
-    );
+    let mut expected = vec![
+        "Prefer",
+        "Range",
+        "after",
+        "anti",
+        "args[uniqueAuthorCount][featured]",
+        "before",
+        "cursors",
+        "fields",
+        "fields[featuredMessages]",
+        "fields[messages]",
+        "fields[randomUser]",
+        "filter",
+        "filter[featuredMessages]",
+        "filter[messages]",
+        "first",
+        "first[featuredMessages]",
+        "first[messages]",
+        "include",
+        "inner",
+        "last",
+        "offset",
+        "offset[featuredMessages]",
+        "offset[messages]",
+        "order",
+        "order[featuredMessages]",
+        "order[messages]",
+        "partition",
+        "window",
+    ];
+    if pg19 {
+        expected.extend([
+            "firstValue",
+            "ignoreNulls",
+            "lag",
+            "lastValue",
+            "lead",
+            "nthValue",
+            "windowNth",
+            "windowOffset",
+        ]);
+        expected.sort_unstable();
+    }
+    assert_eq!(documented, expected);
     let first = params.iter().find(|p| p["name"] == "first").unwrap();
     assert_eq!(first["schema"]["maximum"], 1000);
     let fields = params.iter().find(|p| p["name"] == "fields").unwrap();

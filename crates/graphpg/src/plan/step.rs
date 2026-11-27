@@ -621,9 +621,10 @@ pub struct TimeBins {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WindowSelection {
     pub field_alias: String,
-    /// `row_number`, `rank`, `dense_rank`, `percent_rank` or `running_sum`.
+    /// `row_number`, `rank`, `dense_rank`, `percent_rank`, `running_sum`, `lag`, `lead`,
+    /// `first_value`, `last_value` or `nth_value`.
     pub function: String,
-    /// Columns of `running_sum`.
+    /// Columns of `running_sum` or value window functions.
     pub fields: Vec<AggregateField>,
     /// Rows are numbered (or summed) within groups of equal values of these.
     pub partition: Vec<GroupKey>,
@@ -631,6 +632,12 @@ pub struct WindowSelection {
     /// key breaking their ties would leave no ties to rank). 0: all of them.
     #[serde(default)]
     pub rank_keys: usize,
+    /// PG 19+: `IGNORE NULLS` (true) vs default `RESPECT NULLS` (false) for value windows.
+    #[serde(default)]
+    pub ignore_nulls: bool,
+    /// `offset` for `lag` / `lead` (default 1), or 1-based `n` for `nth_value`.
+    #[serde(default)]
+    pub offset: Option<i64>,
 }
 
 /// A condition on a group's aggregates: `sum(total) > 10`, `count(*) >= 2`.
@@ -871,6 +878,15 @@ pub enum WriteNodeKind {
     /// row from the node's values.
     LookupOrInsert {
         key: Vec<WhereCondition>,
+        /// Arbiter column names when `where` and `create` agree on a unique key. The insert
+        /// then names it in `ON CONFLICT`, so a concurrent insert of the same key is waited
+        /// for instead of failing with `23505`.
+        #[serde(default)]
+        conflict_key: Option<Vec<String>>,
+        /// PostgreSQL 19+ (with `conflict_key`): one `INSERT ... ON CONFLICT (<key>) DO SELECT
+        /// RETURNING` instead of the 2-CTE `WITH _found ... _new` lookup-or-insert.
+        #[serde(default)]
+        do_select: bool,
     },
     /// `connectOrCreate` of a child: the row with `key` takes the parent's key (`refs`), or
     /// else a new row is created with it.
@@ -943,7 +959,7 @@ pub enum RowTarget {
     Filter(Option<FilterExpr>),
 }
 
-/// `INSERT ... ON CONFLICT (<columns>) DO UPDATE / DO NOTHING`.
+/// `INSERT ... ON CONFLICT (<columns>) DO UPDATE / DO NOTHING / DO SELECT`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OnConflict {
     /// The conflict key, `(column, sql cast)`. Every inserted row sets these columns, and
@@ -953,6 +969,9 @@ pub struct OnConflict {
     /// sets, minus the key. Nothing to update means `DO NOTHING`.
     pub update: Option<Vec<String>>,
     pub do_nothing: bool,
+    /// PostgreSQL 19+: `ON CONFLICT (<columns>) DO SELECT RETURNING ...`.
+    #[serde(default)]
+    pub do_select: bool,
 }
 
 /// Rows above or below a row in a hierarchy of its table (see `TreeInfo`). They are numbered

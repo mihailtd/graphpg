@@ -355,6 +355,8 @@ pub struct ServerState {
     /// Read replicas queries may run on (mutations run on `pool`, the primary).
     pub replicas: Vec<Replica>,
     next_replica: std::sync::atomic::AtomicUsize,
+    /// Bounded `WAIT FOR LSN` timeout on PostgreSQL 19+ standbys for `X-Min-WAL-Position`.
+    pub replica_wait_timeout: Option<crate::config::models::Timeout>,
     /// Authenticates requests (OAuth 2.0 bearer tokens); `None` when authentication is off.
     pub auth: Option<Arc<super::Authenticator>>,
     /// Serve the GraphiQL IDE at `/graphiql` (development and pre-production only).
@@ -412,6 +414,20 @@ pub struct Settings {
 pub struct Replica {
     pub pool: Pool,
     pub standby: std::sync::atomic::AtomicBool,
+    /// `server_version_num` observed by `refresh_replicas` (0 until checked).
+    pub server_version: std::sync::atomic::AtomicU32,
+}
+
+/// Validates a PostgreSQL LSN string (`X/Y`, 1-8 hex digits per part) before interpolating into
+/// top-level SQL commands that do not accept bind parameters (`WAIT FOR LSN`).
+pub(crate) fn is_valid_pg_lsn(lsn: &str) -> bool {
+    let Some((hi, lo)) = lsn.split_once('/') else {
+        return false;
+    };
+    (1..=8).contains(&hi.len())
+        && (1..=8).contains(&lo.len())
+        && hi.bytes().all(|b| b.is_ascii_hexdigit())
+        && lo.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Header of a response to a mutation: the primary's WAL position after it committed.
@@ -438,6 +454,7 @@ impl ServerState {
             sql_comments: true,
             replicas: Vec::new(),
             next_replica: std::sync::atomic::AtomicUsize::new(0),
+            replica_wait_timeout: None,
             auth: None,
             graphiql: false,
             scalar: false,
@@ -532,6 +549,16 @@ impl ServerState {
         self
     }
 
+    /// Sets how long a PostgreSQL 19+ read replica waits (`WAIT FOR LSN`) to catch up to
+    /// `X-Min-WAL-Position` before falling back to the primary.
+    pub fn with_replica_wait_timeout(
+        mut self,
+        timeout: Option<crate::config::models::Timeout>,
+    ) -> Self {
+        self.replica_wait_timeout = timeout;
+        self
+    }
+
     /// Adds read replicas (standbys are detected by [`refresh_replicas`](Self::refresh_replicas)).
     pub fn with_replicas(mut self, pools: Vec<Pool>) -> Self {
         self.replicas = pools
@@ -539,26 +566,35 @@ impl ServerState {
             .map(|pool| Replica {
                 pool,
                 standby: std::sync::atomic::AtomicBool::new(false),
+                server_version: std::sync::atomic::AtomicU32::new(0),
             })
             .collect();
         self
     }
 
-    /// Checks which replicas are standbys (`pg_is_in_recovery()`); unreachable ones are not
-    /// used until a later check finds them again.
+    /// Checks which replicas are standbys (`pg_is_in_recovery()`) and records their PostgreSQL
+    /// server version; unreachable ones are not used until a later check finds them again.
     pub async fn refresh_replicas(&self) {
+        use std::sync::atomic::Ordering;
         for replica in &self.replicas {
-            let standby = match replica.pool.get().await {
+            let (standby, version) = match replica.pool.get().await {
                 Ok(client) => client
-                    .query_one("SELECT pg_is_in_recovery()", &[])
+                    .query_one(
+                        "SELECT pg_is_in_recovery(), current_setting('server_version_num')::int",
+                        &[],
+                    )
                     .await
-                    .map(|r| r.get::<_, bool>(0))
-                    .unwrap_or(false),
-                Err(_) => false,
+                    .map(|r| {
+                        let ver: i32 = r.get(1);
+                        (r.get::<_, bool>(0), u32::try_from(ver).unwrap_or(0))
+                    })
+                    .unwrap_or((false, 0)),
+                Err(_) => (false, 0),
             };
-            replica
-                .standby
-                .store(standby, std::sync::atomic::Ordering::Relaxed);
+            replica.standby.store(standby, Ordering::Relaxed);
+            if version > 0 {
+                replica.server_version.store(version, Ordering::Relaxed);
+            }
         }
     }
 
@@ -586,14 +622,43 @@ impl ServerState {
             };
             let caught_up = match min_lsn {
                 None => true,
-                Some(lsn) => client
-                    .query_one(
-                        "SELECT coalesce(pg_last_wal_replay_lsn() >= $1::text::pg_lsn, false)",
-                        &[&lsn],
-                    )
-                    .await
-                    .map(|r| r.get::<_, bool>(0))
-                    .unwrap_or(false),
+                Some(lsn) => {
+                    let wait = self.replica_wait_timeout.filter(|t| {
+                        !t.0.is_zero() && replica.server_version.load(Ordering::Relaxed) >= 190000
+                    });
+                    match wait {
+                        Some(wait) => {
+                            if !is_valid_pg_lsn(lsn) {
+                                false
+                            } else {
+                                let ms = wait.0.as_millis().max(1);
+                                let sql = format!(
+                                    "WAIT FOR LSN '{lsn}' WITH (MODE 'standby_replay', TIMEOUT '{ms}ms', NO_THROW)"
+                                );
+                                match client
+                                    .query_one(&sql, &[])
+                                    .await
+                                    .map(|r| r.get::<_, String>(0))
+                                {
+                                    Ok(status) if status == "success" => true,
+                                    Ok(status) if status == "not in recovery" => {
+                                        replica.standby.store(false, Ordering::Relaxed);
+                                        false
+                                    }
+                                    Ok(_) | Err(_) => false,
+                                }
+                            }
+                        }
+                        None => client
+                            .query_one(
+                                "SELECT coalesce(pg_last_wal_replay_lsn() >= $1::text::pg_lsn, false)",
+                                &[&lsn],
+                            )
+                            .await
+                            .map(|r| r.get::<_, bool>(0))
+                            .unwrap_or(false),
+                    }
+                }
             };
             if caught_up {
                 return Ok((client, "replica"));
@@ -676,6 +741,7 @@ impl ServerState {
         self.graphiql = config.graphql.ui;
         self.scalar = config.openapi.ui;
         self.sql_comments = config.database.sql_comments;
+        self.replica_wait_timeout = config.database.replica_wait_timeout;
         self.rate_limiter = super::RateLimiter::new(&config.limits.rate_limit);
         self.subscriptions = config
             .subscriptions
@@ -796,6 +862,7 @@ const FIXED_SETTINGS: &[&str] = &[
     "/database/pool_size",
     "/database/statement_cache",
     "/database/sql_comments",
+    "/database/replica_wait_timeout",
     "/auth",
     "/debug/sql",
     "/debug/explain",
@@ -1670,8 +1737,9 @@ async fn run_authenticated(
         // dropped mid-transaction, the connection would go back to the pool still inside it,
         // with the request's role and claims
         let span = tracing::info_span!("graphql.execute", graphql.operation = %operation_label);
-        let (explain_on, track_wal) = (
+        let (explain_on, explain_io, track_wal) = (
             state.debug.explain,
+            catalog.server_version >= 190000,
             is_mutation && !state.replicas.is_empty(),
         );
         let task = {
@@ -1679,10 +1747,11 @@ async fn run_authenticated(
             let auth_ctx = auth_ctx.clone();
             async move {
                 let mut explain = explain_on.then(Vec::new);
-                let result = ExecutionEngine::run_with_auth(
+                let result = ExecutionEngine::run_with_options(
                     &*client,
                     &compiled,
                     explain.as_mut(),
+                    explain_io,
                     auth_ctx.as_ref(),
                 )
                 .await;
@@ -1896,5 +1965,24 @@ async fn run_roots_apart(
             None
         }
         Err(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_pg_lsn;
+
+    #[test]
+    fn validates_pg_lsn() {
+        assert!(is_valid_pg_lsn("0/1"));
+        assert!(is_valid_pg_lsn("0/0306EE20"));
+        assert!(is_valid_pg_lsn("ABCDEF12/01234567"));
+        assert!(!is_valid_pg_lsn(""));
+        assert!(!is_valid_pg_lsn("0"));
+        assert!(!is_valid_pg_lsn("/1"));
+        assert!(!is_valid_pg_lsn("0/"));
+        assert!(!is_valid_pg_lsn("0/123456789"));
+        assert!(!is_valid_pg_lsn("0/1'; DROP TABLE x; --"));
+        assert!(!is_valid_pg_lsn("0/1g"));
     }
 }

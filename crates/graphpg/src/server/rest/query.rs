@@ -44,6 +44,26 @@ pub struct RestQuery {
     /// `partition`: group the window values within the rows sharing these values.
     #[serde(default)]
     pub partition: Vec<String>,
+    /// PG 19+: columns for `lag` / `lead` / `firstValue` / `lastValue` / `nthValue`.
+    #[serde(default)]
+    pub lag: Vec<String>,
+    #[serde(default)]
+    pub lead: Vec<String>,
+    #[serde(default)]
+    pub first_value: Vec<String>,
+    #[serde(default)]
+    pub last_value: Vec<String>,
+    #[serde(default)]
+    pub nth_value: Vec<String>,
+    /// PG 19+: skip NULLs (`IGNORE NULLS`) in value window functions.
+    #[serde(default)]
+    pub ignore_nulls: bool,
+    /// PG 19+: row offset for `lag` / `lead` (default 1).
+    #[serde(default)]
+    pub window_offset: Option<i64>,
+    /// PG 19+: 1-based position `n` for `nthValue`.
+    #[serde(default)]
+    pub window_nth: Option<i64>,
     /// `cursors=true`: each row carries its own cursor, in `_cursor`.
     #[serde(default)]
     pub cursors: bool,
@@ -64,6 +84,23 @@ pub struct RestQuery {
     /// Relation paths whose parents must have no matching row.
     #[serde(default)]
     pub anti: Vec<String>,
+}
+
+impl RestQuery {
+    /// PG 19+ value window selections (`(field_name, columns)`).
+    pub fn value_window_specs(&self) -> [(&'static str, &[String]); 5] {
+        [
+            ("lag", self.lag.as_slice()),
+            ("lead", self.lead.as_slice()),
+            ("firstValue", self.first_value.as_slice()),
+            ("lastValue", self.last_value.as_slice()),
+            ("nthValue", self.nth_value.as_slice()),
+        ]
+    }
+
+    pub fn has_value_windows(&self) -> bool {
+        self.value_window_specs().iter().any(|(_, c)| !c.is_empty())
+    }
 }
 
 /// What an embedded relation is read with: its columns and, for a to-many relation, the rows
@@ -976,7 +1013,39 @@ pub(super) fn finish_embeds(
             ));
         }
     }
-    if !query.partition.is_empty() && query.window.is_empty() && query.running.is_empty() {
+    for (param, cols) in query.value_window_specs() {
+        for name in cols {
+            if !table
+                .visible_columns()
+                .any(|c| c.field_name == *name || c.name == *name)
+            {
+                return Err(format!(
+                    "`{param}={name}`: `{}` has no column `{name}`",
+                    table.name
+                ));
+            }
+        }
+    }
+    if !query.nth_value.is_empty() && query.window_nth.is_none() {
+        return Err("`nthValue` requires `windowNth`".to_string());
+    }
+    if query.window_nth.is_some() && query.nth_value.is_empty() {
+        return Err("`windowNth` requires `nthValue`".to_string());
+    }
+    if query.ignore_nulls && !query.has_value_windows() {
+        return Err(
+            "`ignoreNulls` requires `lag`, `lead`, `firstValue`, `lastValue` or `nthValue`"
+                .to_string(),
+        );
+    }
+    if query.window_offset.is_some() && query.lag.is_empty() && query.lead.is_empty() {
+        return Err("`windowOffset` requires `lag` or `lead`".to_string());
+    }
+    if !query.partition.is_empty()
+        && query.window.is_empty()
+        && query.running.is_empty()
+        && !query.has_value_windows()
+    {
         return Err("`partition` needs `window` or `running`".to_string());
     }
     for (key, given) in &query.field_args {
@@ -1203,6 +1272,39 @@ pub fn parse_query_params(
                             "false" | "0" => false,
                             _ => return Err("`cursors` must be true or false".to_string()),
                         }
+                    }
+                }
+            }
+            "lag" | "lead" | "firstValue" | "lastValue" | "nthValue" | "ignoreNulls"
+            | "windowOffset" | "windowNth" => {
+                collection_only(&key)?;
+                if catalog.server_version < 190000 {
+                    return Err(format!("`{key}` requires PostgreSQL 19 or later"));
+                }
+                match key.as_str() {
+                    "lag" => query.lag = split_list(&val),
+                    "lead" => query.lead = split_list(&val),
+                    "firstValue" => query.first_value = split_list(&val),
+                    "lastValue" => query.last_value = split_list(&val),
+                    "nthValue" => query.nth_value = split_list(&val),
+                    "ignoreNulls" => {
+                        query.ignore_nulls = match val.as_str() {
+                            "true" | "1" => true,
+                            "false" | "0" => false,
+                            _ => return Err("`ignoreNulls` must be true or false".to_string()),
+                        };
+                    }
+                    "windowOffset" => {
+                        let n = val.parse::<i64>().ok().filter(|&n| n >= 0).ok_or_else(|| {
+                            format!("`windowOffset` must be a non-negative integer, got `{val}`")
+                        })?;
+                        query.window_offset = Some(n);
+                    }
+                    _ => {
+                        let n = val.parse::<i64>().ok().filter(|&n| n >= 1).ok_or_else(|| {
+                            format!("`windowNth` must be at least 1, got `{val}`")
+                        })?;
+                        query.window_nth = Some(n);
                     }
                 }
             }

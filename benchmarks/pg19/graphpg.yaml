@@ -1,0 +1,12 @@
+# graphpg configuration for PG 18 vs PG 19 benchmarks
+database:
+  schemas: [bench]
+  pool_size: 10
+server:
+  port: 4009
+graphql:
+  enabled: true
+openapi:
+  enabled: true
+limits:
+  page_size: { default: 100, max: 1000 }
